@@ -1,36 +1,72 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Vocab App
 
-## Getting Started
+An interactive vocabulary learning app. Read paragraphs, click unfamiliar words to track them, and watch your mastery grow as you encounter words across different topics.
 
-First, run the development server:
+## Stack
+
+| Layer | Choice |
+|---|---|
+| Frontend | Next.js 16 (App Router) + Tailwind CSS |
+| API | Hono (embedded in Next.js via `hono/vercel`) |
+| Database | MongoDB 8 + Mongoose |
+| Container | Docker Compose |
+
+## Quick start
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+docker compose up --build -d
+docker compose exec web npx tsx src/scripts/seed.ts
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Project structure
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```
+app/
+├── page.tsx                       the entire interactive paragraph viewer
+├── layout.tsx                     root HTML shell
+└── api/[[...route]]/route.ts      all API endpoints (Hono)
 
-## Learn More
+src/
+├── lib/db.ts                      MongoDB connection
+├── models/
+│   ├── Paragraph.ts               title, content, topic, wordCount
+│   ├── Word.ts                    word, definition, timesMet, unfamiliarity
+│   └── ParagraphWord.ts           joins paragraph ↔ word at a specific index
+└── scripts/
+    └── seed.ts                    4 paragraphs + 10 words with definitions
+```
 
-To learn more about Next.js, take a look at the following resources:
+## Data model
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+Paragraph ─────────── Word ─────────── ParagraphWord
+title                  word              paragraphId
+content                definition        wordId
+topic (enum)           timesMet (↑)      wordIndex
+wordCount              unfamiliarity     status: marked | ignored | known
+                       status
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- **timesMet**: increments on every click, never decrements (permanent history)
+- **unfamiliarity**: click +1, ignore -1. Hits 0 → mastered
+- **ParagraphWord**: persists which specific word occurrence was marked in which paragraph
 
-## Deploy on Vercel
+## Daily commands
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```bash
+docker compose up -d       # start
+docker compose down         # stop
+docker compose exec web npx tsx src/scripts/seed.ts   # reset data
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## API
+
+```
+GET   /api/paragraphs               all paragraphs
+POST  /api/words/mark               mark a word (timesMet++, unfamiliarity++)
+POST  /api/words/ignore             decrement unfamiliarity
+POST  /api/words/batch              lookup multiple words
+POST  /api/paragraph-words/batch    which words are marked in a paragraph
+```
