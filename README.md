@@ -66,6 +66,7 @@ src/
 │   ├── Paragraph.ts               content, language, difficulty, coverage
 │   ├── Word.ts                    shared reference data: (targetLang, lemma, pos), level, frequency
 │   ├── Gloss.ts                   translations, ONE DOCUMENT PER SOURCE (licence seam)
+│   ├── Inflection.ts              stated form → citation form (liest → lesen)
 │   ├── WordState.ts               PER LEARNER: status, timesMet, unfamiliarity, …
 │   ├── Mark.ts                    one learner's mark on one character span
 │   ├── Event.ts                   append-only log: the source of truth
@@ -152,6 +153,26 @@ score = zipf − 0.8·ln(genericness) − (function word ? 3 : 0)
 
 It is a heuristic, not a sense disambiguator. Ambiguous verbs remain the weak spot (`run` → 运行
 rather than 跑), which is why up to three candidates are stored per reading.
+
+### Inflection is data, not a guess
+
+Suffix rules cannot lemmatise German reliably, and the failure was visible: `liest` (a form of
+`lesen`) matched an unrelated noun entry, *Liest*, so the preview showed a noun's headword with a
+verb form's description as its meaning. `kurzen` fared no better — the rules produced `kurze`, the
+noun *Kurze*, while the word is an inflection of the adjective `kurz`.
+
+Wiktionary **states** the base (`form_of`, 72% of its German entries), so that is stored as data in
+`Inflection` — 226,717 mappings — and the tokenizer prefers a stated form over anything the rules
+propose. A mapping is only honoured when its base is a real dictionary entry, so a word can never
+resolve to something the glossary cannot gloss.
+
+    liest    → lesen    n reading / v to read
+    kurzen   → kurz     adj brief, short / adv briefly
+    braucht  → brauchen v to need, to be in need of, to require
+
+At most **two readings of two translations** are shown, ordered by the best-ranked gloss in each
+group. Several sources each contribute glosses, and an uncapped list rendered nine lines for
+`verstehen` — a concordance rather than a hint.
 
 ### Two German sources, one ranked behind the other
 
@@ -257,7 +278,7 @@ npm run import:frequency    # attach Zipf, scored on the best of a word's forms
 npm run import:german-rank  # Leipzig corpus ranks (splits the DWDS rare tail)
 npm run import:ding         # German→English glosses (GPL-3+, own collection)
 npm run import:cedict       # English→Chinese glosses (CC BY-SA, own collection)
-npm run import:kaikki-glosses  # German glosses where ding has no headword at all
+npm run import:kaikki        # German inflections + glosses where ding has no headword
 npm run recompute:difficulty  # fit the curve and write difficulty  (-- --with-goethe-anchors)
 npm run seed                # reset and seed demo data
 ```

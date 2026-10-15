@@ -233,17 +233,31 @@ test("the German seed exercises every case the old model could not represent", (
 
 // ── Two-pass lexing against a lexicon that only answers what it is asked ──────
 
-/** A stand-in for the database: it knows a fixed vocabulary and nothing else. */
+/**
+ * A stand-in for the database: a fixed vocabulary, plus any stated inflections.
+ *
+ * It only ever answers what it is asked, which is what makes it able to catch the class of bug the
+ * real query had — assuming a candidate set is enough without asking.
+ */
 function memoryLexicon(...lemmas: string[]) {
   const known = new Set(lemmas.map((l) => l.toLowerCase()));
+  const forms = new Map<string, string>();
   let queries = 0;
   let maxQuery = 0;
+
   return {
-    query: async (candidates: string[]) => {
+    query: async (candidates: string[], surfaces: string[] = []) => {
       queries += 1;
       maxQuery = Math.max(maxQuery, candidates.length);
-      return new Set(candidates.filter((c) => known.has(c)));
+      return {
+        known: new Set(candidates.filter((c) => known.has(c))),
+        forms: new Map(
+          surfaces.filter((f) => forms.has(f)).map((f) => [f, forms.get(f)!] as [string, string]),
+        ),
+      };
     },
+    /** State that a surface is an inflection of a base, as Wiktionary does. */
+    addForm: (form: string, base: string) => forms.set(form.toLowerCase(), base),
     stats: () => ({ queries, maxQuery }),
   };
 }
@@ -274,7 +288,9 @@ test("the lexicon query asks only about candidates the tokenizer actually wanted
   await tokenizeAgainst("Der Wortschatzaufbau steht auf.", "de", query);
 
   const { queries, maxQuery } = stats();
-  assert.ok(queries <= 3, `should converge in a few passes, took ${queries}`);
+  // One query is spent up front asking which surfaces are stated inflections; the rest are the
+  // convergence passes. The point of the bound is that it does not grow with the text.
+  assert.ok(queries <= 5, `should converge in a few passes, took ${queries}`);
   // Not the ~6,000 keys that enumerating every compound split and particle combination would need.
   assert.ok(maxQuery < 120, `candidate set should stay small, was ${maxQuery}`);
 });
@@ -383,4 +399,33 @@ test("an estimated level comes back as the right band", () => {
   assert.equal(levelFromDifficulty(levelMidpoint("C2")), "C2");
   assert.equal(levelFromDifficulty(0.999), "C2");
   assert.equal(levelFromDifficulty(-1), null);
+});
+
+test("a stated inflection beats the suffix rules", () => {
+  // "liest" is a form of "lesen" and the stem changes, so no suffix rule can reach it. It was
+  // matching an unrelated noun entry instead ("Liest"), which is how a verb form ended up showing a
+  // noun's headword with a form description as its meaning.
+  const lex = memoryLexicon("lesen", "liest", "kurz", "Kurze");
+  lex.addForm("liest", "lesen");
+  lex.addForm("kurzen", "kurz");
+
+  return tokenizeAgainst("sie liest und kurzen Text", "de", lex.query).then((spans) => {
+    const liest = spans.find((s) => s.surface === "liest")!;
+    assert.equal(liest.lemmaKey, "lesen", "the stated base wins over the same-spelled entry");
+
+    const kurzen = spans.find((s) => s.surface === "kurzen")!;
+    assert.equal(kurzen.lemmaKey, "kurz", "not the noun Kurze, which the rules preferred");
+  });
+});
+
+test("an inflection is only honoured when its base is a real entry", () => {
+  // A mapping must never resolve a word to something the glossary cannot gloss. The datastore query
+  // enforces that by only returning bases it holds, so this asserts the tokenizer does not
+  // second-guess it either: what the query returns is what is used.
+  const lex = memoryLexicon("liest", "lesen");
+  lex.addForm("liest", "lesen");
+  return tokenizeAgainst("liest", "de", lex.query).then((spans) => {
+    assert.equal(spans[0].lemmaKey, "lesen");
+    assert.equal(spans[0].matched, true);
+  });
 });

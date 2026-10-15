@@ -1,14 +1,23 @@
 /**
- * Fill the gaps in the German glossary from kaikki.org's German Wiktextract extract.
+ * Two things from kaikki.org's German Wiktextract extract: how words inflect, and what they mean.
  *
- *   npm run import:kaikki-glosses
+ *   npm run import:kaikki
+ *
+ * ## Glosses
  *
  * ding is the primary German source — human-curated for 28 years — but its headword inventory is
  * thin on verbs: it has no entry for "brauchen" at all, although the word appears in 104 of its
  * example lists. Wiktionary defines it plainly, so this layer supplies what ding lacks. It ranks
  * *behind* ding, so it only ever fills holes rather than changing existing answers.
  *
- * Licence: CC BY-SA 4.0 + GFDL. Share-alike, so the text stays in its own Gloss documents.
+ * ## Inflections
+ *
+ * The same pass records stated form→citation-form mappings (`liest` → `lesen`). Suffix rules
+ * cannot derive that — the stem changes — and the failure is visible: "liest" matched an unrelated
+ * noun entry and the learner saw a noun's headword glossed with a description of a verb form.
+ * 72% of the German entries state their base, so this is data rather than a guess.
+ *
+ * Licence: CC BY-SA 4.0 + GFDL. Share-alike, so both live in their own collections.
  */
 
 import { createGunzip } from "node:zlib";
@@ -19,10 +28,12 @@ import path from "node:path";
 import { connectDB } from "../../lib/db";
 import { Word } from "../../models/Word";
 import { ensureGlossIndexes, Gloss } from "../../models/Gloss";
+import { Inflection } from "../../models/Inflection";
 import { Provenance } from "../../models/Provenance";
 import { provenanceDocs } from "../../lib/licence";
 import { assertShippable, dataset } from "../../lib/licence/datasets";
 import { parseKaikkiEntry } from "./kaikki";
+import { lemmaKeyOf } from "../../lib/tokenize/normalize";
 import { runIfEntry } from "../run";
 
 const SOURCE = "kaikki-wiktextract-de";
@@ -39,8 +50,8 @@ async function main() {
     throw new Error(`missing ${path.relative(process.cwd(), FILE)}\nRun: src/scripts/import/fetch-data.sh --full`);
   }
 
-  console.log("kaikki → German glosses (English), filling gaps under ding");
-  console.log("───────────────────────────────────────────────────────────");
+  console.log("kaikki → German inflections and glosses");
+  console.log("───────────────────────────────────────");
   console.log(`  licence      ${spec.license}`);
 
   await connectDB();
@@ -58,8 +69,14 @@ async function main() {
   }
   console.log(`  vocabulary   ${wanted.size.toLocaleString()} German headwords`);
 
-  const removed = await Gloss.deleteMany({ source: SOURCE });
-  if (removed.deletedCount) console.log(`  cleared      ${removed.deletedCount.toLocaleString()} previous rows`);
+  const removedGlosses = await Gloss.deleteMany({ source: SOURCE });
+  const removedForms = await Inflection.deleteMany({ source: SOURCE });
+  if (removedGlosses.deletedCount || removedForms.deletedCount) {
+    console.log(
+      `  cleared      ${removedGlosses.deletedCount.toLocaleString()} gloss rows · ` +
+        `${removedForms.deletedCount.toLocaleString()} inflection rows`,
+    );
+  }
 
   const rl = createInterface({
     input: createReadStream(FILE).pipe(createGunzip()),
@@ -69,12 +86,19 @@ async function main() {
   let lines = 0;
   let matched = 0;
   let written = 0;
+  let formsStored = 0;
   let ops: Array<Parameters<typeof Gloss.bulkWrite>[0][number]> = [];
+  let formOps: Array<Parameters<typeof Inflection.bulkWrite>[0][number]> = [];
 
   const flush = async () => {
-    if (ops.length < 2000) return;
-    await Gloss.bulkWrite(ops, { ordered: false });
-    ops = [];
+    if (ops.length >= 2000) {
+      await Gloss.bulkWrite(ops, { ordered: false });
+      ops = [];
+    }
+    if (formOps.length >= 2000) {
+      await Inflection.bulkWrite(formOps, { ordered: false });
+      formOps = [];
+    }
   };
 
   for await (const line of rl) {
@@ -86,6 +110,31 @@ async function main() {
 
     const entry = parseKaikkiEntry(line);
     if (!entry) continue;
+
+    // An inflected form: record the mapping, and only when the base is a word we hold.
+    if (entry.formOf) {
+      const baseLemmaKey = lemmaKeyOf(entry.formOf);
+      if (!wanted.has(baseLemmaKey)) continue;
+      matched += 1;
+      formsStored += 1;
+      formOps.push({
+        updateOne: {
+          filter: {
+            targetLang: "de",
+            form: entry.lemmaKey,
+            baseLemmaKey,
+            pos: entry.pos,
+            source: SOURCE,
+          },
+          update: {
+            $set: { base: entry.formOf, license: spec.license },
+          },
+          upsert: true,
+        },
+      });
+      await flush();
+      continue;
+    }
 
     const positions = wanted.get(entry.lemmaKey);
     if (!positions) continue;
@@ -123,9 +172,11 @@ async function main() {
     await flush();
   }
   if (ops.length) await Gloss.bulkWrite(ops, { ordered: false });
+  if (formOps.length) await Inflection.bulkWrite(formOps, { ordered: false });
   process.stdout.write("\n");
 
   console.log(`  entries      ${lines.toLocaleString()} lines read · ${matched.toLocaleString()} matched a headword`);
+  console.log(`  inflections  ${formsStored.toLocaleString()} form → citation-form mappings`);
   console.log(`  gloss rows   ${written.toLocaleString()}`);
 
   // What the layer was for: how many headwords now have a translation at all.

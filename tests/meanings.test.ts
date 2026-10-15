@@ -21,7 +21,8 @@ const train: Meaning[] = [
 ];
 
 test("readings are grouped by the headword's part of speech", () => {
-  const groups = groupMeanings(train);
+  // The default cap is covered separately; this asserts the grouping itself.
+  const groups = groupMeanings(train, { maxPerGroup: 3, maxGroups: 2 });
   assert.equal(groups.length, 2);
   assert.deepEqual(groups[0].pos, "noun");
   assert.deepEqual(groups[0].texts, ["火车", "列车", "训练"]);
@@ -37,7 +38,7 @@ test("a group is capped, and duplicate texts within it collapse", () => {
     { pos: "verb", termPos: "verb", text: "c", source: "s" },
     { pos: "verb", termPos: "verb", text: "d", source: "s" },
   ];
-  assert.deepEqual(groupMeanings(many, 2)[0].texts, ["a", "b"]);
+  assert.deepEqual(groupMeanings(many, { maxPerGroup: 2 })[0].texts, ["a", "b"]);
 });
 
 test("a part-of-speech label is dropped when the group disagrees", () => {
@@ -96,4 +97,31 @@ test("an unlabelled translation survives when nothing else carries it", () => {
   assert.equal(groups.length, 2);
   assert.deepEqual(groups[0].texts, ["陪伴"]);
   assert.deepEqual(groups[1].texts, ["友谊"]);
+});
+
+test("readings are capped and ordered by the best-ranked gloss", () => {
+  // Several sources each contribute glosses. Without a cap, "verstehen" rendered nine lines —
+  // a concordance rather than a hint.
+  const meanings: Meaning[] = [
+    { pos: "noun", termPos: null, text: "reading", source: "kaikki", rank: 6 },
+    { pos: "verb", termPos: null, text: "to read", source: "ding", rank: 1 },
+    { pos: "verb", termPos: null, text: "to peruse", source: "kaikki", rank: 7 },
+    { pos: "verb", termPos: null, text: "to study", source: "kaikki", rank: 8 },
+    { pos: "adjective", termPos: null, text: "well-read", source: "kaikki", rank: 9 },
+  ];
+
+  const groups = groupMeanings(meanings);
+  assert.equal(groups.length, 2, "at most two readings");
+  assert.deepEqual(groups[0].pos, "verb", "the best-ranked reading leads");
+  assert.deepEqual(groups[0].texts, ["to read", "to peruse"], "capped at two translations");
+  assert.deepEqual(groups[1].pos, "noun");
+});
+
+test("the caps can be raised when a caller wants everything", () => {
+  const meanings: Meaning[] = [
+    { pos: "noun", termPos: null, text: "a", source: "s", rank: 2 },
+    { pos: "verb", termPos: null, text: "b", source: "s", rank: 1 },
+    { pos: "adjective", termPos: null, text: "c", source: "s", rank: 3 },
+  ];
+  assert.equal(groupMeanings(meanings, { maxGroups: 3 }).length, 3);
 });

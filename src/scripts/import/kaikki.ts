@@ -39,8 +39,17 @@ export interface KaikkiEntry {
   lemmaKey: string;
   lang: TargetLang;
   pos: string;
-  /** English glosses, in the order the dictionary lists them. */
+  /** English glosses, in the order the dictionary lists them. Empty for an inflected form. */
   glosses: string[];
+  /**
+   * The citation form this entry is a shape of, when it is one — `liest` → `lesen`.
+   *
+   * Wiktionary states this structurally (`form_of`, plus a `form-of` tag), which is far more
+   * reliable than inferring it from a gloss like "second/third-person singular present of lesen".
+   * 72% of the German entries carry it, and it is what makes an inflected word resolve to the word
+   * that actually has a translation.
+   */
+  formOf: string | null;
 }
 
 export function mapKaikkiPos(pos: string): string | null {
@@ -55,7 +64,7 @@ export function mapKaikkiPos(pos: string): string | null {
  * any inflected form that happens to be a lemma elsewhere.
  */
 const CROSS_REFERENCE =
-  /^(inflection of|plural of|genitive|dative|nominative|accusative|comparative of|superlative of|past of|participle of|form of|abbreviation of|alternative form|alternative spelling|misspelling|see |diminutive of|feminine of|masculine of|neuter of)\b/i;
+  /^(first|second|third|1st|2nd|3rd)[- ]|^(inflection of|plural of|genitive|dative|nominative|accusative|comparative of|superlative of|past of|participle of|form of|abbreviation of|alternative form|alternative spelling|misspelling|see |diminutive of|feminine of|masculine of|neuter of)\b/i;
 
 export function isCrossReferenceGloss(gloss: string): boolean {
   return CROSS_REFERENCE.test(gloss.trim());
@@ -77,7 +86,11 @@ interface RawKaikki {
   word?: unknown;
   lang?: unknown;
   pos?: unknown;
-  senses?: Array<{ glosses?: string[] }>;
+  senses?: Array<{
+    glosses?: string[];
+    form_of?: Array<{ word?: string }>;
+    tags?: string[];
+  }>;
 }
 
 /**
@@ -103,8 +116,25 @@ export function parseKaikkiEntry(line: string, maxGlosses = 3): KaikkiEntry | nu
   const pos = mapKaikkiPos(typeof raw.pos === "string" ? raw.pos : "");
   if (!pos) return null;
 
+  const senses = raw.senses ?? [];
+
+  // An inflected form states its base. Its "gloss" describes the shape, not a meaning, so the
+  // entry contributes a form→lemma mapping and no translations at all.
+  const formOfSense = senses.find((sense) => (sense.form_of ?? []).length > 0);
+  const statedBase = formOfSense?.form_of?.[0]?.word;
+  if (typeof statedBase === "string" && statedBase.trim()) {
+    return {
+      word,
+      lemmaKey: lemmaKeyOf(word),
+      lang: "de",
+      pos,
+      glosses: [],
+      formOf: statedBase.trim(),
+    };
+  }
+
   const glosses: string[] = [];
-  for (const sense of raw.senses ?? []) {
+  for (const sense of senses) {
     const first = (sense.glosses ?? [])[0];
     if (typeof first !== "string") continue;
     if (isCrossReferenceGloss(first)) continue;
@@ -114,5 +144,5 @@ export function parseKaikkiEntry(line: string, maxGlosses = 3): KaikkiEntry | nu
   }
   if (glosses.length === 0) return null;
 
-  return { word, lemmaKey: lemmaKeyOf(word), lang: "de", pos, glosses };
+  return { word, lemmaKey: lemmaKeyOf(word), lang: "de", pos, glosses, formOf: null };
 }

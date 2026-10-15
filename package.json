@@ -19,7 +19,7 @@
     "recompute:difficulty": "tsx src/scripts/import/recompute-difficulty.ts",
     "import:ding": "tsx src/scripts/import/import-ding.ts",
     "import:cedict": "tsx src/scripts/import/import-cedict.ts",
-    "import:kaikki-glosses": "tsx src/scripts/import/import-kaikki-glosses.ts"
+    "import:kaikki": "tsx src/scripts/import/import-kaikki.ts"
   },
   "dependencies": {
     "hono": "^4.11.1",

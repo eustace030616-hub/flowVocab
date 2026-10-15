@@ -27,11 +27,25 @@
 import type { Types } from "mongoose";
 
 import { Word } from "../../models/Word";
+import { Inflection } from "../../models/Inflection";
 import type { TargetLang } from "../lang";
-import { tokenize, wordSpans, type LemmaLookup, type Span } from "../tokenize";
+import { lemmaKeyOf, tokenize, wordSpans, type LemmaLookup, type Span } from "../tokenize";
 
-/** Answers which of the given lemma keys exist. Backed by the database, or by a Map in tests. */
-export type LexiconQuery = (candidates: string[]) => Promise<Set<string>>;
+/** What a lexicon lookup returns: dictionary entries, and stated inflections. */
+export interface LexiconData {
+  /** Lemma keys that exist as dictionary entries. */
+  known: Set<string>;
+  /** Surface form → citation form, as stated by a morphological source. */
+  forms: Map<string, string>;
+}
+
+/**
+ * Answers a batch of questions. Backed by the database, or by in-memory maps in tests.
+ *
+ * `candidates` come from the rule-based lemmatiser and grow as it asks for more; `forms` are the
+ * surfaces in the text, asked for once so a stated inflection can short-circuit the rules.
+ */
+export type LexiconQuery = (candidates: string[], forms: string[]) => Promise<LexiconData>;
 
 /**
  * Tokenize against an arbitrary lexicon query.
@@ -46,43 +60,91 @@ export async function tokenizeAgainst(
   maxPasses = 3,
 ): Promise<Span[]> {
   const known = new Set<string>();
-  let spans: Span[] = [];
+  const forms = new Map<string, string>();
+
+  // Ask about the surfaces up front: a stated inflection short-circuits the rules entirely, so it
+  // is worth one query before lexing rather than discovering it after a wrong answer.
+  const surfaces = [...new Set(wordSpans(tokenize(text, targetLang)).map((s) => lemmaKeyOf(s.surface)))];
+  const first = await query([], surfaces);
+  for (const key of first.known) known.add(key);
+  for (const [form, base] of first.forms) forms.set(form, base);
+
+  const options = () => ({
+    lookup: (candidate: string) => known.has(candidate),
+    resolveForm: (form: string) => forms.get(form) ?? null,
+  });
 
   for (let pass = 0; pass < maxPasses; pass += 1) {
     const missed = new Set<string>();
-    spans = tokenize(text, targetLang, {
+    const spans = tokenize(text, targetLang, {
       lookup: (candidate: string) => {
         if (known.has(candidate)) return true;
         missed.add(candidate);
         return false;
       },
+      resolveForm: (form: string) => forms.get(form) ?? null,
     });
 
     // Nothing new was requested, so another pass would produce identical spans.
     if (missed.size === 0) return spans;
 
-    const found = await query([...missed]);
-    for (const key of found) known.add(key);
+    const more = await query([...missed], []);
+    for (const key of more.known) known.add(key);
+    for (const [form, base] of more.forms) forms.set(form, base);
   }
 
   // Final pass so the returned spans reflect everything learned.
-  return tokenize(text, targetLang, { lookup: (candidate) => known.has(candidate) });
+  return tokenize(text, targetLang, options());
 }
 
-/** The database-backed query: one `$in` per pass over exactly the candidates that were asked for. */
+/**
+ * The database-backed query: one `$in` per batch, over exactly what was asked for.
+ *
+ * A stated inflection is only honoured when its base is a real dictionary entry, so a mapping can
+ * never resolve a word to something the glossary cannot gloss.
+ */
 export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
-  return async (candidates) => {
-    if (candidates.length === 0) return new Set();
-    const found = await Word.find({
-      targetLang,
-      lemmaKey: { $in: candidates },
-      // Dataset entries only. A word the learner marked is created on the spot, and letting those
-      // in would make any marked word look like a dictionary headword to the tokenizer.
-      origin: "import",
-    })
-      .select("lemmaKey")
-      .lean();
-    return new Set(found.map((w) => w.lemmaKey));
+  return async (candidates, surfaces) => {
+    const known = new Set<string>();
+
+    if (candidates.length > 0) {
+      const found = await Word.find({
+        targetLang,
+        lemmaKey: { $in: candidates },
+        // Dataset entries only. A word the learner marked is created on the spot, and letting those
+        // in would make any marked word look like a dictionary headword to the tokenizer.
+        origin: "import",
+      })
+        .select("lemmaKey")
+        .lean();
+      for (const word of found) known.add(word.lemmaKey);
+    }
+
+    const forms = new Map<string, string>();
+    if (surfaces.length > 0) {
+      const rows = await Inflection.find({ targetLang, form: { $in: surfaces } })
+        .select("form base baseLemmaKey")
+        .lean();
+
+      // Only bases we actually hold, so every resolved word can still be looked up and glossed.
+      const bases = [...new Set(rows.map((r) => r.baseLemmaKey))];
+      const baseWords = bases.length
+        ? await Word.find({ targetLang, lemmaKey: { $in: bases }, origin: "import" })
+            .select("lemmaKey")
+            .lean()
+        : [];
+      const knownBases = new Set(baseWords.map((w) => w.lemmaKey));
+
+      for (const row of rows) {
+        if (!knownBases.has(row.baseLemmaKey)) continue;
+        // Deterministic when a form has several bases: the shortest wins, then alphabetical.
+        const current = forms.get(row.form);
+        if (!current || row.base.length < current.length) forms.set(row.form, row.base);
+        known.add(row.baseLemmaKey);
+      }
+    }
+
+    return { known, forms };
   };
 }
 

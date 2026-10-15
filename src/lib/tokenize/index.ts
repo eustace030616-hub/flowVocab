@@ -62,6 +62,14 @@ export interface Span {
 export interface TokenizeOptions {
   /** Lexicon probe. Supplying it turns best-effort lemmatisation into lookup-backed lemmatisation. */
   lookup?: LemmaLookup;
+  /**
+   * Stated form→citation-form mapping, e.g. `liest` → `lesen`, `kurzen` → `kurz`.
+   *
+   * Takes priority over the suffix rules because it is *stated* rather than guessed, and because
+   * the rules cannot get these right: the stem changes between `lesen` and `liest`, so the rules
+   * matched the surface against an unrelated noun entry instead.
+   */
+  resolveForm?: (form: string) => string | null;
   /** Detect separable verbs (German only, on by default). */
   separable?: boolean;
   /** Split compounds into parts when every part resolves (German only, on by default). */
@@ -203,7 +211,7 @@ export function tokenize(
   lang: TargetLang,
   options: TokenizeOptions = {},
 ): Span[] {
-  const { lookup, separable = lang === "de", compounds = lang === "de" } = options;
+  const { lookup, resolveForm, separable = lang === "de", compounds = lang === "de" } = options;
   const input = nfc(text);
   const segmenter = new Intl.Segmenter(LOCALE_OF[lang], { granularity: "word" });
 
@@ -227,7 +235,16 @@ export function tokenize(
       continue;
     }
 
-    const resolved = resolveLemma(part.segment, lang, kind === "word" ? lookup : undefined);
+    // A stated citation form wins over anything the rules can propose.
+    const statedBase = kind === "word" ? resolveForm?.(lemmaKeyOf(part.segment)) : null;
+    const resolved = statedBase
+      ? {
+          lemma: statedBase,
+          lemmaKey: lemmaKeyOf(statedBase),
+          matched: lookup ? lookup(lemmaKeyOf(statedBase)) : false,
+          candidates: [statedBase],
+        }
+      : resolveLemma(part.segment, lang, kind === "word" ? lookup : undefined);
     const span: Span = {
       surface: part.segment,
       lemma: resolved.lemma,
