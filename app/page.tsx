@@ -78,13 +78,12 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     unfamiliar: "unfamiliar",
     lookups: "looked up",
     exposures: "seen",
-    noGloss: "No gloss yet — import the dictionary layer to fill this in.",
+    noGloss: "No translation yet.",
     estimated: "estimated",
     coverage: "coverage",
     compound: "compound",
     parts: "Parts",
     headWord: "base word",
-    partsNote: "A word-formation breakdown to read, not a translation.",
     separable: "separable verb",
     falseFriend: "false friend",
     cognate: "cognate",
@@ -102,13 +101,12 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     unfamiliar: "生词",
     lookups: "查询",
     exposures: "扫过",
-    noGloss: "暂无释义 — 导入词典数据后显示。",
+    noGloss: "暂无译文。",
     estimated: "估算",
     coverage: "覆盖率",
     compound: "复合词",
     parts: "构词成分",
     headWord: "核心词",
-    partsNote: "这是构词拆解，用于理解，并非译文。",
     separable: "可分动词",
     falseFriend: "假朋友",
     cognate: "同源词",
@@ -745,6 +743,10 @@ export default function Home() {
                       </>
                     );
                   }
+                  // A compound without a direct entry is not missing anything: the breakdown
+                  // below is the explanation, so apologising for a missing gloss there would
+                  // contradict what is on screen.
+                  if (active.span.compoundParts?.length) return null;
                   return (
                     <p className="text-xs text-zinc-400 mt-2 italic">{t.noGloss}</p>
                   );
@@ -791,7 +793,6 @@ export default function Home() {
                         );
                       })}
                     </ul>
-                    <p className="text-[10px] text-zinc-400 mt-1">{t.partsNote}</p>
                   </>
                 )}
 
