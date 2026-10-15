@@ -428,8 +428,15 @@ export default function Home() {
       viewport,
       popover: size,
     });
-    setPopoverPos({ top, left });
-  }, [active, viewport, activeVocab]);
+
+    // Bail out when nothing moved. `setPopoverPos` with a fresh object always re-renders, and a
+    // re-render re-runs this effect, so an unconditional set is an infinite loop.
+    setPopoverPos((prev) => (prev && prev.top === top && prev.left === left ? prev : { top, left }));
+    // Deliberately NOT depending on `activeVocab`: it is rebuilt as a fresh object on every render
+    // (server vocabulary merged with the session overlay), so using it as a dependency made this
+    // effect fire on every render and loop. Geometry depends on the anchor, the viewport and the
+    // measured box — never on the text inside it.
+  }, [active, viewport]);
 
   const isActiveOwner = (span: Span) => active?.ownerStart === ownerOf(span);
   const isHoveredOwner = (span: Span) => hoveredOwner === ownerOf(span);
