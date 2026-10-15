@@ -12,7 +12,11 @@
     "fetch:data": "bash src/scripts/import/fetch-data.sh",
     "import:english": "tsx src/scripts/import/import-english.ts",
     "import:german": "tsx src/scripts/import/import-german.ts",
-    "import:licences": "tsx src/scripts/import/write-licences.ts"
+    "import:licences": "tsx src/scripts/import/write-licences.ts",
+    "export:frequency": "tsx src/scripts/import/collect-frequency-words.ts && ./.venv-data/bin/python src/scripts/import/wordfreq_export.py en data/en/frequency-words.txt data/en/wordfreq-zipf.json && ./.venv-data/bin/python src/scripts/import/wordfreq_export.py de data/de/frequency-words.txt data/de/wordfreq-zipf.json",
+    "import:frequency": "tsx src/scripts/import/import-frequency.ts",
+    "import:german-rank": "tsx src/scripts/import/import-german-rank.ts",
+    "recompute:difficulty": "tsx src/scripts/import/recompute-difficulty.ts"
   },
   "dependencies": {
     "hono": "^4.11.1",

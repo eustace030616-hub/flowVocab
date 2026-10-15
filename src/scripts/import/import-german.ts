@@ -137,17 +137,26 @@ export function parsePh98(json: string): Map<string, CefrLevel> {
  *
  * From the DWDS Häufigkeitsklasse when present, else from the ph98 level, else unknown (-1).
  *
- * Deliberately coarse, and worth knowing why: class 0 alone holds 112,492 of the 236,254 lemmas
- * that have a class, so the beginner end of the scale has almost no within-class resolution.
- * A Leipzig rank refines the frequent band; until then, i+1 selection over German beginners is
- * the weakest part of the pipeline and should not be trusted to pick a *next* word, only a band.
+ * ## Direction of the DWDS scale
+ *
+ * Higher class means MORE frequent, so difficulty is `1 - class/6`. This was originally written
+ * the other way round, which made *Haus* (class 5) hard and *Aalreuse* (class 0) easy — the whole
+ * German ladder upside down. Verified empirically against the corpus:
+ *
+ *     Aalreuse 0   Eiche 3   Gift 3   Wortschatz 2   Baum 4   Wasser 4   Haus 5
+ *     wordfreq Zipf: Haus 5.41 > Gift 4.02 > Wortschatz 3.60   (same order)
+ *
+ * Deliberately coarse: only seven buckets, and **112,492 of the 236,242 classed lemmas sit in
+ * class 0** — the rare tail, undifferentiated. So DWDS says almost nothing about exactly the
+ * words a learner is heading towards. A Leipzig rank splits that tail; until then, German
+ * difficulty should be trusted to pick a *band*, not a specific next word.
  */
 export function difficultyForRow(row: {
   dwdsFrequencyClass?: number;
   level: CefrLevel | null;
 }): number {
   if (typeof row.dwdsFrequencyClass === "number") {
-    return row.dwdsFrequencyClass / 6;
+    return 1 - row.dwdsFrequencyClass / 6;
   }
   if (row.level) {
     const order: CefrLevel[] = ["A1", "A2", "B1", "B2", "C1", "C2"];

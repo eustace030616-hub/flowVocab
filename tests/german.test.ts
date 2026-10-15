@@ -61,17 +61,43 @@ test("DWDS frequency classes span 0–6 and leave ~45k lemmas unclassed", { skip
   assert.equal(rows.filter((r) => r.frequencyClass === undefined).length, 281_195 - 236_242);
 });
 
-test("the frequent band is coarse: class 0 alone holds over 100k lemmas", { skip: skipDwds }, () => {
-  // This is why German i+1 selection is only band-accurate today, so it is asserted rather
-  // than merely written down in a comment.
+test("the rare tail is one undifferentiated bucket: class 0 holds over 100k lemmas", { skip: skipDwds }, () => {
+  // Higher class means MORE frequent, so class 0 is the rare tail — 47% of all classed lemmas,
+  // with no resolution inside it. That is the gap a Leipzig rank fills, and it is why German
+  // difficulty can pick a band but not a specific next word.
   const class0 = dwds().filter((r) => r.frequencyClass === 0).length;
   assert.equal(class0, 112_490);
   assert.ok(class0 / 236_242 > 0.47, "almost half of all classed lemmas sit in one bucket");
 });
 
+test("a common word has a HIGH dwds class and a rare one a LOW class", { skip: skipDwds }, () => {
+  // Regression guard for an inverted difficulty ladder. The first implementation used
+  // `class / 6`, which made "Haus" (class 5) hard and "Aalreuse" (class 0) easy.
+  const byLemma = new Map<string, number>();
+  for (const row of dwds()) {
+    if (row.frequencyClass !== undefined && !byLemma.has(row.lemmaKey)) {
+      byLemma.set(row.lemmaKey, row.frequencyClass);
+    }
+  }
+
+  assert.equal(byLemma.get("haus"), 5);
+  assert.equal(byLemma.get("baum"), 4);
+  assert.equal(byLemma.get("eiche"), 3);
+  assert.equal(byLemma.get("aalreuse"), 0);
+
+  // And the derived difficulty must run the other way.
+  const haus = difficultyForRow({ dwdsFrequencyClass: byLemma.get("haus"), level: null });
+  const aalreuse = difficultyForRow({ dwdsFrequencyClass: byLemma.get("aalreuse"), level: null });
+  assert.ok(haus < aalreuse, "the more frequent word must be less difficult");
+});
+
 test("difficulty comes from frequency when available, else the estimated level", () => {
-  assert.equal(difficultyForRow({ dwdsFrequencyClass: 0, level: "C2" }), 0);
-  assert.equal(difficultyForRow({ dwdsFrequencyClass: 6, level: "A1" }), 1);
+  // Higher DWDS class = more frequent = easier. Class 6 is the easiest, class 0 the hardest.
+  assert.equal(difficultyForRow({ dwdsFrequencyClass: 6, level: "A1" }), 0);
+  assert.equal(difficultyForRow({ dwdsFrequencyClass: 0, level: "C2" }), 1);
+  assert.equal(difficultyForRow({ dwdsFrequencyClass: 3, level: null }), 0.5);
+
+  // With no frequency class, fall back to the (estimated) level midpoint.
   assert.ok(Math.abs(difficultyForRow({ level: "A1" }) - 0.5 / 6) < 1e-9);
   assert.equal(difficultyForRow({ level: null }), -1);
 });

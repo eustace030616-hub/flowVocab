@@ -110,14 +110,36 @@ the vocabulary, splitting the learner's history across two documents (see `src/l
 
 Item difficulty is continuous in `[0,1]`; CEFR is a label on top of it.
 
-| Track | Source | Honest status |
+Difficulty is derived from **corpus frequency**, and the CEFR lists *calibrate* that mapping
+rather than being the scale. For each level the median wordfreq Zipf is measured, and a monotone
+piecewise-linear curve is fitted through those points. Every word then gets a continuous score,
+including words no list covers.
+
+| Track | Calibrated on | Measured anchors (Zipf) |
 |---|---|---|
-| English | CEFR-J v1.5 + Octanove C1/C2, re-merged on `(lemma, pos)` | anchored to real CEFR lists |
-| German | DWDS Häufigkeitsklasse + an LLM-assigned CEFR prior | **estimated above A2** |
+| English | CEFR-J v1.5 + Octanove C1/C2, re-merged on `(lemma, pos)` — 9,715 rows | A1 5.02 · A2 4.57 · B1 4.19 · B2 3.77 · C1 3.29 · C2 2.88 |
+| German | **Goethe A1–B1, offline only** — 3,323 words | A1 5.02 · A2 4.71 · B1 4.44 |
+
+The two languages agree on A1 (Zipf 5.02) while being fitted entirely independently, which is a
+useful cross-check.
+
+Three honest limitations, all deliberate:
+
+- **German has no B2/C1/C2 anchors**, so 247,362 words rarer than the B1 anchor get a difficulty
+  but **no level** — the curve clamps, and a clamp is a floor, not a ceiling. Claiming "B1"
+  because that is where the curve stops would be an overclaim.
+- **A level is never derived from the DWDS class.** Seven coarse buckets cannot support a six-band
+  CEFR claim, and class 0 is an undifferentiated rare tail.
+- **German difficulty is flat above B1** (everything clamps to one value). Within A1–B1 it is
+  continuous. This is the weakest part of the German ladder and the next thing to improve.
 
 There is **no official German C1/C2 vocabulary list** — none was ever published — and the A1–B1
-Goethe lists may not be redistributed. So German labels ship with `levelEstimated: true`, and the
-interface is expected to say so rather than imply a measurement.
+Goethe lists may not be redistributed, so they are read only for offline calibration and never
+stored. Every German level ships with `levelEstimated: true`.
+
+Paragraph difficulty is the mean difficulty of its content words, which puts text and item
+difficulty on one scale. It is a coarse proxy: the proper i+1 metric is lexical *coverage* against
+a specific learner, which needs the ability model (Phase 2).
 
 ## API
 
@@ -145,10 +167,14 @@ npm run dev              # development server
 npm test                 # tokenizer, importer and learner-model tests
 npm run typecheck        # tsc --noEmit
 npm run fetch:data       # download open datasets (--full for the large corpora)
-npm run import:english   # CEFR-J + Octanove → Word
-npm run import:german    # DWDS + estimated levels → Word
-npm run import:licences  # regenerate LICENSES/
-npm run seed             # reset and seed demo data
+npm run import:english      # CEFR-J + Octanove → Word  (9,779 rows)
+npm run import:german       # DWDS + kaikki morphology → Word  (-- --with-kaikki)
+npm run import:licences     # regenerate LICENSES/
+npm run export:frequency    # word list → wordfreq Zipf table (needs .venv-data)
+npm run import:frequency    # attach Zipf, scored on the best of a word's forms
+npm run import:german-rank  # Leipzig corpus ranks (splits the DWDS rare tail)
+npm run recompute:difficulty  # fit the curve and write difficulty  (-- --with-goethe-anchors)
+npm run seed                # reset and seed demo data
 ```
 
 ## Licensing

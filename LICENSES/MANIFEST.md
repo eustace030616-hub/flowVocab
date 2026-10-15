@@ -1,6 +1,6 @@
 # Data sources and licences
 
-Generated 2026-10-15T19:14:28.600Z from `src/lib/licence/datasets.ts`.
+Generated 2026-10-15T19:24:40.790Z from `src/lib/licence/datasets.ts`.
 
 Datasets: 16 · shippable: 13 · share-alike or copyleft: 9 · offline-only: 3
 

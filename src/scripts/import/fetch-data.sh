@@ -20,7 +20,7 @@ DATA="$ROOT/data"
 FULL=0
 [ "${1:-}" = "--full" ] && FULL=1
 
-mkdir -p "$DATA/en" "$DATA/de"
+mkdir -p "$DATA/en" "$DATA/de" "$DATA/zh"
 SOURCES="$DATA/SOURCES.json"
 [ -f "$SOURCES" ] || echo '{"retrievedAt": "", "files": []}' > "$SOURCES"
 
@@ -45,13 +45,34 @@ fetch "https://raw.githubusercontent.com/ph98/german-cefr-wordlist/main/data/ger
       "$DATA/de/ph98-german-cefr-wordlist.json"
 
 if [ "$FULL" = "1" ]; then
-  echo "Large corpora (--full):"
+  echo "Large corpora (--full, ~530 MB):"
   fetch "https://downloads.wortschatz-leipzig.de/corpora/deu_news_2024_1M.tar.gz" \
         "$DATA/de/leipzig-deu_news_2024_1M.tar.gz"
   fetch "https://kaikki.org/dictionary/German/kaikki.org-dictionary-German.jsonl.gz" \
         "$DATA/de/kaikki-de.jsonl.gz"
 else
   echo "Skipping large corpora (Leipzig ~229 MB, kaikki German ~294 MB). Use --full."
+fi
+
+echo "Glosses:"
+fetch "https://www.mdbg.net/chinese/export/cedict/cedict_1_0_ts_utf-8_mdbg.zip" \
+      "$DATA/zh/cedict_1_0_ts_utf-8_mdbg.zip"
+fetch "https://ftp.tu-chemnitz.de/pub/Local/urz/ding/de-en-devel/de-en.txt" \
+      "$DATA/de/ding-de-en.txt"
+
+# Offline calibration anchors. These are NOT shippable: the Goethe-Institut lists are
+# protected (saving and network distribution require written consent) and DeReWo is
+# CC BY-NC. They are fetched only on request, land in a git-ignored directory, and are
+# consumed by an offline calibration step. See src/lib/licence/datasets.ts.
+if [ "${2:-}" = "--offline-anchors" ] || [ "${1:-}" = "--offline-anchors" ]; then
+  echo
+  echo "Offline calibration anchors (copyright: never commit, ship, or import):"
+  mkdir -p "$DATA/offline-anchors"
+  for level in A1 A2 B1; do
+    fetch "https://www.dwds.de/api/lemma/goethe/$level.csv" "$DATA/offline-anchors/goethe-$level.csv"
+  done
+  echo "  NOTE: these are © Goethe-Institut. Use locally to fit the frequency->CEFR curve;"
+  echo "        write only the DERIVED bands to the database."
 fi
 
 echo

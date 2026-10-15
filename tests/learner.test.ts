@@ -28,6 +28,12 @@ import { tokenize, wordSpans, coverage } from "../src/lib/tokenize/index";
 import { tokenizeAgainst } from "../src/lib/learner/lexicon";
 import { resolveLemma } from "../src/lib/tokenize/rules";
 import { pickExistingWord } from "../src/lib/learner/resolve";
+import {
+  difficultyFromZipf,
+  fitZipfCalibration,
+  levelFromDifficulty,
+  levelMidpoint,
+} from "../src/lib/difficulty";
 import type { Span } from "../src/lib/tokenize/index";
 import {
   SEED_PARAGRAPHS,
@@ -299,4 +305,82 @@ test("a mark attaches to the existing vocabulary entry instead of creating a dup
   assert.equal(pickExistingWord(mixed, "")?.pos, "verb");
 
   assert.equal(pickExistingWord([], "verb"), null, "nothing to reuse means create");
+});
+
+// ── Frequency → difficulty calibration ────────────────────────────────────────
+
+test("the curve is monotone: rarer words are never easier", () => {
+  const calibration = fitZipfCalibration([
+    { zipf: 6.5, level: "A1" }, { zipf: 6.1, level: "A1" },
+    { zipf: 5.2, level: "A2" }, { zipf: 5.0, level: "A2" },
+    { zipf: 4.2, level: "B1" }, { zipf: 4.4, level: "B1" },
+    { zipf: 3.4, level: "B2" }, { zipf: 3.6, level: "B2" },
+    { zipf: 2.6, level: "C1" }, { zipf: 2.8, level: "C1" },
+    { zipf: 1.8, level: "C2" }, { zipf: 2.0, level: "C2" },
+  ]);
+
+  assert.equal(calibration.anchors.length, 6);
+
+  // Anchors are ordered by zipf ASCENDING, which means difficulty DESCENDING.
+  let previousZipf = Number.NEGATIVE_INFINITY;
+  for (const anchor of calibration.anchors) {
+    assert.ok(anchor.zipf >= previousZipf, "anchors must be sorted by ascending zipf");
+    previousZipf = anchor.zipf;
+  }
+
+  // Difficulty must fall as frequency rises, at every step.
+  const ascending = [...calibration.anchors].sort((a, b) => a.zipf - b.zipf);
+  for (let i = 1; i < ascending.length; i += 1) {
+    assert.ok(
+      ascending[i].difficulty < ascending[i - 1].difficulty,
+      "more frequent must mean less difficult",
+    );
+  }
+});
+
+test("non-monotone labels are clamped, not trusted", () => {
+  // CEFR-J (A1–B2) and Octanove (C1–C2) were built to different standards and disagree. If C1's
+  // median came out *more* frequent than B2's, an unclamped fit would call rare words easy.
+  const calibration = fitZipfCalibration([
+    { zipf: 6.0, level: "A1" },
+    { zipf: 5.0, level: "A2" },
+    { zipf: 4.0, level: "B1" },
+    { zipf: 3.0, level: "B2" },
+    { zipf: 3.9, level: "C1" }, // inverted on purpose
+    { zipf: 2.0, level: "C2" },
+  ]);
+  const b2 = calibration.anchors.find((a) => a.level === "B2")!;
+  const c1 = calibration.anchors.find((a) => a.level === "C1")!;
+  assert.ok(c1.zipf <= b2.zipf, "C1 must not be more frequent than B2 after clamping");
+});
+
+test("difficultyFromZipf interpolates and clamps instead of extrapolating", () => {
+  const calibration = fitZipfCalibration([
+    { zipf: 6.0, level: "A1" },
+    { zipf: 3.0, level: "B2" },
+  ]);
+
+  // Between anchors: halfway in zipf is halfway in difficulty.
+  const mid = difficultyFromZipf(4.5, calibration);
+  const a1 = levelMidpoint("A1");
+  const b2 = levelMidpoint("B2");
+  assert.ok(Math.abs(mid - (a1 + b2) / 2) < 1e-9);
+
+  // Beyond the calibrated range the nearest anchor holds — a word rarer than the rarest anchor
+  // is not "more than C2".
+  assert.equal(difficultyFromZipf(9.9, calibration), a1, "very frequent clamps to A1");
+  assert.equal(difficultyFromZipf(0.5, calibration), b2, "very rare clamps to the rarest anchor");
+
+  // wordfreq reports 0 for a word it has never seen; that is *unknown*, not "extremely rare".
+  // Treating it as rare would silently promote unseen words to C2.
+  assert.equal(difficultyFromZipf(0, calibration), -1, "no frequency evidence means no difficulty");
+  assert.equal(difficultyFromZipf(-3, calibration), -1);
+});
+
+test("an estimated level comes back as the right band", () => {
+  assert.equal(levelFromDifficulty(levelMidpoint("A1")), "A1");
+  assert.equal(levelFromDifficulty(levelMidpoint("B2")), "B2");
+  assert.equal(levelFromDifficulty(levelMidpoint("C2")), "C2");
+  assert.equal(levelFromDifficulty(0.999), "C2");
+  assert.equal(levelFromDifficulty(-1), null);
 });
