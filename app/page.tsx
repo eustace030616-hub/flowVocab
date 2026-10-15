@@ -144,6 +144,14 @@ export default function Home() {
   const [winHeight, setWinHeight] = useState(0);
   const [lastEvent, setLastEvent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Live per-lemma state after a mark, kept OUT of `paragraphs`.
+   *
+   * Marking must not create a new paragraph object: the reset effect keys off the paragraph, so
+   * a new identity re-ran it and reverted the mark that had just been applied — the tint flashed
+   * and disappeared, and the click looked like it did nothing.
+   */
+  const [liveState, setLiveState] = useState<Record<string, Partial<VocabularyEntry>>>({});
 
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -173,14 +181,16 @@ export default function Home() {
     }
 
     if (track && track !== meData.track) {
-      const patched = await readJson<Me>(
+      const patched = await readJson<Partial<Me>>(
         await fetch("/api/me/track", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ track }),
         }),
       );
-      if (patched && Array.isArray(patched.tracks)) meData = patched;
+      // Merge rather than replace: the response carries the new track and its languages, and
+      // requiring it to also carry `tracks` silently left the UI on the old track.
+      if (patched?.targetLang) meData = { ...meData, ...patched } as Me;
     }
     setMe(meData);
 
@@ -202,7 +212,11 @@ export default function Home() {
     setWinHeight(window.innerHeight);
   }, [load]);
 
-  // Sync local marks + record exposure whenever the displayed paragraph changes.
+  // Sync local marks + record exposure when the displayed paragraph changes.
+  //
+  // Deliberately keyed on the paragraph *identity*, not on every state update: `paragraphs` is
+  // only replaced by `load()`, so this runs when the learner turns the page or switches track,
+  // and not when they mark a word.
   useEffect(() => {
     if (!paragraph) return;
     const next = new Set<number>();
@@ -210,6 +224,7 @@ export default function Home() {
       if (status === "marked") next.add(Number(start));
     }
     setMarked(next);
+    setLiveState({});
     setActive(null);
     setHoveredOwner(null);
 
@@ -295,11 +310,12 @@ export default function Home() {
     }
   };
 
-  const toggleMark = useCallback(async () => {
-    if (!active || !paragraph || !me) return;
-    const span = active.span;
+  const toggleMark = useCallback(async (ownerStart: number) => {
+    if (!paragraph || !me) return;
+    const span = paragraph.spans.find((s) => s.start === ownerStart);
+    if (!span) return;
     const isMarked = marked.has(span.start);
-    const vocab = paragraph.vocabulary[span.lemmaKey];
+    const vocab = { ...paragraph.vocabulary[span.lemmaKey], ...liveState[span.lemmaKey] };
     const body = {
       targetLang: paragraph.targetLang,
       lemmaKey: span.lemmaKey,
@@ -336,34 +352,21 @@ export default function Home() {
       setLastEvent(
         `${isMarked ? "unmark" : "mark"} → met ${state.timesMet}, unfamiliar ${state.unfamiliarity}, ${state.status}`,
       );
-      // Reflect the recomputed state locally without a refetch.
-      setParagraphs((prev) =>
-        prev.map((p) => {
-          if (p._id !== paragraph._id) return p;
-          const vocab = { ...p.vocabulary };
-          const existing = vocab[span.lemmaKey];
-          vocab[span.lemmaKey] = {
-            lemma: span.lemma,
-            pos: existing?.pos ?? "",
-            gloss: existing?.gloss ?? null,
-            glossGenerated: existing?.glossGenerated ?? null,
-            glossSource: existing?.glossSource ?? null,
-            level: existing?.level ?? null,
-            levelEstimated: existing?.levelEstimated ?? false,
-            difficulty: existing?.difficulty ?? -1,
-            article: existing?.article ?? null,
-            plural: existing?.plural ?? null,
-            status: state.status,
-            timesMet: state.timesMet,
-            unfamiliarity: state.unfamiliarity,
-            lookupCount: state.lookupCount,
-            exposureCount: state.exposureCount,
-          };
-          return { ...p, vocabulary: vocab };
-        }),
-      );
+      // Overlay the recomputed state. Rebuilding the paragraph object here would change its
+      // identity, re-run the reset effect below, and revert the mark that was just applied.
+      setLiveState((prev) => ({
+        ...prev,
+        [span.lemmaKey]: {
+          pos: vocab?.pos ?? "",
+          status: state.status,
+          timesMet: state.timesMet,
+          unfamiliarity: state.unfamiliarity,
+          lookupCount: state.lookupCount,
+          exposureCount: state.exposureCount,
+        },
+      }));
     }
-  }, [active, paragraph, me, marked]);
+  }, [paragraph, me, marked, liveState]);
 
   const coverage = useMemo(() => {
     if (!paragraph) return null;
@@ -374,8 +377,15 @@ export default function Home() {
     return { total: units.length, unknown, value: (units.length - unknown) / units.length };
   }, [paragraph, marked, ownerOf]);
 
-  const vocabOf = (span: Span): VocabularyEntry | undefined =>
-    paragraph?.vocabulary[span.lemmaKey];
+  /** Server vocabulary, with this session's post-mark overlay applied. */
+  const vocabOf = (span: Span): VocabularyEntry | undefined => {
+    const base = paragraph?.vocabulary[span.lemmaKey];
+    const live = liveState[span.lemmaKey];
+    if (!base && !live) return undefined;
+    return { ...base, ...live } as VocabularyEntry;
+  };
+
+  const activeVocab = active ? vocabOf(active.span) : undefined;
 
   const isActiveOwner = (span: Span) => active?.ownerStart === ownerOf(span);
   const isHoveredOwner = (span: Span) => hoveredOwner === ownerOf(span);
@@ -450,7 +460,21 @@ export default function Home() {
             className="flex-1 bg-white border border-zinc-200 rounded-xl p-6 overflow-auto"
             onMouseMove={handleMouseMove}
             onMouseLeave={handleBoxLeave}
-            onClick={() => void toggleMark()}
+            onClick={(e) => {
+              // Resolve the word from the click itself. Previously the handler used the hover
+              // popover's state, so a plain click before the 350 ms hover delay did nothing.
+              const el = (e.target as HTMLElement).closest("[data-owner]") as HTMLElement | null;
+              const owner = el?.dataset.owner;
+              if (owner === undefined || !el) return;
+              const ownerStart = Number(owner);
+              // Open the popover for the clicked word too, so the result of the click is visible
+              // without waiting for a hover.
+              const clicked = paragraph?.spans.find((s) => s.start === ownerStart);
+              if (clicked) {
+                setActive({ ownerStart, span: clicked, rect: el.getBoundingClientRect() });
+              }
+              void toggleMark(ownerStart);
+            }}
           >
             {paragraph ? (
               <p className="text-lg leading-relaxed text-zinc-800 select-text">
@@ -514,6 +538,7 @@ export default function Home() {
                   isOnPopover.current = false;
                   setActive(null);
                 }}
+                onClick={(e) => e.stopPropagation()}
                 className="fixed z-50 bg-white border border-zinc-200 rounded-lg shadow-lg p-3 min-w-[200px] max-w-[320px]"
                 style={{
                   left: active.rect.left + active.rect.width / 2,
@@ -523,12 +548,12 @@ export default function Home() {
               >
                 <p className="text-lg font-semibold text-zinc-800">
                   {(() => {
-                    const vocab = paragraph ? paragraph.vocabulary[active.span.lemmaKey] : undefined;
+                    const vocab = activeVocab;
                     return vocab?.article ? `${vocab.article} ` : "";
                   })()}
                   {active.span.lemma}
                   {(() => {
-                    const vocab = paragraph ? paragraph.vocabulary[active.span.lemmaKey] : undefined;
+                    const vocab = activeVocab;
                     return vocab?.plural ? (
                       <span className="text-xs font-normal text-zinc-400">
                         {" "}
@@ -540,7 +565,7 @@ export default function Home() {
 
                 <div className="flex flex-wrap gap-1 mt-1">
                   {(() => {
-                    const vocab = paragraph ? paragraph.vocabulary[active.span.lemmaKey] : undefined;
+                    const vocab = activeVocab;
                     if (!vocab?.level) return null;
                     return (
                       <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600 font-medium">
@@ -560,7 +585,7 @@ export default function Home() {
                     </span>
                   )}
                   {(() => {
-                    const vocab = paragraph ? paragraph.vocabulary[active.span.lemmaKey] : undefined;
+                    const vocab = activeVocab;
                     if (!vocab) return null;
                     const flags: string[] = [];
                     if (vocab.status === "known") flags.push(t.mastered);
@@ -576,7 +601,7 @@ export default function Home() {
                 </div>
 
                 {(() => {
-                  const vocab = paragraph ? paragraph.vocabulary[active.span.lemmaKey] : undefined;
+                  const vocab = activeVocab;
                   if (vocab?.gloss) {
                     return (
                       <>
@@ -595,7 +620,7 @@ export default function Home() {
                 })()}
 
                 {(() => {
-                  const vocab = paragraph ? paragraph.vocabulary[active.span.lemmaKey] : undefined;
+                  const vocab = activeVocab;
                   if (!vocab) return null;
                   return (
                     <p className="text-[10px] text-zinc-400 mt-2">

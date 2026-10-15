@@ -99,7 +99,9 @@ app.patch("/me/track", async (c) => {
   }
   const user = c.get("user");
   const updated = await setTrack(user.userId, body.track);
-  return c.json({ ...updated, ...trackOf(updated) });
+  // Must include `tracks`, exactly like GET /me: the client uses this response to decide which
+  // target language to load. Omitting it left the UI on the previous track's content.
+  return c.json({ ...updated, ...trackOf(updated), tracks: Object.values(TRACKS) });
 });
 
 // ── Paragraphs ────────────────────────────────────────────────────────────────
