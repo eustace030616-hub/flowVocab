@@ -375,13 +375,19 @@ export default function Home() {
     return () => window.removeEventListener("resize", measure);
   }, [load]);
 
-  // Sync local marks + record exposure when the displayed paragraph changes.
-  //
-  // Deliberately keyed on the paragraph *identity*, not on every state update: `paragraphs` is
-  // only replaced by `load()`, so this runs when the learner turns the page or switches track,
-  // and not when they mark a word.
+  /**
+   * Reset the per-view state when the displayed paragraph changes.
+   *
+   * Keyed on the paragraph's *identity string*, never on the `me` object or on the paragraph object
+   * itself. Both were tried and both broke marking, in the same way: the effect resets `marked` from
+   * the server's copy of the paragraph, so anything that re-ran it reverted the mark the learner had
+   * just made. `me` re-ran it whenever an ability estimate came back from a mark — the click applied
+   * and then visibly unapplied itself — and the paragraph object re-ran it whenever the paragraph
+   * list was updated.
+   */
   useEffect(() => {
     if (!paragraph) return;
+
     const next = new Set<number>();
     for (const [start, status] of Object.entries(paragraph.marked)) {
       if (status === "marked") next.add(Number(start));
@@ -390,10 +396,20 @@ export default function Home() {
     setLiveState({});
     setActive(null);
     setHoveredOwner(null);
-
-    if (!me || exposed.current.has(paragraph._id)) return;
-    exposed.current.add(paragraph._id);
     lookedUp.current.clear();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on identity on purpose
+  }, [paragraph?._id]);
+
+  /**
+   * Record exposure once per paragraph per session.
+   *
+   * Depends on the learner's id rather than the learner object, for the same reason: an ability
+   * estimate arriving mid-read is not a new reader.
+   */
+  useEffect(() => {
+    if (!paragraph || !me) return;
+    if (exposed.current.has(paragraph._id)) return;
+    exposed.current.add(paragraph._id);
 
     const items = paragraph.spans
       .filter((s) => s.kind === "word" || s.kind === "number")
@@ -416,7 +432,8 @@ export default function Home() {
         items,
       }),
     });
-  }, [paragraph, me]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the paragraph's identity, not its contents
+  }, [paragraph?._id, me?.userId]);
 
   /**
    * Record that the learner opened a word — `lookup`, the signal that was never sent.
@@ -606,6 +623,23 @@ export default function Home() {
     // with it. Adopting it is what makes the level stateful: the header moves now, and the next
     // paragraph is scored against the updated level rather than the one from before the mark.
     adoptAbility(data.ability);
+
+    // Persist the mark into the paragraph list as well as the live overlay. The overlay tints the
+    // current view; the list is what a later visit to this paragraph reads. Updating it no longer
+    // resets anything, because the reset is keyed on the paragraph's identity string.
+    setParagraphs((prev) =>
+      prev.map((item) =>
+        item._id === paragraph._id
+          ? {
+              ...item,
+              marked: {
+                ...item.marked,
+                [String(span.start)]: isMarked ? "ignored" : "marked",
+              },
+            }
+          : item,
+      ),
+    );
 
     const state = data.state;
     if (state) {
