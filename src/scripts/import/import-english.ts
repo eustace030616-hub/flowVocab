@@ -83,7 +83,6 @@ async function main() {
           lemmaKey: word.lemmaKey,
           pos: word.pos,
           surfaceForms: [],
-          glosses: [],
           frequency: {},
         },
       },

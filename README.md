@@ -55,13 +55,17 @@ src/
 │   ├── learner/
 │   │   ├── state.ts               derive state from the append-only event log
 │   │   ├── lexicon.ts             server-side lemma lookup against the database
+│   │   ├── glosses.ts             read glosses, prefer the best-ranked source
+│   │   ├── resolve.ts             attach a mark to an existing word, never fork it
 │   │   └── user.ts                learner identity (cookie; not auth)
+│   ├── difficulty.ts              frequency → continuous difficulty, calibrated on CEFR
 │   └── licence/
 │       ├── datasets.ts            every source + its licence, as code
 │       └── index.ts               LICENSES/ manifest generation
 ├── models/
 │   ├── Paragraph.ts               content, language, difficulty, coverage
-│   ├── Word.ts                    shared reference data: (targetLang, lemma, pos), glosses
+│   ├── Word.ts                    shared reference data: (targetLang, lemma, pos), level, frequency
+│   ├── Gloss.ts                   translations, ONE DOCUMENT PER SOURCE (licence seam)
 │   ├── WordState.ts               PER LEARNER: status, timesMet, unfamiliarity, …
 │   ├── Mark.ts                    one learner's mark on one character span
 │   ├── Event.ts                   append-only log: the source of truth
@@ -69,7 +73,9 @@ src/
 │   └── Provenance.ts              per-dataset licence records
 └── scripts/
     ├── seed.ts, seed-data.ts      demo content for both tracks
-    └── import/                    fetch-data.sh, import-english, import-german, write-licences
+    └── import/                    fetch-data.sh · import-english · import-german
+                                   import-frequency · import-german-rank · import-ding
+                                   recompute-difficulty · write-licences · ding.ts
 ```
 
 ## Data model
@@ -105,6 +111,26 @@ Three things changed from the original model, and each was a blocker for the sec
 A mark resolves to an existing vocabulary entry rather than upserting on `(lemma, pos)` blindly —
 otherwise a caller that does not send a part of speech creates a second row for a word already in
 the vocabulary, splitting the learner's history across two documents (see `src/lib/learner/resolve.ts`).
+
+## Glosses
+
+Translations are **not** stored on `Word`. They live in `Gloss`, one document per translation per
+source, because almost every usable dictionary is share-alike or copyleft and the rule for such
+data is that it stays separable — merging licensed gloss text into a collection that also holds
+proprietary content makes the whole collection an adaptation carrying the same licence. A separate
+collection per source also lets one source be attributed, re-imported, or purged as a unit.
+
+`rank` is a **cross-source** preference order: curated content claims 0 and imported dictionaries
+start at 1, so a hand-written gloss outranks a dump. Ties break deterministically on source and text.
+
+Gloss language follows the **content**, not the learner's stored track — English is glossed in
+Chinese, German in English. Reading it off the track instead meant a request for German paragraphs
+while the track was still `zh-en` looked for Chinese glosses and silently found none.
+
+| Track | Gloss source | Coverage of the 100k most frequent German words |
+|---|---|---|
+| `en-de` | ding / Beolingus, **GPL-3+** (copyleft) | 93% of DWDS class 6, 85% of class 4, 11% of class 0 |
+| `zh-en` | CC-CEDICT, CC BY-SA 4.0 | **not imported yet** — the demo shows seed glosses only |
 
 ## Difficulty and levels
 
@@ -173,6 +199,7 @@ npm run import:licences     # regenerate LICENSES/
 npm run export:frequency    # word list → wordfreq Zipf table (needs .venv-data)
 npm run import:frequency    # attach Zipf, scored on the best of a word's forms
 npm run import:german-rank  # Leipzig corpus ranks (splits the DWDS rare tail)
+npm run import:ding         # German→English glosses (GPL-3+, own collection)
 npm run recompute:difficulty  # fit the curve and write difficulty  (-- --with-goethe-anchors)
 npm run seed                # reset and seed demo data
 ```

@@ -18,6 +18,7 @@ import {
   parsePh98,
 } from "../src/scripts/import/import-german";
 import { assertShippable, shippableDatasets, DATASETS } from "../src/lib/licence/datasets";
+import { parseDingLine, rankEntries } from "../src/scripts/import/ding";
 
 const DWDS_PATH = path.join(process.cwd(), "data", "de", "dwds-lemmata.csv");
 const PH98_PATH = path.join(process.cwd(), "data", "de", "ph98-german-cefr-wordlist.json");
@@ -157,4 +158,70 @@ test("share-alike obligations are recorded, including the ones hidden by an MIT 
   const ding = DATASETS["ding-beolingus-de-en"];
   assert.equal(ding.copyleft, true);
   assert.equal(ding.commercialUse, true, "GPL permits commercial use, it just imposes copyleft");
+});
+
+// ── ding: the German→English gloss source ─────────────────────────────────────
+
+test("ding: the first English slot translates the headword, later slots are examples", () => {
+  // This is a phrase dictionary. Treating later slots as further glosses is how "Haus" collected
+  // "to stay home" as a meaning of "house".
+  const entry = parseDingLine(
+    "Haus {n} [arch.] | Häuser {pl} | ein Haus bauen :: house | houses | to build a house",
+  )!;
+  assert.equal(entry.headword, "Haus");
+  assert.deepEqual(entry.glosses, ["house"]);
+});
+
+test("ding: gender markers become an article, and {pl} means the plural form", () => {
+  assert.equal(parseDingLine("Haus {n} | Häuser {pl} :: house")!.article, "das");
+  assert.equal(parseDingLine("Baum {m} | Bäume {pl} :: tree")!.article, "der");
+  assert.equal(parseDingLine("Lösung {f} | Lösungen {pl} :: solution")!.article, "die");
+  // A plural-only noun takes "die" and is its own plural.
+  const pluralOnly = parseDingLine("Aalmolche {pl}; Fischmolche {pl} :: amphiumas")!;
+  assert.equal(pluralOnly.article, "die");
+  assert.equal(pluralOnly.plural, "Aalmolche");
+  // A verb has no article.
+  assert.equal(parseDingLine("aufstehen {vi} :: to get up")!.article, undefined);
+});
+
+test("ding: plural comes only from the slot after the headword", () => {
+  // Scanning further slots picks compounds out of the example list.
+  const entry = parseDingLine(
+    "Lösung {f} | geschlossene Lösung | Prüflösungen {pl} :: solution | closed solution | test solutions",
+  )!;
+  assert.equal(entry.plural, undefined, "a {pl} marker on an example is not the headword's plural");
+});
+
+test("ding: markers are stripped before splitting, so a marker cannot break a gloss", () => {
+  // "to understand {understood; understood}" splits into two malformed halves if the `;` split
+  // happens before the marker is removed.
+  const entry = parseDingLine("verstehen; begreifen {vt} :: to understand {understood; understood}")!;
+  assert.deepEqual(entry.glosses, ["to understand"]);
+  assert.equal(entry.headword, "verstehen");
+  assert.equal(entry.headwordHasSynonyms, true);
+});
+
+test("ding: notation and trailing punctuation are cleaned off glosses", () => {
+  assert.deepEqual(parseDingLine("Wasser {n} /H₂O/ :: water")!.glosses, ["water"]);
+  assert.deepEqual(parseDingLine("Lösung {f} :: solution /soltn/")!.glosses, ["solution"]);
+  assert.deepEqual(parseDingLine("Streit {m} :: dispute.; quarrel.")!.glosses, ["dispute", "quarrel"]);
+});
+
+test("ding: the canonical line wins — richness beats a thin stray entry", () => {
+  // "Wasser" appears on a rich line glossed "water" and a stray one-slot line glossed "eau".
+  const rich = parseDingLine("Wasser {n} | kaltes Wasser | heißes Wasser :: water | cold water | hot water")!;
+  const stray = parseDingLine("Wasser {n} :: eau")!;
+  const ranked = rankEntries([stray, rich], "Wasser");
+  assert.deepEqual(ranked[0].glosses, ["water"]);
+});
+
+test("ding: an exact case match beats a case-folded one", () => {
+  // "Verstehen" (noun, understanding) and "verstehen" (verb, to understand) share a lemma key,
+  // and German capitalisation is the only thing telling them apart.
+  const noun = parseDingLine("Verstehen {n} [phil.] | Selbstverstehen {n} :: understanding | self-understanding")!;
+  const verb = parseDingLine("verstehen {vt} | verstanden :: to understand | understood")!;
+  assert.equal(noun.lemmaKey, verb.lemmaKey);
+
+  assert.deepEqual(rankEntries([noun, verb], "verstehen")[0].glosses, ["to understand"]);
+  assert.deepEqual(rankEntries([noun, verb], "Verstehen")[0].glosses, ["understanding"]);
 });

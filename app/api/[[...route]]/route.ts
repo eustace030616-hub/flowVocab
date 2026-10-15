@@ -7,7 +7,13 @@ import { Paragraph } from "@/src/models/Paragraph";
 import { Word } from "@/src/models/Word";
 import { Mark } from "@/src/models/Mark";
 import { Provenance } from "@/src/models/Provenance";
-import { isTargetLang, isTrackId, TRACKS, type GlossLang, type TargetLang } from "@/src/lib/lang";
+import {
+  glossLangFor,
+  isTargetLang,
+  isTrackId,
+  TRACKS,
+  type TargetLang,
+} from "@/src/lib/lang";
 import {
   resolveUser,
   setTrack,
@@ -24,17 +30,10 @@ import {
 import { WordState } from "@/src/models/WordState";
 import { tokenizeWithLexicon, wordsForSpans } from "@/src/lib/learner/lexicon";
 import { pickExistingWord } from "@/src/lib/learner/resolve";
+import { allGlossesFor, glossesFor } from "@/src/lib/learner/glosses";
 import { wordSpans, TOKENIZER_VERSION } from "@/src/lib/tokenize";
 
 type Variables = { user: ResolvedUser };
-
-/** Shape of an embedded gloss as it comes back from a lean() query. */
-interface StoredGloss {
-  lang: string;
-  text: string;
-  source: string;
-  generated: boolean;
-}
 
 const app = new Hono<{ Variables: Variables }>().basePath("/api");
 
@@ -80,10 +79,6 @@ function targetLangFor(
   return trackOf(c.get("user")).targetLang;
 }
 
-function glossLangFor(c: { get: (k: "user") => ResolvedUser }): GlossLang {
-  return trackOf(c.get("user")).glossLang;
-}
-
 // ── Learner ───────────────────────────────────────────────────────────────────
 
 app.get("/me", (c) => {
@@ -116,7 +111,8 @@ app.patch("/me/track", async (c) => {
 app.get("/paragraphs", async (c) => {
   const user = c.get("user");
   const targetLang = targetLangFor(c);
-  const glossLang = glossLangFor(c);
+  // Follow the content's language, not the learner's stored track.
+  const glossLang = glossLangFor(targetLang);
 
   const paragraphs = await Paragraph.find({ targetLang })
     .sort({ difficulty: 1, createdAt: 1 })
@@ -136,27 +132,26 @@ app.get("/paragraphs", async (c) => {
     const keys = [...lexicon.keys()];
     const words = keys.length
       ? await Word.find({ targetLang, lemmaKey: { $in: keys } })
-          .select("lemmaKey lemma pos glosses level levelEstimated difficulty frequency article plural cognateWithEn falseFriend")
+          .select("lemmaKey lemma pos level levelEstimated difficulty frequency article plural cognateWithEn falseFriend")
           .lean()
       : [];
 
     // This learner's own state, which lives in WordState rather than on the shared Word.
     const states = await statesFor(user.userId, targetLang, keys);
+    // Translations, from their own collection — one per source, attributed.
+    const glosses = await glossesFor(targetLang, glossLang, keys);
 
     const vocabulary: Record<string, unknown> = {};
     for (const word of words) {
       if (vocabulary[word.lemmaKey]) continue;
-      const gloss =
-        (word.glosses as StoredGloss[]).find((g) => g.lang === glossLang) ??
-        (word.glosses as StoredGloss[])[0] ??
-        null;
+      const gloss = glosses.get(word.lemmaKey) ?? null;
       const state = states.get(word.lemmaKey);
       vocabulary[word.lemmaKey] = {
         lemma: word.lemma,
         pos: word.pos,
-        gloss: gloss ? gloss.text : null,
-        glossGenerated: gloss ? gloss.generated : null,
-        glossSource: gloss ? gloss.source : null,
+        gloss: gloss?.text ?? null,
+        glossGenerated: gloss?.generated ?? null,
+        glossSource: gloss?.source ?? null,
         level: word.level,
         levelEstimated: word.levelEstimated,
         difficulty: word.difficulty,
@@ -230,7 +225,8 @@ app.get("/words/:lemmaKey", async (c) => {
   if (!word) return c.json({ error: "Not found" }, 404);
 
   const states = await statesFor(user.userId, targetLang, [lemmaKey]);
-  return c.json({ ...word, state: states.get(lemmaKey) ?? null });
+  const glosses = await allGlossesFor(targetLang, lemmaKey);
+  return c.json({ ...word, state: states.get(lemmaKey) ?? null, glosses });
 });
 
 /**
@@ -281,7 +277,6 @@ app.post("/words/mark", async (c) => {
         lemmaKey,
         pos,
         lemma: body.lemma || body.surface || lemmaKey,
-        glosses: [],
         frequency: {},
         level: null,
         levelEstimated: false,
@@ -396,7 +391,7 @@ app.post("/words/batch", async (c) => {
   const keys = (body.lemmaKeys ?? body.words ?? []).map((k) => k.toLowerCase());
 
   const words = await Word.find({ targetLang, lemmaKey: { $in: keys } })
-    .select("lemma lemmaKey pos glosses level levelEstimated difficulty status timesMet unfamiliarity lookupCount exposureCount")
+    .select("lemma lemmaKey pos level levelEstimated difficulty article plural")
     .lean();
   return c.json(words);
 });

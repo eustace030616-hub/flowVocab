@@ -49,6 +49,23 @@ export const TRACKS: Record<TrackId, Track> = {
 
 export const DEFAULT_TRACK: TrackId = "zh-en";
 
+/**
+ * Which language glosses content in a given target language.
+ *
+ * Derived from the *content*, never from the user's stored track. The two can disagree — a request
+ * for German paragraphs while the learner's track is still `zh-en` — and reading the gloss language
+ * off the track then looks for Chinese glosses on German words and silently finds none. The product
+ * decision is fixed anyway: English is glossed in Chinese, German in English.
+ */
+export const GLOSS_LANG_FOR: Record<TargetLang, GlossLang> = {
+  en: "zh",
+  de: "en",
+};
+
+export function glossLangFor(targetLang: TargetLang): GlossLang {
+  return GLOSS_LANG_FOR[targetLang];
+}
+
 export function isTrackId(value: unknown): value is TrackId {
   return value === "zh-en" || value === "en-de";
 }

@@ -19,6 +19,7 @@ import { Mark } from "../models/Mark";
 import { Event } from "../models/Event";
 import { User } from "../models/User";
 import { Provenance } from "../models/Provenance";
+import { Gloss } from "../models/Gloss";
 import { lemmaKeyOf } from "../lib/tokenize/normalize";
 import { tokenize, wordSpans } from "../lib/tokenize";
 import {
@@ -51,12 +52,12 @@ async function seed() {
   // DWDS — so seeding must not insert blindly. Two steps keep the two sources separable:
   //
   //   1. words that exist *only* because of the seed are removed
-  //   2. demo glosses are pulled from everything, then re-added
+  //   2. demo glosses are removed by source and re-added
   //
   // A word that also arrived from an import keeps its level, frequency and difficulty: the
   // dataset is better evidence than a hand-written seed value.
   await Word.deleteMany({ levelSource: "seed-manual" });
-  await Word.updateMany({}, { $pull: { glosses: { source: SEED_SOURCE } } });
+  await Gloss.deleteMany({ source: SEED_SOURCE });
 
   if (reset) {
     await Promise.all([
@@ -93,10 +94,43 @@ async function seed() {
           cognateWithEn: word.cognateWithEn,
           falseFriend: word.falseFriend,
         },
-        $push: { glosses: { $each: word.glosses } },
       },
       { upsert: true },
     );
+  }
+
+  // ── Glosses ───────────────────────────────────────────────────────────────
+  // Translations live in their own collection, one document per gloss per source, so that
+  // share-alike and copyleft dictionary text never mixes into the shared vocabulary entries.
+  for (const word of SEED_WORDS) {
+    const entry = await Word.findOne({
+      targetLang: word.targetLang,
+      lemmaKey: lemmaKeyOf(word.lemma),
+      pos: word.pos,
+    })
+      .select("_id")
+      .lean();
+
+    for (const [index, g] of word.glosses.entries()) {
+      await Gloss.updateOne(
+        {
+          targetLang: word.targetLang,
+          lemmaKey: lemmaKeyOf(word.lemma),
+          lang: g.lang,
+          source: g.source,
+          text: g.text,
+        },
+        {
+          $set: {
+            wordId: entry?._id,
+            license: g.license,
+            generated: g.generated,
+            rank: index,
+          },
+        },
+        { upsert: true },
+      );
+    }
   }
 
   // ── Paragraphs ────────────────────────────────────────────────────────────

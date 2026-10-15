@@ -1,25 +1,5 @@
 import mongoose, { Schema, Document, models, model } from "mongoose";
-import type { CefrLevel, GlossLang, TargetLang } from "../lib/lang";
-
-/**
- * A translation, in a specific gloss language, from a specific source with a specific licence.
- *
- * Glosses are a list rather than a single `definition` string because the same item needs
- * different translations per track (an English headword glossed in Chinese for `zh-en`,
- * a German headword glossed in English for `en-de`), and because nearly every usable
- * dictionary source is share-alike or copyleft and therefore has to stay attributable.
- */
-export interface Gloss {
-  lang: GlossLang;
-  text: string;
-  sense?: string;
-  /** Dataset id, e.g. "cc-cedict", "wikdict-en-de", "cefrj-vocabulary-profile-1.5". */
-  source: string;
-  /** Licence string as published by that dataset. */
-  license: string;
-  /** True when machine-generated (MT/LLM) rather than human-curated. */
-  generated: boolean;
-}
+import type { CefrLevel, TargetLang } from "../lib/lang";
 
 /** One column per independent corpus. Their agreement is a confidence signal. */
 export interface Frequency {
@@ -44,7 +24,9 @@ export interface IWord extends Document {
   pos: string;
   /** Inflected forms, so running text can be matched back to this headword. */
   surfaceForms: string[];
-  glosses: Gloss[];
+  // NOTE: translations are NOT stored here. See models/Gloss.ts — share-alike and copyleft
+  // dictionary text has to stay in its own collection, and one headword legitimately has
+  // several glosses from several sources.
 
   /** CEFR label. null is a legitimate value: German has no C1/C2 wordlist. */
   level: CefrLevel | null;
@@ -72,18 +54,6 @@ export interface IWord extends Document {
   updatedAt: Date;
 }
 
-const GlossSchema = new Schema<Gloss>(
-  {
-    lang: { type: String, enum: ["en", "zh"], required: true },
-    text: { type: String, required: true },
-    sense: { type: String },
-    source: { type: String, required: true },
-    license: { type: String, required: true },
-    generated: { type: Boolean, default: false },
-  },
-  { _id: false },
-);
-
 const WordSchema = new Schema<IWord>(
   {
     targetLang: { type: String, enum: ["en", "de"], required: true },
@@ -91,7 +61,6 @@ const WordSchema = new Schema<IWord>(
     lemma: { type: String, required: true },
     pos: { type: String, default: "" },
     surfaceForms: { type: [String], default: [] },
-    glosses: { type: [GlossSchema], default: [] },
 
     level: { type: String, enum: ["A1", "A2", "B1", "B2", "C1", "C2", null], default: null },
     levelEstimated: { type: Boolean, default: false },

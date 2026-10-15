@@ -301,7 +301,6 @@ async function main() {
           lemmaKey: row.lemmaKey,
           pos: row.pos,
           surfaceForms: [],
-          glosses: [],
         },
       },
       upsert: true,
