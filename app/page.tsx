@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Span } from "@/src/lib/tokenize";
 import { DEFAULT_POPOVER, placePopover } from "@/src/lib/ui/popover";
 import { groupMeanings, meaningLabel } from "@/src/lib/ui/meanings";
+import { coverageLabel } from "@/src/lib/ui/coverage-label";
 
 interface VocabularyEntry {
   lemma: string;
@@ -61,6 +62,9 @@ interface Paragraph {
     tokens: number;
     unknownIn: number;
     verdict: "too_hard" | "supported" | "comfortable";
+    /** False when no ability has been measured, so the number is a prediction rather than a result. */
+    measured: boolean;
+    basis: { theta: number; n: number; se: number } | null;
   };
 }
 
@@ -120,11 +124,17 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     levelFromOther: "seeded from your other language",
     levelRange: "somewhere in",
     estimated: "estimated",
-    coverage: "coverage",
+    coverage: "known",
+    coverageUnmeasured: "not measured yet",
+    coverageUnmeasuredHint: "take the placement test",
+    oneIn: "1 in",
+    unfamiliarWords: "unfamiliar",
+    coverageHelp:
+      "Coverage: the share of this text's words you probably know, from your level and your reading history. 98% or more reads comfortably, below 95% is hard going.",
     verdictTooHard: "hard",
     verdictSupported: "supported",
     verdictComfortable: "comfortable",
-    perKnown: "likely known",
+    levelBasis: "level from",
     compound: "compound",
     parts: "Parts",
     headWord: "base word",
@@ -162,11 +172,17 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     levelFromOther: "来自另一语言的水平",
     levelRange: "大致范围",
     estimated: "估算",
-    coverage: "覆盖率",
+    coverage: "已知",
+    coverageUnmeasured: "尚未测量",
+    coverageUnmeasuredHint: "去做定级测试",
+    oneIn: "每",
+    unfamiliarWords: "词 1 个生词",
+    coverageHelp:
+      "覆盖率：根据你的水平与阅读记录，估算这段文字中你已掌握的词占比。98% 以上可轻松阅读，低于 95% 会比较吃力。",
     verdictTooHard: "偏难",
     verdictSupported: "有支持",
     verdictComfortable: "轻松",
-    perKnown: "可能已掌握",
+    levelBasis: "水平依据",
     compound: "复合词",
     parts: "构词成分",
     headWord: "核心词",
@@ -622,12 +638,15 @@ export default function Home() {
     }
 
     const value = total / units.length;
-    const unknown = Math.max(0, 1 - value);
     return {
       total: units.length,
       value,
-      unknown: unknown <= 0 ? Number.POSITIVE_INFINITY : Math.max(1, Math.round(1 / unknown)),
+      // Formatted once, so the percentage and the ratio cannot disagree — they did, and it was the
+      // reason the badge read "98% · 1:64".
+      label: coverageLabel(value),
       verdict: server.verdict,
+      measured: server.measured,
+      basis: server.basis,
     };
   }, [paragraph, marked, ownerOf]);
 
@@ -746,22 +765,49 @@ export default function Home() {
               {coverage && (
                 <span
                   className={`text-xs px-2 py-0.5 rounded-full ${
-                    coverage.verdict === "too_hard"
-                      ? "bg-amber-50 text-amber-700"
-                      : coverage.verdict === "supported"
-                        ? "bg-sky-50 text-sky-700"
-                        : "bg-emerald-50 text-emerald-700"
+                    !coverage.measured
+                      ? "bg-zinc-100 text-zinc-500"
+                      : coverage.verdict === "too_hard"
+                        ? "bg-amber-50 text-amber-700"
+                        : coverage.verdict === "supported"
+                          ? "bg-sky-50 text-sky-700"
+                          : "bg-emerald-50 text-emerald-700"
                   }`}
-                  title={`${coverage.total} word tokens`}
+                  title={
+                    `${t.coverageHelp}\n` +
+                    (coverage.measured && coverage.basis
+                      ? `${t.levelBasis} θ=${coverage.basis.theta.toFixed(2)} ± ${coverage.basis.se.toFixed(2)} · n=${coverage.basis.n.toFixed(0)}`
+                      : t.coverageUnmeasured)
+                  }
                 >
-                  {t.coverage} {(coverage.value * 100).toFixed(0)}%
-                  {Number.isFinite(coverage.unknown) && ` · ${t.perKnown} 1:${coverage.unknown}`}
-                  {" · "}
-                  {coverage.verdict === "too_hard"
-                    ? t.verdictTooHard
-                    : coverage.verdict === "supported"
-                      ? t.verdictSupported
-                      : t.verdictComfortable}
+                  {coverage.measured ? (
+                    <>
+                      {t.coverage} {coverage.label.percent}%
+                      {coverage.label.oneIn !== null && (
+                        <>
+                          {" · "}
+                          {t.oneIn} {coverage.label.oneIn} {t.unfamiliarWords}
+                        </>
+                      )}
+                      {" · "}
+                      {coverage.verdict === "too_hard"
+                        ? t.verdictTooHard
+                        : coverage.verdict === "supported"
+                          ? t.verdictSupported
+                          : t.verdictComfortable}
+                    </>
+                  ) : (
+                    <>
+                      {t.coverage} {t.coverageUnmeasured}
+                      {" · "}
+                      <button
+                        onClick={() => void startPlacement()}
+                        className="underline hover:text-zinc-700"
+                      >
+                        {t.coverageUnmeasuredHint}
+                      </button>
+                    </>
+                  )}
                 </span>
               )}
             </div>

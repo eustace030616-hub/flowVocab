@@ -43,18 +43,31 @@ export interface KnownOptions {
   parts?: Map<string, string[]>;
 }
 
+export interface KnownResult {
+  probabilities: Map<string, number>;
+  /**
+   * The ability the probabilities were computed from, and how much evidence stands behind it.
+   *
+   * Returned because a probability derived from an unmeasured ability is a prediction, not a
+   * measurement — and the interface has to be able to say so. Showing a learner "you know 82% of
+   * this" before anything has been measured is the fabricated-number problem in a new costume.
+   */
+  ability: { theta: number; n: number; se: number } | null;
+}
+
 export async function knownProbabilities(
   userId: string,
   targetLang: TargetLang,
   lemmaKeys: string[],
   options: KnownOptions = {},
-): Promise<Map<string, number>> {
+): Promise<KnownResult> {
   const unique = [...new Set(lemmaKeys)];
   const result = new Map<string, number>();
-  if (unique.length === 0) return result;
+  const basis = { probabilities: result, ability: null as KnownResult["ability"] };
+  if (unique.length === 0) return basis;
 
-  const [ability, events] = await Promise.all([
-    AbilityState.findOne({ userId, targetLang }).select("theta").lean(),
+  const [abilityRow, events] = await Promise.all([
+    AbilityState.findOne({ userId, targetLang }).select("theta n se").lean(),
     // Bounded by time: evidence older than four half-lives carries 6% of its weight and cannot
     // change the answer, so reading it made every page load do work proportional to the learner's
     // whole history for no effect. `ts` descending plus a ceiling keeps a pathological log from
@@ -77,7 +90,10 @@ export async function knownProbabilities(
     );
   }
 
-  const theta = ability?.theta ?? UNMEASURED_THETA;
+  const theta = abilityRow?.theta ?? UNMEASURED_THETA;
+  basis.ability = abilityRow
+    ? { theta: abilityRow.theta, n: abilityRow.n ?? 0, se: abilityRow.se }
+    : null;
   const folded = foldWordEvidence(events as EventLike[]);
 
   const words = await Word.find({
@@ -131,7 +147,7 @@ export async function knownProbabilities(
     result.set(lemmaKey, weakest);
   }
 
-  return result;
+  return basis;
 }
 
 /** Coverage of one text, from the same probabilities. */
@@ -141,7 +157,7 @@ export async function coverageFor(
   tokens: CoverageToken[],
   options: KnownOptions = {},
 ): Promise<CoverageResult> {
-  const probabilities = await knownProbabilities(
+  const { probabilities } = await knownProbabilities(
     userId,
     targetLang,
     tokens.map((token) => token.lemmaKey),

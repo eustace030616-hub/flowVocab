@@ -163,9 +163,10 @@ app.get("/paragraphs", async (c) => {
     for (const span of spans) {
       if (span.compoundParts?.length) compoundParts.set(span.lemmaKey, span.compoundParts);
     }
-    const probabilities = await knownProbabilities(user.userId, targetLang, keys, {
+    const known = await knownProbabilities(user.userId, targetLang, keys, {
       parts: compoundParts,
     });
+    const probabilities = known.probabilities;
 
     const vocabulary: Record<string, unknown> = {};
     for (const word of words) {
@@ -212,10 +213,16 @@ app.get("/paragraphs", async (c) => {
 
     // i+1 as a measurement rather than a level index: "you know 96% of this" is checkable, and it
     // means the same thing in every language.
-    const coverage = coverageOf(
-      spans.map((span) => ({ lemmaKey: span.lemmaKey, kind: span.kind })),
-      (lemmaKey) => probabilities.get(lemmaKey) ?? 0,
-    );
+    const coverage = {
+      ...coverageOf(
+        spans.map((span) => ({ lemmaKey: span.lemmaKey, kind: span.kind })),
+        (lemmaKey) => probabilities.get(lemmaKey) ?? 0,
+      ),
+      // Whether the ability behind this number was measured at all. Without it the interface would
+      // present a prediction from the default ability as though the learner had been assessed.
+      measured: (known.ability?.n ?? 0) > 0,
+      basis: known.ability,
+    };
 
     out.push({
       ...paragraph,
