@@ -31,6 +31,7 @@ import { WordState } from "@/src/models/WordState";
 import { tokenizeWithLexicon, wordsForSpans } from "@/src/lib/learner/lexicon";
 import { pickExistingWord } from "@/src/lib/learner/resolve";
 import { allGlossesFor, glossesByLemma, pickGloss } from "@/src/lib/learner/glosses";
+import { abilitiesFor, recomputeAllAbilities } from "@/src/lib/learner/profile";
 import { wordSpans, TOKENIZER_VERSION } from "@/src/lib/tokenize";
 
 type Variables = { user: ResolvedUser };
@@ -81,10 +82,12 @@ function targetLangFor(
 
 // ── Learner ───────────────────────────────────────────────────────────────────
 
-app.get("/me", (c) => {
+app.get("/me", async (c) => {
   const user = c.get("user");
   const track = trackOf(user);
-  return c.json({ ...user, ...track, tracks: Object.values(TRACKS) });
+  // Ability is derived from the event log, so it is read rather than stored on the user document.
+  const ability = await abilitiesFor(user.userId);
+  return c.json({ ...user, ...track, tracks: Object.values(TRACKS), ability });
 });
 
 app.patch("/me/track", async (c) => {
@@ -479,7 +482,12 @@ app.post("/events", async (c) => {
       items: body.items,
       source: body.source ?? "web",
     });
-    return c.json({ ok: true, appended: body.items.length, event: event?._id ?? null }, 201);
+    // Exposures are the bulk of the evidence, so the estimate is refreshed here as well.
+    const ability = await recomputeAllAbilities(user.userId);
+    return c.json(
+      { ok: true, appended: body.items.length, event: event?._id ?? null, ability },
+      201,
+    );
   }
 
   if (!type || !(EVENT_TYPES as readonly string[]).includes(type)) {
@@ -504,7 +512,9 @@ app.post("/events", async (c) => {
   });
 
   const state = await recomputeWordState(user.userId, targetLang, body.lemmaKey);
-  return c.json({ ok: true, event: event._id, state }, 201);
+  // Both languages: an English event can change the prior German is using.
+  const ability = await recomputeAllAbilities(user.userId);
+  return c.json({ ok: true, event: event._id, state, ability }, 201);
 });
 
 // ── Licences ──────────────────────────────────────────────────────────────────

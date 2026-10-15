@@ -29,6 +29,19 @@ interface VocabularyEntry {
   exposureCount: number;
 }
 
+/** Per-language ability from the event log, alongside the item difficulties it is measured on. */
+interface AbilityView {
+  targetLang: string;
+  theta: number;
+  se: number;
+  n: number;
+  level: string | null;
+  levelLow: string;
+  levelHigh: string;
+  /** True when the number came from another language and this one has no evidence yet. */
+  fromTransfer: boolean;
+}
+
 interface Paragraph {
   _id: string;
   targetLang: "en" | "de";
@@ -58,6 +71,8 @@ interface Me {  userId: string;
   uiLocale: "en" | "zh";
   label: string;
   tracks: Array<{ id: "zh-en" | "en-de"; label: string; targetLang: string }>;
+  /** Per-language ability, derived from the event log. */
+  ability?: AbilityView[];
 }
 
 interface ActiveItem {
@@ -79,6 +94,10 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     lookups: "looked up",
     exposures: "seen",
     noGloss: "No translation yet.",
+    level: "Level",
+    levelUnknown: "not measured yet",
+    levelFromOther: "seeded from your other language",
+    levelRange: "somewhere in",
     estimated: "estimated",
     coverage: "coverage",
     compound: "compound",
@@ -102,6 +121,10 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     lookups: "查询",
     exposures: "扫过",
     noGloss: "暂无译文。",
+    level: "水平",
+    levelUnknown: "尚未测量",
+    levelFromOther: "来自另一语言的水平",
+    levelRange: "大致范围",
     estimated: "估算",
     coverage: "覆盖率",
     compound: "复合词",
@@ -203,6 +226,15 @@ export default function Home() {
   const isOnPopover = useRef(false);
   /** One exposure batch per paragraph per session. */
   const exposed = useRef<Set<string>>(new Set());
+  /**
+   * Words already recorded as looked up in this paragraph view.
+   *
+   * A lookup is weak evidence and biased — people check words they half-know — so recording the
+   * same word every time the pointer crosses it would let a nervous reader's mouse movements
+   * dominate the estimate. "Looked it up while reading this" is the signal; how many times the
+   * popover flickered open is not.
+   */
+  const lookedUp = useRef<Set<string>>(new Set());
   const sessionId = useRef<string>(
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
@@ -211,6 +243,9 @@ export default function Home() {
 
   const paragraph = paragraphs[paraIndex] ?? null;
   const t = UI[me?.uiLocale ?? "en"];
+  // Ability is per target language, so show the one for the content on screen.
+  const activeAbility =
+    me?.ability?.find((a) => a.targetLang === (paragraph?.targetLang ?? me?.targetLang)) ?? null;
 
   const load = useCallback(async (track?: string) => {
     setError(null);
@@ -280,6 +315,7 @@ export default function Home() {
 
     if (!me || exposed.current.has(paragraph._id)) return;
     exposed.current.add(paragraph._id);
+    lookedUp.current.clear();
 
     const items = paragraph.spans
       .filter((s) => s.kind === "word" || s.kind === "number")
@@ -303,6 +339,39 @@ export default function Home() {
       }),
     });
   }, [paragraph, me]);
+
+  /**
+   * Record that the learner opened a word — `lookup`, the signal that was never sent.
+   *
+   * Deliberately not posted per hover event: once per word per paragraph view. The event log is
+   * the source of truth for the ability model, and a log shaped by pointer jitter would be worse
+   * than no log at all.
+   */
+  const recordLookup = useCallback(
+    (span: Span) => {
+      const key = `${paragraph?._id ?? "?"}:${span.lemmaKey}`;
+      if (lookedUp.current.has(key)) return;
+      lookedUp.current.add(key);
+
+      void fetch("/api/events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "lookup",
+          // The content's language, not the user's current track: a German paragraph is German
+          // wherever it is displayed from.
+          targetLang: paragraph?.targetLang,
+          paragraphId: paragraph?._id,
+          sessionId: sessionId.current,
+          surface: span.surface,
+          lemmaKey: span.lemmaKey,
+          charStart: span.start,
+          charEnd: span.end,
+        }),
+      });
+    },
+    [paragraph],
+  );
 
   /** A span's item identity: a detached particle belongs to the verb that absorbed it. */
   const ownerOf = useCallback((span: Span) => span.absorbedInto ?? span.start, []);
@@ -346,9 +415,11 @@ export default function Home() {
         if (!span) return;
         const rect = (raw as HTMLElement).getBoundingClientRect();
         setActive({ ownerStart, span, rect });
+        // The dwell passed, so this is a real consultation rather than the pointer passing through.
+        recordLookup(span);
       }, HOVER_OPEN_DELAY_MS);
     },
-    [active, findSpan],
+    [active, findSpan, recordLookup],
   );
 
   const handleBoxLeave = () => {
@@ -486,6 +557,28 @@ export default function Home() {
               {me.track} · {t.language}: {me.targetLang}
             </span>
           )}
+          {/* The ability estimate, from the event log. A single level is shown only when the
+              interval is narrow enough to justify one; otherwise a range, or not measured at all. */}
+          {activeAbility && (
+            <span
+              className="text-xs text-zinc-400"
+              title={`θ=${activeAbility.theta.toFixed(2)} ± ${activeAbility.se.toFixed(2)} · n=${activeAbility.n.toFixed(1)}`}
+            >
+              {t.level}:{" "}
+              {activeAbility.level ? (
+                <span className="font-medium text-zinc-600">{activeAbility.level}</span>
+              ) : activeAbility.n === 0 ? (
+                <span>{t.levelUnknown}</span>
+              ) : (
+                <span>
+                  {t.levelRange} {activeAbility.levelLow}–{activeAbility.levelHigh}
+                </span>
+              )}
+              {activeAbility.fromTransfer && (
+                <span className="ml-1 text-zinc-300">({t.levelFromOther})</span>
+              )}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1">
           {me?.tracks?.map((track) => (
@@ -558,6 +651,7 @@ export default function Home() {
               const clicked = paragraph?.spans.find((s) => s.start === ownerStart);
               if (clicked) {
                 setActive({ ownerStart, span: clicked, rect: el.getBoundingClientRect() });
+                recordLookup(clicked);
               }
               void toggleMark(ownerStart);
             }}
