@@ -12,7 +12,10 @@ import { test } from "node:test";
 import { scorePlacement, type PlacementItem } from "../src/lib/learner/placement";
 import {
   ABILITY_SCALE,
+  KNOWN_AT_LEVEL,
+  difficultyAtProbability,
   headSuffixCandidates,
+  probabilityYes,
   SESSIONS_FOR_KNOWN,
   fitAbility,
   isLevelClaimable,
@@ -32,16 +35,37 @@ function unknown(...difficulties: number[]): Observation[] {
 test("probability of knowing rises with ability and falls with difficulty", () => {
   assert.ok(probabilityKnown(0.6, 0.4) > probabilityKnown(0.4, 0.4));
   assert.ok(probabilityKnown(0.5, 0.3) > probabilityKnown(0.5, 0.7));
-  // At equality it is a coin toss, which is what makes θ and difficulty comparable.
-  assert.equal(Math.round(probabilityKnown(0.42, 0.42) * 100), 50);
 });
 
-test("ability lands between the items known and the items not known", () => {
-  // The defining property of the estimate on this axis: the learner is past what they know and
-  // short of what they do not.
+test("a word at the learner's own level is known, not a coin toss", () => {
+  // The anchor, and the bug it fixed. A Rasch crossover puts 50% at θ = difficulty, which is right
+  // for discriminating test items and wrong for CEFR vocabulary: the lists are cumulative, so a B1
+  // learner knows most B1 words. With the crossover anchor a text whose median word was A2 required
+  // C2 ability for 95% coverage — every text was too hard for everyone.
+  assert.equal(Math.round(probabilityKnown(0.42, 0.42) * 100), 95);
+
+  // And the curve around it behaves like vocabulary, not like a quiz.
+  assert.equal(Math.round(probabilityKnown(0.42, 0.25) * 100), 98, "one band below: known");
+  assert.equal(Math.round(probabilityKnown(0.42, 0.58) * 100), 87, "one band above: mostly known");
+  assert.ok(probabilityKnown(0.42, 0.92) < 0.5, "three bands above: mostly not");
+
+  // Coverage of a text made of words at and below the reader's level lands in the i+1 band — which
+  // is the property the whole reading mode depends on.
+  const atAndBelow = [0.1, 0.2, 0.25, 0.3, 0.35, 0.4, 0.42, 0.15, 0.05, 0.42];
+  const coverage = atAndBelow.reduce((sum, d) => sum + probabilityKnown(0.42, d), 0) / atAndBelow.length;
+  assert.ok(coverage >= 0.95 && coverage <= 0.99, `coverage ${coverage} should be supported reading`);
+});
+
+test("the 50% point lands between the items known and the items not known", () => {
+  // θ is now the *95%* point, so the property to check is expressed on the crossover: the learner
+  // knows what they answered and does not know what they did not, at the difficulty where the model
+  // says they are at even odds.
   const estimate = fitAbility([...known(0.2, 0.3, 0.35), ...unknown(0.85, 0.9, 0.8)]);
-  assert.ok(estimate.theta > 0.35, `θ=${estimate.theta} should be above the known items`);
-  assert.ok(estimate.theta < 0.8, `θ=${estimate.theta} should be below the unknown items`);
+  const crossover = difficultyAtProbability(estimate.theta, 0.5);
+  assert.ok(crossover > 0.35, `50% point ${crossover} should be above the known items`);
+  assert.ok(crossover < 0.8, `50% point ${crossover} should be below the unknown items`);
+  // And by construction the level itself is the 95% point.
+  assert.ok(Math.abs(difficultyAtProbability(estimate.theta, KNOWN_AT_LEVEL) - estimate.theta) < 1e-9);
 });
 
 test("ability can fall, which the counter it replaces could not do", () => {
@@ -161,7 +185,8 @@ test("the scale is stated once and used by both directions", () => {
   // θ and difficulty are the same units; if this constant ever forked, the level mapping would
   // silently stop describing the items.
   assert.equal(ABILITY_SCALE, 0.15);
-  assert.equal(Math.round(probabilityKnown(0.5, 0.5) * 100), 50);
+  assert.equal(probabilityYes(0.4, 0.6, 0), probabilityKnown(0.4, 0.6), "no guessing means the same curve");
+  assert.equal(Math.round(probabilityKnown(0.5, 0.5) * 100), Math.round(KNOWN_AT_LEVEL * 100));
 });
 
 test("evidence from the same session counts once", async () => {
@@ -195,23 +220,21 @@ test("an estimate with no evidence reports the widest interval, not a point", ()
   assert.equal(empty.level, null);
 });
 
-test("a few marks move the estimate without turning clicks into a level", () => {
-  // Marking two or three words is real evidence and should be felt, or the level would not respond
-  // to reading at all. But with no prior the fit had nothing to weigh it against and two marks at
-  // low difficulty took ability to 0.01 — an overreaction that then propagated, because the next
-  // paragraph's coverage is computed from whatever the marks left behind.
+test("marking a common word is strong evidence, and the interval says how strong", () => {
+  // Under the 95%-at-level anchor, denying a word at difficulty 0.2 is a real claim: the model says a
+  // learner at the midpoint would know it with probability 0.98. So the estimate moves a long way —
+  // and the safeguard is not that it moves less, but that the interval stays wide enough to refuse a
+  // level. That is what stops two clicks being carried into the next paragraph as a verdict.
   const marks = [0.2, 0.25].map((difficulty) => ({ difficulty, known: false, weight: 1 }));
+  const estimate = fitAbility(marks, { theta: 0.5, weight: 2 });
 
-  const bare = fitAbility(marks);
-  const regularised = fitAbility(marks, { theta: 0.5, weight: 2 });
+  assert.ok(estimate.theta < 0.3, `two denied common words should move it (${estimate.theta})`);
+  assert.equal(estimate.level, null, "two clicks cannot name a level");
+  assert.ok(estimate.se > 0.15, `and the interval says so (se=${estimate.se})`);
+  assert.notEqual(estimate.levelLow, estimate.levelHigh, "the range spans more than one band");
 
-  assert.ok(bare.theta < 0.05, "unregularised, two clicks reach the floor");
-  assert.ok(regularised.theta > bare.theta, "the regulariser holds it up");
-  assert.ok(regularised.theta < 0.5, "while still letting the evidence move it");
-  assert.equal(regularised.level, null, "two clicks cannot name a level");
-  assert.ok(regularised.se > 0.15, `and the interval says so (se=${regularised.se})`);
-
-  // Enough marks do reach the floor, and should: five unknown frequent words is a beginner.
+  // Evidence that accumulates does resolve: eight denied frequent words, still intervals-wide in
+  // total, is enough to place a beginner at the bottom of the scale.
   const many = Array.from({ length: 8 }, (_, i) => ({ difficulty: 0.15 + i * 0.02, known: false, weight: 1 }));
   assert.ok(fitAbility(many, { theta: 0.5, weight: 2 }).theta < 0.15);
 });

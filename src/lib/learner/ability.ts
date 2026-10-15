@@ -33,6 +33,56 @@ import { EVIDENCE_WINDOW_MS, MAX_EVENTS_FOLDED } from "./known";
 /** Slope of the logistic. A 0.15 difficulty gap is roughly 73% expected success. */
 export const ABILITY_SCALE = 0.15;
 
+/**
+ * Probability of knowing a word that sits exactly at the learner's own level.
+ *
+ * This is the model's anchor, and getting it wrong broke the whole scale. A plain Rasch curve puts
+ * the crossover — 50% known — at θ = difficulty, which is right for a test where items are chosen to
+ * discriminate and wrong for vocabulary. CEFR word lists are cumulative statements of what is
+ * *taught*: a B1 learner knows most B1 words, not half of them.
+ *
+ * With the crossover anchor, the measurements said something plainly false. The German seed
+ * paragraph has a median word difficulty of 0.17 (A2) and a maximum of 0.50 (B1), and the model
+ * required **θ = 0.88, C2,** for a reader to reach 95% coverage of it. Every text was too hard for
+ * everyone, and the level-to-coverage relationship — the thing i+1 is defined by — was not
+ * meaningful.
+ *
+ * Anchoring at 0.95 instead puts the 50% point about three bands above the learner's level, so:
+ *
+ *     word at your level        known with 0.95
+ *     one band below           0.98
+ *     one band above           0.87
+ *     two bands above          0.69
+ *
+ * A text built from words at and below your level therefore lands at 95–98% coverage, which is
+ * exactly the i+1 target, and θ keeps its meaning: the difficulty at which you know about 95%.
+ */
+export const KNOWN_AT_LEVEL = 0.95;
+
+/** logit(0.95) ≈ 2.94: the shift that moves the crossover down by ~0.44 difficulty. */
+const KNOWLEDGE_INTERCEPT = Math.log(KNOWN_AT_LEVEL / (1 - KNOWN_AT_LEVEL));
+
+/**
+ * How far above the learner's level the 50% point sits, in difficulty.
+ *
+ * ≈ 0.44, which is between two and three CEFR bands. Useful wherever something needs to be
+ * expressed on the crossover convention instead of the level convention — the fitting prior, most
+ * importantly, which is a symmetric pair of pseudo-observations and is only symmetric at the point
+ * where the probability is one half.
+ */
+export const CROSSOVER_OFFSET = ABILITY_SCALE * KNOWLEDGE_INTERCEPT;
+
+/**
+ * The difficulty the learner knows with the given probability.
+ *
+ * The inverse of `probabilityKnown`, and the honest way to describe a level: "you know about 95% of
+ * words at difficulty θ, and about half of words at θ + 0.44".
+ */
+export function difficultyAtProbability(theta: number, probability: number): number {
+  const clamped = Math.min(0.999, Math.max(0.001, probability));
+  return theta + ABILITY_SCALE * (KNOWLEDGE_INTERCEPT - Math.log(clamped / (1 - clamped)));
+}
+
 /** Ability is clamped inside the open interval; a probability of exactly 0 or 1 is never claimed. */
 const THETA_FLOOR = 0.01;
 const THETA_CEILING = 0.99;
@@ -126,7 +176,7 @@ function levelAt(theta: number): CefrLevel {
 
 /** Probability the learner knows an item of this difficulty. */
 export function probabilityKnown(theta: number, difficulty: number): number {
-  return 1 / (1 + Math.exp(-(theta - difficulty) / ABILITY_SCALE));
+  return 1 / (1 + Math.exp(-((theta - difficulty) / ABILITY_SCALE + KNOWLEDGE_INTERCEPT)));
 }
 
 /**
@@ -167,9 +217,16 @@ export function fitAbility(
   const weighted = [...usable];
   if (prior && prior.weight > 0) {
     const half = prior.weight / 2;
+    // The prior is a symmetric pair — one "known" and one "not known" at the same difficulty — so it
+    // pulls toward its centre without favouring either direction. That symmetry only holds at the
+    // crossover, where the probability is one half, which after the 95%-at-level anchor is 0.44
+    // *above* the prior's level. Placed at the level itself, the pair is lopsided: the "known" term
+    // has almost nothing left to gain and the "not known" term has everything to lose, so the
+    // regulariser dragged the estimate downward instead of holding it steady.
+    const priorDifficulty = prior.theta + CROSSOVER_OFFSET;
     weighted.push(
-      { difficulty: prior.theta, known: true, weight: half, guessing: 0 },
-      { difficulty: prior.theta, known: false, weight: half, guessing: 0 },
+      { difficulty: priorDifficulty, known: true, weight: half, guessing: 0 },
+      { difficulty: priorDifficulty, known: false, weight: half, guessing: 0 },
     );
   }
 

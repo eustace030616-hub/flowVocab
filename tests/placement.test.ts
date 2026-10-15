@@ -17,7 +17,7 @@ import {
   seedFrom,
   type PlacementItem,
 } from "../src/lib/learner/placement";
-import { probabilityYes } from "../src/lib/learner/ability";
+import { difficultyAtProbability, probabilityKnown, probabilityYes } from "../src/lib/learner/ability";
 
 const vocabulary = new Set([
   "wasser", "haus", "baum", "zeit", "wort", "lesen", "gehen", "kommen", "gut", "garten",
@@ -58,7 +58,7 @@ test("generation is seeded, so a retake is comparable", () => {
   assert.notEqual(seedFrom("en"), seedFrom("de"));
 });
 
-test("a learner who knows the easy words and claims none of the fakes scores above zero", () => {
+test("a learner who knows the easy words and claims none of the fakes is placed below what they denied", () => {
   // Threshold at difficulty 0.5: knows everything easier, denies everything harder.
   const items: PlacementItem[] = [];
   for (let i = 0; i < REAL_WORDS; i += 1) {
@@ -76,10 +76,17 @@ test("a learner who knows the easy words and claims none of the fakes scores abo
   assert.equal(score.falseAlarms, 0);
   assert.equal(score.falseAlarmRate, 0);
   assert.ok(score.hits > 30 && score.hits < 36, `hits=${score.hits}`);
-  assert.ok(score.estimate.theta > 0.35 && score.estimate.theta < 0.65, `θ=${score.estimate.theta}`);
   assert.ok(score.dPrime > 2, `a clean separation should give a high d′ (${score.dPrime})`);
-});
 
+  // θ is the 95% point, so it sits below the boundary they denied; the boundary itself is where the
+  // model puts them at even odds.
+  assert.ok(score.estimate.theta < 0.5, `θ=${score.estimate.theta} should be below what they denied`);
+  const crossover = difficultyAtProbability(score.estimate.theta, 0.5);
+  assert.ok(
+    Math.abs(crossover - 0.5) < 0.2,
+    `the 50% point (${crossover}) should land near the boundary they drew`,
+  );
+});
 test("claiming every pseudoword is corrected, not rewarded", () => {
   // The failure the pseudowords exist for: a learner who says yes to everything knows nothing.
   const items: PlacementItem[] = [];
@@ -110,9 +117,13 @@ test("claiming every pseudoword is corrected, not rewarded", () => {
 
 test("the guessing floor is the learner's own false-alarm rate", () => {
   // A constant 1/3 would be a three-option quiz; a yes/no test has to measure its own.
-  assert.equal(probabilityYes(0.5, 0.5, 0), 0.5);
-  assert.ok(probabilityYes(-5, 0.5, 0.3) > 0.29, "an unknown word is still claimed sometimes");
-  assert.ok(probabilityYes(5, 0.5, 0.3) < 1, "and a known word is not a certainty");
+  const floor = 0.3;
+  assert.equal(probabilityYes(0.5, 0.5, 0), probabilityKnown(0.5, 0.5));
+  assert.ok(probabilityYes(-5, 0.5, floor) > 0.29, "an unknown word is still claimed sometimes");
+  assert.ok(probabilityYes(-5, 0.5, floor) < 0.31, "but never more than the floor");
+  // At a word the learner genuinely knows, the floor lifts the probability and no further.
+  assert.ok(probabilityYes(0.5, 0.5, floor) < 1, "a claimed word is never a certainty");
+  assert.ok(Math.abs(probabilityYes(0.5, 0.5, floor) - (floor + (1 - floor) * 0.95)) < 1e-9);
 });
 
 test("a perfect score still produces a level, and an empty set does not crash", () => {
