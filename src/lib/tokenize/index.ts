@@ -103,6 +103,35 @@ export const SEPARABLE_PARTICLES = new Set([
 
 const INSEPARABLE_PREFIXES = ["be", "emp", "ent", "er", "ge", "miss", "ver", "zer"];
 
+/**
+ * Coordinating conjunctions that end a clause as far as particle placement is concerned.
+ */
+const CLAUSE_BOUNDARY_WORDS = new Set(["und", "aber", "oder", "denn", "sondern", "doch", "jedoch"]);
+
+/** Real punctuation, as opposed to the whitespace the segmenter also reports as non-word-like. */
+const BOUNDARY_PUNCTUATION = /[.,;:!?…)»"”]/;
+
+/**
+ * Whether a token ends its clause.
+ *
+ * A separated particle only ever appears at the end of its clause — that is where German puts it
+ * ("sie steht früh **auf**"). Without this test, any listed particle adjacent to any verb could
+ * fuse: in "wächst eine Pflanze", the article "eine" follows the verb "wächst", and *einwachsen*
+ * is a real separable verb, so the pair merged and both words lost their own lemmas.
+ */
+function isClauseFinal(spans: Span[], index: number): boolean {
+  for (let k = index + 1; k < spans.length; k += 1) {
+    const next = spans[k];
+    if (next.kind === "punct") {
+      if (BOUNDARY_PUNCTUATION.test(next.surface)) return true;
+      continue; // whitespace between tokens is not a boundary by itself
+    }
+    if (next.kind === "word") return CLAUSE_BOUNDARY_WORDS.has(next.lemmaKey);
+    return false;
+  }
+  return true; // end of text
+}
+
 /** Finite-verb endings, used only in the no-lexicon fallback path. */
 const FINITE_VERB_ENDINGS = ["t", "e", "st", "en"];
 
@@ -163,6 +192,9 @@ function attachSeparableParticles(
     const particle = spans[i];
     if (particle.kind !== "word" || particle.absorbedInto !== undefined) continue;
     if (!SEPARABLE_PARTICLES.has(particle.lemmaKey)) continue;
+    // A particle sits at the end of its clause. Anything still following it means this token is
+    // doing some other job — an article, a preposition, an adjective.
+    if (!isClauseFinal(spans, i)) continue;
 
     const lo = Math.max(0, i - WINDOW);
     const hi = Math.min(spans.length - 1, i + WINDOW);
@@ -268,8 +300,14 @@ export function tokenize(
       continue;
     }
 
-    // A stated citation form wins over anything the rules can propose.
-    const statedBase = kind === "word" ? resolveForm?.(lemmaKeyOf(part.segment)) : null;
+    // A stated citation form wins over the rules — but not over the word itself. "Pflanze" is a
+    // noun with its own entry, and "pflanze" is also the first person of "pflanzen", so the form
+    // map alone would lemmatise the plant into the verb. An entry that carries a part of speech is
+    // a real word and keeps its own lemma; only an unclassified or absent one defers.
+    const surfaceKey = lemmaKeyOf(part.segment);
+    const surfaceIsClassified = (posOf?.(surfaceKey)?.length ?? 0) > 0;
+    const statedBase =
+      kind === "word" && !surfaceIsClassified ? resolveForm?.(surfaceKey) ?? null : null;
     const resolved = statedBase
       ? {
           lemma: statedBase,

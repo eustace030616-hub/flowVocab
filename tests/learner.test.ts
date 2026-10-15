@@ -259,9 +259,12 @@ function memoryLexicon(...entries: string[]) {
     query: async (candidates: string[], surfaces: string[] = []) => {
       queries += 1;
       maxQuery = Math.max(maxQuery, candidates.length);
+      // Mirrors the real query, which answers about surfaces as well as candidates: the tokenizer
+      // asks whether a surface is itself a classified entry.
+      const asked = [...new Set([...candidates, ...surfaces])];
       return {
         pos: new Map(
-          candidates.filter((c) => pos.has(c)).map((c) => [c, [...pos.get(c)!]] as [string, string[]]),
+          asked.filter((c) => pos.has(c)).map((c) => [c, [...pos.get(c)!]] as [string, string[]]),
         ),
         forms: new Map(
           surfaces.filter((f) => forms.has(f)).map((f) => [f, forms.get(f)!] as [string, string]),
@@ -473,4 +476,55 @@ test("a genuine separable verb still attaches to its verb", async () => {
   const verb = spans.find((s) => s.surface === "steht");
   assert.equal(verb?.lemmaKey, "aufstehen");
   assert.equal(verb?.detached?.length, 1);
+});
+
+test("a particle must end its clause", async () => {
+  // "wächst eine Pflanze": the article "eine" follows the verb "wächst", and *einwachsen* is a real
+  // separable verb — so adjacency and existence were both satisfied and the pair merged. Only the
+  // placement rule separates them: a separated particle ends its clause, and "eine" has "Pflanze"
+  // after it.
+  const lex = memoryLexicon(
+    "wachsen:verb",
+    "einwachsen:verb",
+    "ein:article",
+    "pflanze:noun",
+    "und",
+  );
+  const spans = await tokenizeAgainst("wächst eine Pflanze", "de", lex.query);
+
+  assert.equal(spans.find((s) => s.surface === "wächst")?.lemmaKey, "wachsen");
+  assert.equal(spans.find((s) => s.surface === "eine")?.absorbedInto, undefined);
+  assert.equal(spans.find((s) => s.surface === "Pflanze")?.lemmaKey, "pflanze");
+});
+
+test("a clause-final particle still attaches, before punctuation or a conjunction", async () => {
+  // Both ways a clause can end, since the rule keys on what follows the particle.
+  const lex = memoryLexicon("stehen:verb", "aufstehen:verb", "auf", "sie", "und", "lesen:verb");
+
+  const withConjunction = await tokenizeAgainst("sie steht früh auf und liest", "de", lex.query);
+  assert.equal(withConjunction.find((s) => s.surface === "steht")?.lemmaKey, "aufstehen");
+
+  const withFullStop = await tokenizeAgainst("sie steht früh auf.", "de", lex.query);
+  assert.equal(withFullStop.find((s) => s.surface === "steht")?.lemmaKey, "aufstehen");
+});
+
+test("a word with its own part of speech outranks a stated inflection", () => {
+  // "Pflanze" is a noun with its own entry; "pflanze" is also the first person of "pflanzen". The
+  // form map alone lemmatised the plant into the verb.
+  const lex = memoryLexicon("pflanze:noun", "pflanzen:verb");
+  lex.addForm("pflanze", "pflanzen");
+
+  return tokenizeAgainst("eine Pflanze", "de", lex.query).then((spans) => {
+    assert.equal(spans.find((s) => s.surface === "Pflanze")?.lemmaKey, "pflanze");
+  });
+});
+
+test("an unclassified same-spelling entry still defers to the stated inflection", async () => {
+  // The other side of the rule, and the case it was written for: "liest" matches the noun *Liest*,
+  // whose entry carries no part of speech, so the stated base must still win.
+  const lex = memoryLexicon("liest", "lesen:verb");
+  lex.addForm("liest", "lesen");
+
+  const spans = await tokenizeAgainst("sie liest", "de", lex.query);
+  assert.equal(spans.find((s) => s.surface === "liest")?.lemmaKey, "lesen");
 });

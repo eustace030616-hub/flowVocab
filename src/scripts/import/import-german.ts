@@ -48,22 +48,45 @@ const PH98_SOURCE = "ph98-german-cefr-wordlist";
 const KAIKKI_SOURCE = "kaikki-wiktextract-de";
 const LEIPZIG_SOURCE = "leipzig-corpora";
 
-/** DWDS `wortklasse` → our pos code. Unmapped values keep their raw label, lowercased. */
+/**
+ * DWDS `wortklasse` → our pos code. Unmapped values keep their raw label, lowercased.
+ *
+ * The German labels matter for more than tidiness: `posOf` decides whether a word can be the verb
+ * of a separable verb, and a label left as "unbestimmter artikel" reads as an unknown part of
+ * speech rather than as an article.
+ */
 const POS_MAP: Record<string, string> = {
   Substantiv: "noun",
+  Eigenname: "proper noun",
   Verb: "verb",
   Adjektiv: "adjective",
   "partizipiales Adjektiv": "adjective",
   Adverb: "adverb",
+  "pronominales Adverb": "adverb",
+  Pronominaladverb: "adverb",
   Mehrwortausdruck: "mwe",
   Affix: "affix",
   Präposition: "preposition",
+  "Präposition + Artikel": "preposition",
   Konjunktion: "conjunction",
+  Subjunktion: "conjunction",
   Pronomen: "pronoun",
+  Personalpronomen: "pronoun",
+  Possessivpronomen: "pronoun",
+  Demonstrativpronomen: "pronoun",
+  Indefinitpronomen: "pronoun",
+  Interrogativpronomen: "pronoun",
+  Reflexivpronomen: "pronoun",
+  Relativpronomen: "pronoun",
   Artikel: "article",
+  "bestimmter Artikel": "article",
+  "unbestimmter Artikel": "article",
   Interjektion: "interjection",
   Partikel: "particle",
   Numerale: "numeral",
+  Kardinalzahlwort: "numeral",
+  Ordinalzahlwort: "numeral",
+  Bruchzahlwort: "numeral",
 };
 
 export interface GermanRow {

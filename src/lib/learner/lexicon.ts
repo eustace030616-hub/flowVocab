@@ -124,10 +124,16 @@ export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
   return async (candidates, surfaces) => {
     const pos = new Map<string, string[]>();
 
-    if (candidates.length > 0) {
+    // Surfaces are asked about as well as candidates, and they need the same answer about their
+    // part of speech: the tokenizer decides whether to defer to a stated inflection by asking
+    // whether the surface is itself a classified entry, so answering only the candidates left that
+    // question unanswered on the very pass that needed it.
+    const wanted = [...new Set([...candidates, ...surfaces])];
+
+    if (wanted.length > 0) {
       const found = await Word.find({
         targetLang,
-        lemmaKey: { $in: candidates },
+        lemmaKey: { $in: wanted },
         // Dataset entries only. A word the learner marked is created on the spot, and letting those
         // in would make any marked word look like a dictionary headword to the tokenizer.
         origin: "import",
