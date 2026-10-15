@@ -70,6 +70,15 @@ export interface TokenizeOptions {
    * matched the surface against an unrelated noun entry instead.
    */
   resolveForm?: (form: string) => string | null;
+  /**
+   * Parts of speech known for a candidate, when a lexicon can supply them.
+   *
+   * Separable-particle attachment is a statement about *verbs*: the particle and the verb it
+   * belongs to form a verb. Without this, any listed particle could fuse with any nearby word —
+   * "kurzen Text" merged into the noun *Kurztext*, because "kurz" is a genuine separable prefix
+   * (kurzarbeiten) and *Kurztext* happens to exist.
+   */
+  posOf?: (candidate: string) => string[];
   /** Detect separable verbs (German only, on by default). */
   separable?: boolean;
   /** Split compounds into parts when every part resolves (German only, on by default). */
@@ -143,7 +152,11 @@ export function splitCompound(
  * lemma "aufstehen" and a `detached` pointer to the "auf" span. The particle span itself
  * records `absorbedInto`, so the UI can highlight both halves as one item.
  */
-function attachSeparableParticles(spans: Span[], lookup?: LemmaLookup): void {
+function attachSeparableParticles(
+  spans: Span[],
+  lookup?: LemmaLookup,
+  posOf?: (candidate: string) => string[],
+): void {
   const WINDOW = 8;
 
   for (let i = 0; i < spans.length; i++) {
@@ -161,7 +174,7 @@ function attachSeparableParticles(spans: Span[], lookup?: LemmaLookup): void {
       if (verb.absorbedInto !== undefined || verb.detached?.length) continue;
       if (verb.lemmaKey.startsWith("zu") && j === i) continue;
 
-      const merged = mergedInfinitive(particle.lemmaKey, verb, lookup);
+      const merged = mergedInfinitive(particle.lemmaKey, verb, lookup, posOf);
       if (!merged) continue;
 
       verb.lemma = merged.lemma;
@@ -174,11 +187,29 @@ function attachSeparableParticles(spans: Span[], lookup?: LemmaLookup): void {
   }
 }
 
+/**
+ * Whether a candidate can be the verb of a separable verb.
+ *
+ * With no part-of-speech information the morphological heuristic is all there is, so the check is
+ * skipped and behaviour is unchanged. When a lexicon does know, a candidate that is positively
+ * *not* a verb ends the merge: that is what stops "kurzen Text" becoming *Kurztext*.
+ */
+function isVerbLike(candidate: string, posOf?: (candidate: string) => string[]): boolean {
+  if (!posOf) return true;
+  const pos = posOf(candidate);
+  if (pos.length === 0) return true;
+  return pos.includes("verb");
+}
+
 function mergedInfinitive(
   particleKey: string,
   verb: Span,
   lookup?: LemmaLookup,
+  posOf?: (candidate: string) => string[],
 ): { lemma: string; lemmaKey: string; matched: boolean } | null {
+  // The host has to be able to be a verb at all.
+  if (!isVerbLike(verb.lemmaKey, posOf)) return null;
+
   const stems = candidatesFor(verb.surface, "de").filter(
     (c) => !INSEPARABLE_PREFIXES.some((p) => c.startsWith(p) && c.length > p.length + 2),
   );
@@ -186,7 +217,9 @@ function mergedInfinitive(
   for (const stem of stems) {
     for (const form of [particleKey + stem, particleKey + stem + "en", particleKey + stem + "e"]) {
       if (lookup) {
-        if (lookup(form)) {
+        // …and the merged form has to be a verb too. *Kurztext* is a real entry, so the existence
+        // check alone would accept it.
+        if (lookup(form) && isVerbLike(form, posOf)) {
           return { lemma: form, lemmaKey: form, matched: true };
         }
       } else if (
@@ -211,7 +244,7 @@ export function tokenize(
   lang: TargetLang,
   options: TokenizeOptions = {},
 ): Span[] {
-  const { lookup, resolveForm, separable = lang === "de", compounds = lang === "de" } = options;
+  const { lookup, resolveForm, posOf, separable = lang === "de", compounds = lang === "de" } = options;
   const input = nfc(text);
   const segmenter = new Intl.Segmenter(LOCALE_OF[lang], { granularity: "word" });
 
@@ -266,7 +299,7 @@ export function tokenize(
     spans.push(span);
   }
 
-  if (separable) attachSeparableParticles(spans, lookup);
+  if (separable) attachSeparableParticles(spans, lookup, posOf);
 
   return spans;
 }

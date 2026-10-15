@@ -174,6 +174,10 @@ At most **two readings of two translations** are shown, ordered by the best-rank
 group. Several sources each contribute glosses, and an uncapped list rendered nine lines for
 `verstehen` — a concordance rather than a hint.
 
+Separable-particle attachment requires the host to be a **verb**, which the lexicon supplies. The
+morphology alone is not enough: "kurz" is a genuine separable prefix (*kurzarbeiten*), and once
+`kurzen` resolved to `kurz` the parser fused it with the next word into the real noun *Kurztext*.
+
 ### Two German sources, one ranked behind the other
 
 ding is human-curated and primary, but its headword inventory is thin on verbs — it has no entry for

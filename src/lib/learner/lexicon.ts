@@ -33,8 +33,12 @@ import { lemmaKeyOf, tokenize, wordSpans, type LemmaLookup, type Span } from "..
 
 /** What a lexicon lookup returns: dictionary entries, and stated inflections. */
 export interface LexiconData {
-  /** Lemma keys that exist as dictionary entries. */
-  known: Set<string>;
+  /**
+   * Lemma key → the parts of speech known for it. A key being present means the entry exists,
+   * so this is both "is it known" and "what is it", which the tokenizer needs to tell a verb from
+   * a noun before it fuses a separable particle onto one.
+   */
+  pos: Map<string, string[]>;
   /** Surface form → citation form, as stated by a morphological source. */
   forms: Map<string, string>;
 }
@@ -65,12 +69,26 @@ export async function tokenizeAgainst(
   // Ask about the surfaces up front: a stated inflection short-circuits the rules entirely, so it
   // is worth one query before lexing rather than discovering it after a wrong answer.
   const surfaces = [...new Set(wordSpans(tokenize(text, targetLang)).map((s) => lemmaKeyOf(s.surface)))];
-  const first = await query([], surfaces);
-  for (const key of first.known) known.add(key);
-  for (const [form, base] of first.forms) forms.set(form, base);
+  /** lemma key → parts of speech, accumulated across passes. */
+  const pos = new Map<string, string[]>();
+
+  const absorb = (data: LexiconData) => {
+    for (const [key, value] of data.pos) {
+      const existing = pos.get(key);
+      if (existing) {
+        for (const p of value) if (!existing.includes(p)) existing.push(p);
+      } else {
+        pos.set(key, [...value]);
+      }
+    }
+    for (const [form, base] of data.forms) forms.set(form, base);
+  };
+
+  absorb(await query([], surfaces));
 
   const options = () => ({
-    lookup: (candidate: string) => known.has(candidate),
+    lookup: (candidate: string) => pos.has(candidate),
+    posOf: (candidate: string) => pos.get(candidate) ?? [],
     resolveForm: (form: string) => forms.get(form) ?? null,
   });
 
@@ -78,19 +96,18 @@ export async function tokenizeAgainst(
     const missed = new Set<string>();
     const spans = tokenize(text, targetLang, {
       lookup: (candidate: string) => {
-        if (known.has(candidate)) return true;
+        if (pos.has(candidate)) return true;
         missed.add(candidate);
         return false;
       },
+      posOf: (candidate: string) => pos.get(candidate) ?? [],
       resolveForm: (form: string) => forms.get(form) ?? null,
     });
 
     // Nothing new was requested, so another pass would produce identical spans.
     if (missed.size === 0) return spans;
 
-    const more = await query([...missed], []);
-    for (const key of more.known) known.add(key);
-    for (const [form, base] of more.forms) forms.set(form, base);
+    absorb(await query([...missed], []));
   }
 
   // Final pass so the returned spans reflect everything learned.
@@ -105,7 +122,7 @@ export async function tokenizeAgainst(
  */
 export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
   return async (candidates, surfaces) => {
-    const known = new Set<string>();
+    const pos = new Map<string, string[]>();
 
     if (candidates.length > 0) {
       const found = await Word.find({
@@ -115,9 +132,16 @@ export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
         // in would make any marked word look like a dictionary headword to the tokenizer.
         origin: "import",
       })
-        .select("lemmaKey")
+        .select("lemmaKey pos")
         .lean();
-      for (const word of found) known.add(word.lemmaKey);
+      for (const word of found) {
+        const list = pos.get(word.lemmaKey);
+        if (list) {
+          if (word.pos && !list.includes(word.pos)) list.push(word.pos);
+        } else {
+          pos.set(word.lemmaKey, word.pos ? [word.pos] : []);
+        }
+      }
     }
 
     const forms = new Map<string, string>();
@@ -130,21 +154,21 @@ export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
       const bases = [...new Set(rows.map((r) => r.baseLemmaKey))];
       const baseWords = bases.length
         ? await Word.find({ targetLang, lemmaKey: { $in: bases }, origin: "import" })
-            .select("lemmaKey")
+            .select("lemmaKey pos")
             .lean()
         : [];
-      const knownBases = new Set(baseWords.map((w) => w.lemmaKey));
+      const basePos = new Map(baseWords.map((w) => [w.lemmaKey, w.pos ? [w.pos] : []]));
 
       for (const row of rows) {
-        if (!knownBases.has(row.baseLemmaKey)) continue;
+        if (!basePos.has(row.baseLemmaKey)) continue;
         // Deterministic when a form has several bases: the shortest wins, then alphabetical.
         const current = forms.get(row.form);
         if (!current || row.base.length < current.length) forms.set(row.form, row.base);
-        known.add(row.baseLemmaKey);
+        if (!pos.has(row.baseLemmaKey)) pos.set(row.baseLemmaKey, [...(basePos.get(row.baseLemmaKey) ?? [])]);
       }
     }
 
-    return { known, forms };
+    return { pos, forms };
   };
 }
 

@@ -239,8 +239,18 @@ test("the German seed exercises every case the old model could not represent", (
  * It only ever answers what it is asked, which is what makes it able to catch the class of bug the
  * real query had — assuming a candidate set is enough without asking.
  */
-function memoryLexicon(...lemmas: string[]) {
-  const known = new Set(lemmas.map((l) => l.toLowerCase()));
+function memoryLexicon(...entries: string[]) {
+  // A lemma may be given as "wort:pos" to declare a part of speech, which the tokenizer needs to
+  // tell a verb from a noun.
+  const pos = new Map<string, string[]>();
+  for (const entry of entries) {
+    const [lemma, declared] = entry.split(":");
+    const key = lemma.toLowerCase();
+    const list = pos.get(key) ?? [];
+    if (declared && !list.includes(declared)) list.push(declared);
+    pos.set(key, list);
+  }
+
   const forms = new Map<string, string>();
   let queries = 0;
   let maxQuery = 0;
@@ -250,7 +260,9 @@ function memoryLexicon(...lemmas: string[]) {
       queries += 1;
       maxQuery = Math.max(maxQuery, candidates.length);
       return {
-        known: new Set(candidates.filter((c) => known.has(c))),
+        pos: new Map(
+          candidates.filter((c) => pos.has(c)).map((c) => [c, [...pos.get(c)!]] as [string, string[]]),
+        ),
         forms: new Map(
           surfaces.filter((f) => forms.has(f)).map((f) => [f, forms.get(f)!] as [string, string]),
         ),
@@ -428,4 +440,37 @@ test("an inflection is only honoured when its base is a real entry", () => {
     assert.equal(spans[0].lemmaKey, "lesen");
     assert.equal(spans[0].matched, true);
   });
+});
+
+test("a particle does not fuse with a non-verb", () => {
+  // The bug this guards: "kurz" is a genuine separable prefix (kurzarbeiten), and "kurzen"
+  // resolves to "kurz" via the inflection map — so the parser fused it with the next token,
+  // "Text", into the real noun *Kurztext*. Separable attachment is a statement about verbs.
+  const lex = memoryLexicon(
+    "kurz:adjective",
+    "text:noun",
+    "kurztext:noun",
+    "stehen:verb",
+    "aufstehen:verb",
+    "auf",
+  );
+  lex.addForm("kurzen", "kurz");
+
+  return tokenizeAgainst("einen kurzen Text", "de", lex.query).then((spans) => {
+    const text = spans.find((s) => s.surface === "Text")!;
+    assert.equal(text.lemmaKey, "text", "the noun keeps its own lemma");
+    assert.equal(text.detached, undefined, "no particle may attach to a noun");
+
+    const kurzen = spans.find((s) => s.surface === "kurzen")!;
+    assert.equal(kurzen.absorbedInto, undefined, "and the adjective is not absorbed");
+  });
+});
+
+test("a genuine separable verb still attaches to its verb", async () => {
+  // The guard must not cost the feature it protects: a real verb still takes its particle.
+  const lex = memoryLexicon("stehen:verb", "aufstehen:verb", "auf", "sie");
+  const spans = await tokenizeAgainst("sie steht auf", "de", lex.query);
+  const verb = spans.find((s) => s.surface === "steht");
+  assert.equal(verb?.lemmaKey, "aufstehen");
+  assert.equal(verb?.detached?.length, 1);
 });
