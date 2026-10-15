@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Span } from "@/src/lib/tokenize";
 import { DEFAULT_POPOVER, placePopover } from "@/src/lib/ui/popover";
-import { groupMeanings } from "@/src/lib/ui/meanings";
+import { groupMeanings, meaningLabel } from "@/src/lib/ui/meanings";
 
 interface VocabularyEntry {
   lemma: string;
@@ -700,34 +700,38 @@ export default function Home() {
                 {(() => {
                   const vocab = activeVocab;
                   if (vocab?.gloss) {
-                    // A word can have several readings — "train" is a noun (火车) and a verb (训练).
-                    // A running-text token carries no part of speech, so rather than let database
-                    // order pick one, the readings are grouped and labelled.
+                    // ONE template for every case. A word can have several readings — "train" is a
+                    // noun (火车) and a verb (训练) — and a running-text token carries no part of
+                    // speech, so the readings are grouped and labelled rather than one being picked
+                    // silently. Previously the multi-reading case put the label on the left and the
+                    // single-reading case put a different label on the right, which is why the same
+                    // preview looked like "n 训练", "情绪化 adj" and "— 陪伴" in turn.
+                    //
+                    // Layout: a fixed-width label column, then the translations. The column is
+                    // empty when no part of speech is known, so the text still lines up.
                     const groups = groupMeanings(vocab.meanings);
+                    const rows =
+                      groups.length > 0
+                        ? groups
+                        : [{ pos: vocab.glossPos, termPos: vocab.glossTermPos, texts: [vocab.gloss] }];
                     return (
                       <>
                         <div className="border-t border-zinc-100 my-2" />
-                        {groups.length > 1 ? (
-                          <ul className="space-y-1">
-                            {groups.map((group) => (
-                              <li key={group.pos ?? "-"} className="flex items-baseline gap-1.5">
-                                <span className="font-mono text-[10px] text-zinc-400 w-6 shrink-0">
-                                  {posLabel(group.pos) ?? "—"}
-                                </span>
-                                <span className="text-sm text-zinc-600">{group.texts.join(", ")}</span>
-                              </li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="text-sm text-zinc-600">
-                            {vocab.gloss}
-                            {posLabel(vocab.glossTermPos) && (
-                              <span className="ml-1.5 text-[10px] font-mono text-zinc-400">
-                                {posLabel(vocab.glossTermPos)}
+                        <ul className="space-y-1">
+                          {rows.map((group, index) => (
+                            <li
+                              key={`${group.pos ?? "-"}-${index}`}
+                              className="flex items-baseline gap-2"
+                            >
+                              <span className="w-8 shrink-0 font-mono text-[10px] text-zinc-400">
+                                {posLabel(meaningLabel(group)) ?? ""}
                               </span>
-                            )}
-                          </p>
-                        )}
+                              <span className="text-sm text-zinc-600">
+                                {group.texts.join(", ")}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
                         <p className="text-[10px] text-zinc-400 mt-1">
                           {vocab.glossSource}
                           {vocab.glossGenerated ? " · machine-generated" : ""}

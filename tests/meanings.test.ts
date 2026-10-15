@@ -9,7 +9,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { groupMeanings, type Meaning } from "../src/lib/ui/meanings";
+import { groupMeanings, meaningLabel, type Meaning } from "../src/lib/ui/meanings";
 
 const train: Meaning[] = [
   { pos: "noun", termPos: null, text: "火车", source: "cc-cedict" },
@@ -63,4 +63,37 @@ test("an unlabelled headword still groups under a null part of speech", () => {
 test("no meanings means no groups, not a crash", () => {
   assert.deepEqual(groupMeanings(undefined), []);
   assert.deepEqual(groupMeanings([]), []);
+});
+
+test("one label rule for every case", () => {
+  // The preview had three shapes depending on the data: "n 训练" when a headword part of speech
+  // was known, "情绪化 adj" when only the term's was, and "- 陪伴" when neither was. One rule now
+  // decides the label, and an unknown part of speech is an empty column rather than a dash.
+  assert.equal(meaningLabel({ pos: "noun", termPos: "verb", texts: ["火车"] }), "noun");
+  assert.equal(meaningLabel({ pos: null, termPos: "adjective", texts: ["情绪化"] }), "adjective");
+  assert.equal(meaningLabel({ pos: null, termPos: null, texts: ["陪伴"] }), null);
+});
+
+test("a translation appears once, in its labelled group", () => {
+  // A curated gloss carries no part of speech and the dictionary entry for the same word does, so
+  // "aufstehen" was listed twice: bare, then as "v to get up".
+  const groups = groupMeanings([
+    { pos: null, termPos: null, text: "to get up", source: "seed" },
+    { pos: "verb", termPos: null, text: "to get up", source: "ding" },
+    { pos: "verb", termPos: null, text: "to stand up", source: "ding" },
+  ]);
+
+  assert.equal(groups.length, 1, "the unlabelled group is emptied and dropped");
+  assert.equal(groups[0].pos, "verb");
+  assert.deepEqual(groups[0].texts, ["to get up", "to stand up"]);
+});
+
+test("an unlabelled translation survives when nothing else carries it", () => {
+  const groups = groupMeanings([
+    { pos: null, termPos: null, text: "陪伴", source: "seed" },
+    { pos: "noun", termPos: null, text: "友谊", source: "cc-cedict" },
+  ]);
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups[0].texts, ["陪伴"]);
+  assert.deepEqual(groups[1].texts, ["友谊"]);
 });

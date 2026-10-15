@@ -19,6 +19,18 @@ export interface Meaning {
   source: string;
 }
 
+/**
+ * The label to show for a group (declared before its first use, for clarity).
+ *
+ * One rule for every case, so the preview has a single template: prefer the headword's part of
+ * speech, fall back to the translation's own when the headword has none. Null when neither is
+ * known — an empty label column keeps the text aligned without inventing a dash that reads like
+ * a part of speech of its own.
+ */
+export function meaningLabel(group: MeaningGroup): string | null {
+  return group.pos ?? group.termPos ?? null;
+}
+
 export interface MeaningGroup {
   pos: string | null;
   texts: string[];
@@ -49,5 +61,24 @@ export function groupMeanings(meanings: Meaning[] | undefined, maxPerGroup = 3):
     if (group.termPos !== meaning.termPos) group.termPos = null;
   }
 
-  return [...groups.values()].filter((group) => group.texts.length > 0);
+  const ordered = [...groups.values()];
+
+  // A translation is shown once. The same text can arrive under an unlabelled group (a curated
+  // gloss with no part of speech) and a labelled one (the dictionary entry), which displayed
+  // "aufstehen" twice — once bare and once as "v to get up". The labelled group wins the text,
+  // because it carries strictly more information.
+  const labelled = new Set<string>();
+  for (const group of ordered) {
+    if (!meaningLabel(group)) continue;
+    for (const text of group.texts) labelled.add(text);
+  }
+
+  const deduped = ordered.map((group) =>
+    meaningLabel(group)
+      ? group
+      : { ...group, texts: group.texts.filter((text) => !labelled.has(text)) },
+  );
+
+  return deduped.filter((group) => group.texts.length > 0);
 }
+
