@@ -390,7 +390,11 @@ app.post("/words/mark", async (c) => {
   });
 
   const state = await recomputeWordState(user.userId, targetLang, lemmaKey, word._id);
-  return c.json({ word, state }, 201);
+  // Marking is evidence about ability, not only about this word. Recomputing here is what makes the
+  // level stateful: the next paragraph is scored against this estimate, and without it the mark
+  // changed the word but not the learner.
+  const ability = await recomputeAllAbilities(user.userId);
+  return c.json({ word, state, ability }, 201);
 });
 
 /**
@@ -438,7 +442,9 @@ app.post("/words/ignore", async (c) => {
   });
 
   const state = await recomputeWordState(user.userId, targetLang, lemmaKey);
-  return c.json({ state });
+  // Un-marking retracts that evidence, so the estimate has to move back with it.
+  const ability = await recomputeAllAbilities(user.userId);
+  return c.json({ state, ability });
 });
 
 /** Batch vocabulary lookup, keyed by lemma (not by spelling — that is the point of lemmaKey). */

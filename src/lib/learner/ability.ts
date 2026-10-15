@@ -325,6 +325,27 @@ export function observationFor(
 }
 
 /**
+ * Suffixes of a word that could be its head, longest first.
+ *
+ * A German compound is head-final, so the element that carries the meaning — and the difficulty — is
+ * usually the last one. This lets a compound contribute evidence without the tokenizer's actual
+ * split: marking "Wortschatzaufbau" as unknown changed nothing, because the compound has no entry of
+ * its own and therefore no difficulty to place the observation on.
+ *
+ * The lower bound keeps it from matching a two-letter fragment, and the upper bound leaves at least
+ * three characters for the modifier, so "haus" is not read as the head of "haus".
+ */
+export function headSuffixCandidates(lemmaKey: string, minLength = 4): string[] {
+  const candidates: string[] = [];
+  // Ascending start index yields the LONGEST suffix first: slice(4) is longer than slice(10).
+  for (let start = minLength; start <= lemmaKey.length - 3; start += 1) {
+    const suffix = lemmaKey.slice(start);
+    if (suffix.length >= minLength) candidates.push(suffix);
+  }
+  return candidates;
+}
+
+/**
  * Derive one observation per word from the event log.
  *
  * The log is the only input: nothing here reads a counter, so a re-fold after a bug gives the same
@@ -419,6 +440,34 @@ export async function observationsFor(
   for (const [lemmaKey, seen] of sessions) {
     const entry = perWord.get(lemmaKey);
     if (entry) entry.exposures = seen.size;
+  }
+
+  // Words with no entry of their own — compounds, mostly — inherit the difficulty of their head, so
+  // that marking one is evidence rather than silence.
+  const unresolved = [...perWord.keys()].filter((key) => !difficultyOf.has(key));
+  if (unresolved.length > 0) {
+    const candidatesFor = new Map(unresolved.map((key) => [key, headSuffixCandidates(key)]));
+    const wanted = new Set<string>();
+    for (const list of candidatesFor.values()) for (const head of list) wanted.add(head);
+
+    const heads = await Word.find({
+      targetLang,
+      lemmaKey: { $in: [...wanted] },
+      origin: "import",
+    })
+      .select("lemmaKey difficulty")
+      .lean();
+    const headDifficulty = new Map(heads.map((w) => [w.lemmaKey, w.difficulty]));
+
+    for (const [key, list] of candidatesFor) {
+      for (const head of list) {
+        const difficulty = headDifficulty.get(head);
+        if (difficulty !== undefined && difficulty >= 0) {
+          difficultyOf.set(key, difficulty);
+          break;
+        }
+      }
+    }
   }
 
   const observations: Observation[] = [];

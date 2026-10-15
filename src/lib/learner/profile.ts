@@ -42,6 +42,22 @@ const PRIOR_SOURCE: Partial<Record<TargetLang, TargetLang>> = { de: "en" };
  */
 const TRANSFER_PRIOR_WEIGHT = 2;
 
+/**
+ * The prior every estimate carries, so a handful of observations cannot swing it.
+ *
+ * Marking two words you did not know says very little about your level — you may know ten thousand
+ * others — but with no prior at all the fit has nothing to weigh them against, and two marks at low
+ * difficulty pulled ability to the floor. That is not a measurement, it is an overreaction to two
+ * clicks, and it then propagates: the next paragraph's coverage is computed from whatever ability
+ * the marks left behind.
+ *
+ * Two observations' worth at the midpoint is enough to hold the estimate steady while evidence
+ * accumulates, and negligible once there is real evidence — a 67-item placement outweighs it by an
+ * order of magnitude.
+ */
+const REGULARISER_WEIGHT = 2;
+const MIDPOINT_THETA = 0.5;
+
 export interface AbilityView extends AbilityEstimate {
   targetLang: TargetLang;
   /** True when the estimate was centred by another language, with no evidence of its own. */
@@ -86,8 +102,13 @@ export async function recomputeAbility(
   // A prior is only needed when the language has little to say for itself. Once there is real
   // evidence — including a placement test — another language's level is a distraction rather than a
   // starting point.
-  let prior: { theta: number; weight: number } | undefined;
-  let fromTransfer = false;
+  // Every estimate carries the neutral regulariser; a transfer replaces it when one is available
+  // and the language has little to say for itself.
+  let prior: { theta: number; weight: number } = {
+    theta: MIDPOINT_THETA,
+    weight: REGULARISER_WEIGHT,
+  };
+  let transferred = false;
 
   if (withPlacement.length < TRANSFER_PRIOR_WEIGHT) {
     const source = PRIOR_SOURCE[targetLang];
@@ -98,7 +119,7 @@ export async function recomputeAbility(
       // unreliable number into a second language.
       if (donor && donor.n > 0 && donor.se <= LEVEL_SE_THRESHOLD * 2) {
         prior = { theta: donor.theta, weight: TRANSFER_PRIOR_WEIGHT };
-        fromTransfer = withPlacement.length === 0;
+        transferred = true;
       }
     }
   }
@@ -115,7 +136,8 @@ export async function recomputeAbility(
         level: estimate.level,
         levelLow: estimate.levelLow,
         levelHigh: estimate.levelHigh,
-        priorTheta: prior?.theta ?? null,
+        // Only a borrowed centre is recorded as such; the neutral regulariser is not a claim.
+        priorTheta: transferred ? prior.theta : null,
       },
     },
     { upsert: true },
@@ -129,7 +151,7 @@ export async function recomputeAbility(
   // is the honest answer. Collapsing that to a point printed a confident "B2" for a learner who had
   // done nothing at all.
   const view =
-    estimate.n === 0 && prior
+    estimate.n === 0 && transferred
       ? {
           ...estimate,
           level: null,
@@ -138,7 +160,7 @@ export async function recomputeAbility(
         }
       : estimate;
 
-  return toView(targetLang, view, fromTransfer);
+  return toView(targetLang, view, transferred && estimate.n === 0);
 }
 
 /**

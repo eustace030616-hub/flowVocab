@@ -425,6 +425,18 @@ export default function Home() {
    * the source of truth for the ability model, and a log shaped by pointer jitter would be worse
    * than no log at all.
    */
+  /**
+   * Adopt an ability estimate the server returned.
+   *
+   * The header and the next paragraph both read `me.ability`, and marking is evidence — so the
+   * response has to replace the stale copy rather than being discarded, which is what left the level
+   * frozen while words were being marked.
+   */
+  const adoptAbility = useCallback((ability: AbilityView[] | undefined) => {
+    if (!Array.isArray(ability) || ability.length === 0) return;
+    setMe((prev) => (prev ? { ...prev, ability } : prev));
+  }, []);
+
   const recordLookup = useCallback(
     (span: Span) => {
       const key = `${paragraph?._id ?? "?"}:${span.lemmaKey}`;
@@ -585,11 +597,16 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const data = await readJson<{ state?: DerivedState }>(res);
+    const data = await readJson<{ state?: DerivedState; ability?: AbilityView[] }>(res);
     if (!data) {
       setError(describeFailure(url, res));
       return;
     }
+    // The mark is evidence about ability as well as about this word, so the estimate comes back
+    // with it. Adopting it is what makes the level stateful: the header moves now, and the next
+    // paragraph is scored against the updated level rather than the one from before the mark.
+    adoptAbility(data.ability);
+
     const state = data.state;
     if (state) {
       setLastEvent(
@@ -609,7 +626,7 @@ export default function Home() {
         },
       }));
     }
-  }, [paragraph, me, marked, liveState]);
+  }, [paragraph, me, marked, liveState, adoptAbility]);
 
   /**
    * The words the learner has marked in this paragraph.

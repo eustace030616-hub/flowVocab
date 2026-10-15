@@ -11,6 +11,7 @@ import { test } from "node:test";
 
 import {
   ABILITY_SCALE,
+  headSuffixCandidates,
   SESSIONS_FOR_KNOWN,
   fitAbility,
   isLevelClaimable,
@@ -191,4 +192,40 @@ test("an estimate with no evidence reports the widest interval, not a point", ()
   assert.equal(empty.levelLow, "A1");
   assert.equal(empty.levelHigh, "C2");
   assert.equal(empty.level, null);
+});
+
+test("a few marks move the estimate without turning clicks into a level", () => {
+  // Marking two or three words is real evidence and should be felt, or the level would not respond
+  // to reading at all. But with no prior the fit had nothing to weigh it against and two marks at
+  // low difficulty took ability to 0.01 — an overreaction that then propagated, because the next
+  // paragraph's coverage is computed from whatever the marks left behind.
+  const marks = [0.2, 0.25].map((difficulty) => ({ difficulty, known: false, weight: 1 }));
+
+  const bare = fitAbility(marks);
+  const regularised = fitAbility(marks, { theta: 0.5, weight: 2 });
+
+  assert.ok(bare.theta < 0.05, "unregularised, two clicks reach the floor");
+  assert.ok(regularised.theta > bare.theta, "the regulariser holds it up");
+  assert.ok(regularised.theta < 0.5, "while still letting the evidence move it");
+  assert.equal(regularised.level, null, "two clicks cannot name a level");
+  assert.ok(regularised.se > 0.15, `and the interval says so (se=${regularised.se})`);
+
+  // Enough marks do reach the floor, and should: five unknown frequent words is a beginner.
+  const many = Array.from({ length: 8 }, (_, i) => ({ difficulty: 0.15 + i * 0.02, known: false, weight: 1 }));
+  assert.ok(fitAbility(many, { theta: 0.5, weight: 2 }).theta < 0.15);
+});
+
+test("a compound can find its head, so marking one is evidence rather than silence", () => {
+  // "Wortschatzaufbau" has no entry of its own, so it had no difficulty and produced no
+  // observation: marking it changed the word but not the learner's estimate.
+  const candidates = headSuffixCandidates("wortschatzaufbau");
+  assert.equal(candidates[0], "schatzaufbau", "longest first");
+  assert.ok(candidates.includes("aufbau"), "the actual head is reachable");
+  // The head is tried after longer, unlikely suffixes — which is fine, they simply do not resolve.
+  assert.ok(candidates.indexOf("aufbau") > 0);
+
+  // A short word has no interior to split at.
+  assert.deepEqual(headSuffixCandidates("haus"), []);
+  // And a word is never its own head.
+  assert.equal(headSuffixCandidates("wortschatz").includes("wortschatz"), false);
 });
