@@ -129,7 +129,7 @@ while the track was still `zh-en` looked for Chinese glosses and silently found 
 
 | Track | Gloss source | Coverage |
 |---|---|---|---|
-| `en-de` | ding / Beolingus, **GPL-3+** (copyleft) | 69,489 German words; 93% of the most frequent, 11% of the rare tail |
+| `en-de` | ding / Beolingus, **GPL-3+** (copyleft) — primary; kaikki/Wiktionary, CC BY-SA 4.0 — gaps | 96,751 German headwords; 95–98% of the frequent bands, 17% of the rare tail |
 | `zh-en` | CC-CEDICT, CC BY-SA 4.0 | 6,793 of 8,657 English headwords (79%) |
 
 ### Ranking a gloss is not free
@@ -152,6 +152,16 @@ score = zipf − 0.8·ln(genericness) − (function word ? 3 : 0)
 
 It is a heuristic, not a sense disambiguator. Ambiguous verbs remain the weak spot (`run` → 运行
 rather than 跑), which is why up to three candidates are stored per reading.
+
+### Two German sources, one ranked behind the other
+
+ding is human-curated and primary, but its headword inventory is thin on verbs — it has no entry for
+`brauchen` at all, though the word appears in 104 of its example lists. Its glosses rank 1–3;
+kaikki/Wiktionary fills the gaps at rank 5+. That took German coverage from 69,489 to 96,751
+headwords, and in the frequent bands from 93% to **95–98%**.
+
+The kaikki layer filters hard, because 45% of its German entries are inflected forms glossed
+"inflection of …". Importing those would teach `braucht` as a *meaning* rather than a form.
 
 ### Part of speech is part of a meaning's identity
 
@@ -247,6 +257,7 @@ npm run import:frequency    # attach Zipf, scored on the best of a word's forms
 npm run import:german-rank  # Leipzig corpus ranks (splits the DWDS rare tail)
 npm run import:ding         # German→English glosses (GPL-3+, own collection)
 npm run import:cedict       # English→Chinese glosses (CC BY-SA, own collection)
+npm run import:kaikki-glosses  # German glosses where ding has no headword at all
 npm run recompute:difficulty  # fit the curve and write difficulty  (-- --with-goethe-anchors)
 npm run seed                # reset and seed demo data
 ```

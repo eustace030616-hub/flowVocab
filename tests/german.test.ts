@@ -20,6 +20,12 @@ import {
 import { assertShippable, shippableDatasets, DATASETS } from "../src/lib/licence/datasets";
 import { parseDingLine, rankEntries } from "../src/scripts/import/ding";
 import {
+  cleanGloss,
+  isCrossReferenceGloss,
+  mapKaikkiPos,
+  parseKaikkiEntry,
+} from "../src/scripts/import/kaikki";
+import {
   estimateTermPos,
   invertGlosses,
   isVerbMarked,
@@ -371,4 +377,62 @@ test("cedict: an unclear part of speech yields null rather than a guess", () => 
   assert.equal(votes.votes.noun, 1);
   assert.equal(votes.votes.verb, 1);
   assert.equal(votes.pos, null, "a tie must not be resolved into a label");
+});
+
+// ── kaikki: the German gloss gap-filler ───────────────────────────────────────
+
+test("kaikki: inflected forms are not meanings", () => {
+  // 45% of German entries are forms whose gloss is "inflection of …". Importing those would teach
+  // "braucht" as a meaning rather than a form.
+  for (const gloss of [
+    "inflection of brauchen",
+    "plural of Haus",
+    "genitive singular of Baum",
+    "comparative of schnell",
+    "alternative form of Farbe",
+    "abbreviation of Bundesrepublik",
+  ]) {
+    assert.equal(isCrossReferenceGloss(gloss), true, `${gloss} is a cross-reference`);
+  }
+  assert.equal(isCrossReferenceGloss("to need, to be in need of"), false);
+  assert.equal(isCrossReferenceGloss("custom, tradition"), false);
+});
+
+test("kaikki: a verb entry survives with its glosses", () => {
+  // The entry this layer exists for: ding has no headword for "brauchen" at all.
+  const line = JSON.stringify({
+    word: "brauchen",
+    lang: "German",
+    pos: "verb",
+    senses: [{ glosses: ["to need, to be in need of, to require"] }, { glosses: ["to need to, to have to"] }],
+  });
+  const entry = parseKaikkiEntry(line)!;
+  assert.equal(entry.lemmaKey, "brauchen");
+  assert.equal(entry.pos, "verb");
+  assert.deepEqual(entry.glosses, ["to need, to be in need of, to require", "to need to, to have to"]);
+});
+
+test("kaikki: part of speech is mapped, and non-lexical entries are dropped", () => {
+  assert.equal(mapKaikkiPos("adj"), "adjective");
+  assert.equal(mapKaikkiPos("adv"), "adverb");
+  assert.equal(mapKaikkiPos("verb"), "verb");
+  assert.equal(mapKaikkiPos("name"), null, "proper nouns are not vocabulary");
+  assert.equal(mapKaikkiPos("prefix"), null);
+  assert.equal(mapKaikkiPos("suffix"), null);
+
+  const name = JSON.stringify({ word: "Müller", lang: "German", pos: "name", senses: [{ glosses: ["a surname"] }] });
+  assert.equal(parseKaikkiEntry(name), null);
+});
+
+test("kaikki: a non-German line and a malformed line are skipped, not guessed at", () => {
+  assert.equal(parseKaikkiEntry('{"word":"Haus","lang":"English","pos":"noun","senses":[{"glosses":["house"]}]}'), null);
+  assert.equal(parseKaikkiEntry("{not json"), null);
+  assert.equal(parseKaikkiEntry(""), null);
+});
+
+test("kaikki: asides and trailing punctuation are cleaned off a gloss", () => {
+  assert.equal(cleanGloss("to need (something)"), "to need");
+  assert.equal(cleanGloss("custom.; tradition"), "custom.; tradition");
+  assert.equal(cleanGloss("   "), null);
+  assert.equal(cleanGloss("x".repeat(200)), null, "a definition too long to be a gloss is dropped");
 });
