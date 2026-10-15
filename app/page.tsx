@@ -4,7 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Span } from "@/src/lib/tokenize";
 import { DEFAULT_POPOVER, placePopover } from "@/src/lib/ui/popover";
 import { groupMeanings, meaningLabel } from "@/src/lib/ui/meanings";
-import { coverageLabel } from "@/src/lib/ui/coverage-label";
+import { liveCoverage } from "@/src/lib/ui/coverage-label";
 
 interface VocabularyEntry {
   lemma: string;
@@ -612,15 +612,30 @@ export default function Home() {
   }, [paragraph, me, marked, liveState]);
 
   /**
-   * Lexical coverage of the paragraph.
+   * The words the learner has marked in this paragraph.
    *
-   * Previously this was computed from marked words alone — "unknown" meant "the learner clicked
-   * it" — which ignored everything the event log knows and counted the word they were reading at
-   * the moment. It now starts from the model's per-word probability and applies only this session's
-   * marks on top, so it is a measurement rather than a tally of clicks.
+   * A mark is stored against the occurrence, because that is what the tint has to follow — but the
+   * learner's statement is about the *word*, so coverage needs the set of lemmas, not of spans.
+   */
+  const markedLemmas = useMemo(() => {
+    const set = new Set<string>();
+    for (const span of paragraph?.spans ?? []) {
+      if (marked.has(ownerOf(span))) set.add(span.lemmaKey);
+    }
+    return set;
+  }, [paragraph, marked, ownerOf]);
+
+  /**
+   * Lexical coverage of the paragraph, live.
    *
-   * The verdict is the server's: it describes the text against the model as loaded, and pretending
-   * it updates per click would be a second, weaker rule living in the client.
+   * Previously computed from marked words alone — "unknown" meant "the learner clicked it" — which
+   * ignored everything the event log knows and counted the word under the cursor. It now starts from
+   * the model's per-word probability and applies this session's marks on top, recomputing the
+   * verdict as it goes: the percentage moves with every mark, so a verdict fixed at load time made
+   * the badge contradict itself.
+   *
+   * Whether the *ability* behind the probabilities was measured cannot change while reading, so that
+   * still comes from the server.
    */
   const coverage = useMemo(() => {
     const server = paragraph?.coverage;
@@ -629,26 +644,17 @@ export default function Home() {
     const units = paragraph.spans.filter((s) => s.kind === "word");
     if (units.length === 0) return null;
 
-    let total = 0;
-    for (const s of units) {
-      const base = paragraph.vocabulary[s.lemmaKey]?.pKnown ?? 0;
-      // Marking a word is the learner stating they do not know it; the model should hear that
-      // immediately rather than at the next page load.
-      total += marked.has(ownerOf(s)) ? Math.min(base, 0.05) : base;
-    }
-
-    const value = total / units.length;
     return {
       total: units.length,
-      value,
-      // Formatted once, so the percentage and the ratio cannot disagree — they did, and it was the
-      // reason the badge read "98% · 1:64".
-      label: coverageLabel(value),
-      verdict: server.verdict,
+      ...liveCoverage(
+        units,
+        (lemmaKey) => paragraph.vocabulary[lemmaKey]?.pKnown ?? undefined,
+        markedLemmas,
+      ),
       measured: server.measured,
       basis: server.basis,
     };
-  }, [paragraph, marked, ownerOf]);
+  }, [paragraph, markedLemmas]);
 
   /** Server vocabulary, with this session's post-mark overlay applied. */
   const vocabOf = (span: Span): VocabularyEntry | undefined => {
@@ -782,11 +788,11 @@ export default function Home() {
                 >
                   {coverage.measured ? (
                     <>
-                      {t.coverage} {coverage.label.percent}%
-                      {coverage.label.oneIn !== null && (
+                      {t.coverage} {coverage.percent}%
+                      {coverage.oneIn !== null && (
                         <>
                           {" · "}
-                          {t.oneIn} {coverage.label.oneIn} {t.unfamiliarWords}
+                          {t.oneIn} {coverage.oneIn} {t.unfamiliarWords}
                         </>
                       )}
                       {" · "}

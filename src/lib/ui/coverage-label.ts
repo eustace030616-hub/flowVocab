@@ -19,6 +19,8 @@
  * construction.
  */
 
+import { verdictFor, type ReadingVerdict } from "../learner/coverage";
+
 export interface CoverageLabel {
   /** Percentage, one decimal place, as displayed. */
   percent: string;
@@ -42,4 +44,46 @@ export function coverageLabel(value: number): CoverageLabel {
     percent: percentValue.toFixed(1),
     oneIn: unknown <= 0 ? null : Math.max(1, Math.round(1 / unknown)),
   };
+}
+
+/** A word the learner says they do not know is treated as almost certainly unfamiliar, live. */
+export const MARKED_KNOWN_CEILING = 0.05;
+
+export interface LiveCoverage extends CoverageLabel {
+  value: number;
+  verdict: ReadingVerdict;
+}
+
+/**
+ * Coverage as it stands while the learner is marking words.
+ *
+ * Two corrections over the arithmetic this replaces:
+ *
+ *   1. **A mark applies to the word, not the occurrence.** Knowledge is a property of a word, so
+ *      marking one "the" has to change every "the" in the text — and in real paragraphs the repeated
+ *      words are the function words, which are most of the tokens. Adjusting only the clicked span
+ *      made the badge move by a fraction of what the learner had just said.
+ *
+ *   2. **The verdict is recomputed, not recalled.** The server decides the verdict for the text as
+ *      loaded, but the percentage moves as words are marked. Keeping the server's word while showing
+ *      a live figure produced a badge reading "90.1% · comfortable", which is contradictory: 90% is
+ *      below the 95% threshold. Thresholds come from the shared module, so there is one rule.
+ */
+export function liveCoverage(
+  tokens: Array<{ lemmaKey: string }>,
+  pKnownOf: (lemmaKey: string) => number | undefined,
+  markedLemmas: ReadonlySet<string>,
+): LiveCoverage {
+  if (tokens.length === 0) {
+    return { ...coverageLabel(1), value: 1, verdict: "comfortable" };
+  }
+
+  let total = 0;
+  for (const token of tokens) {
+    const base = clamp01(pKnownOf(token.lemmaKey) ?? 0);
+    total += markedLemmas.has(token.lemmaKey) ? Math.min(base, MARKED_KNOWN_CEILING) : base;
+  }
+
+  const value = total / tokens.length;
+  return { ...coverageLabel(value), value, verdict: verdictFor(value) };
 }
