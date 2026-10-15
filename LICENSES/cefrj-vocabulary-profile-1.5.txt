@@ -1,0 +1,20 @@
+CEFR-J Vocabulary Profile v1.5 (Open Language Profiles)
+=======================================================
+
+Dataset id : cefrj-vocabulary-profile-1.5
+Source     : https://github.com/openlanguageprofiles/olp-en-cefrj
+Licence    : © Tono Laboratory, TUFS — free for research and commercial use with citation
+Commercial : yes
+Share-alike: no
+Copyleft   : no
+Offline only: no
+
+Attribution (use verbatim):
+  The CEFR-J Wordlist, Version 1.5. Compiled by Yukio Tono, Tokyo University of Foreign Studies.
+
+Contributes to:
+  - Word.level (A1–B2)
+  - Word.pos
+
+Notes:
+  Covers A1–B2 only. The repository carries no LICENSE file; the terms live in its README. Keep the attribution in product notices.

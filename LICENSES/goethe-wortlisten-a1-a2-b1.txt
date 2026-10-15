@@ -1,0 +1,19 @@
+Goethe-Institut Wortlisten A1/A2/B1 (+ DTZ, telc)
+=================================================
+
+Dataset id : goethe-wortlisten-a1-a2-b1
+Source     : https://www.goethe.de/de/spr/kup/prf.html
+Licence    : © Goethe-Institut — all rights reserved; written consent required for any use
+Commercial : NO
+Share-alike: no
+Copyleft   : no
+Offline only: YES — must never ship
+
+Attribution (use verbatim):
+  © Goethe-Institut.
+
+Contributes to:
+  - offline calibration of the frequency→CEFR curve only
+
+Notes:
+  The PDFs state that saving and network distribution require prior written consent, explicitly including intranets. DWDS republishes them as CSV/JSON (dwds.de/api/lemma/goethe/A1.csv) but the copyright is unchanged. NEVER commit, ship, or write these to the database.

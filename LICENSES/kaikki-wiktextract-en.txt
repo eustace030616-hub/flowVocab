@@ -1,0 +1,23 @@
+kaikki.org English Wiktextract
+==============================
+
+Dataset id : kaikki-wiktextract-en
+Source     : https://kaikki.org/dictionary/English/
+Licence    : CC BY-SA 4.0 + GFDL
+Licence URL: https://creativecommons.org/licenses/by-sa/4.0/
+Commercial : yes
+Share-alike: yes
+Copyleft   : no
+Offline only: no
+
+Attribution (use verbatim):
+  Wiktextract (Tatu Ylonen) derived from Wiktionary contributors.
+
+Contributes to:
+  - Word.surfaceForms
+  - Word.glosses (en)
+
+Notes:
+  Supplies inflected forms and senses. Stream it; the file is large.
+
+Full licence text: see https://creativecommons.org/licenses/by-sa/4.0/

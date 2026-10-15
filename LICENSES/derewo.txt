@@ -1,0 +1,21 @@
+DeReWo (IDS Mannheim)
+=====================
+
+Dataset id : derewo
+Source     : https://www.ids-mannheim.de/digspra/kl/projekte/methoden/derewo/
+Licence    : CC BY-NC 3.0 — commercial use expressly not permitted
+Licence URL: https://creativecommons.org/licenses/by-nc/3.0/
+Commercial : NO
+Share-alike: no
+Copyleft   : no
+Offline only: YES — must never ship
+
+Attribution (use verbatim):
+  DeReWo, Institut für Deutsche Sprache, Mannheim.
+
+Contributes to:
+
+Notes:
+  Rejected: best-constructed German frequency file, worst licence. Its POS lineage is TreeTagger, itself free for research/evaluation only — so no TreeTagger in production either.
+
+Full licence text: see https://creativecommons.org/licenses/by-nc/3.0/

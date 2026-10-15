@@ -6,7 +6,13 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "seed": "tsx src/scripts/seed.ts"
+    "seed": "tsx src/scripts/seed.ts",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "fetch:data": "bash src/scripts/import/fetch-data.sh",
+    "import:english": "tsx src/scripts/import/import-english.ts",
+    "import:german": "tsx src/scripts/import/import-german.ts",
+    "import:licences": "tsx src/scripts/import/write-licences.ts"
   },
   "dependencies": {
     "hono": "^4.11.1",

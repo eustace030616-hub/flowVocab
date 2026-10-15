@@ -1,0 +1,22 @@
+Leipzig Corpora Collection
+==========================
+
+Dataset id : leipzig-corpora
+Source     : https://downloads.wortschatz-leipzig.de/corpora/
+Licence    : CC BY 4.0
+Licence URL: https://creativecommons.org/licenses/by/4.0/
+Commercial : yes
+Share-alike: no
+Copyleft   : no
+Offline only: no
+
+Attribution (use verbatim):
+  Leipzig Corpora Collection, Universität Leipzig.
+
+Contributes to:
+  - Word.frequency.leipzig
+
+Notes:
+  The OpenAPI spec states CC BY 4.0. The API exposes only old (2012-era) German corpora; recent ones are bulk-download only.
+
+Full licence text: see https://creativecommons.org/licenses/by/4.0/

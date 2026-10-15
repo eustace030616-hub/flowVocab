@@ -1,0 +1,22 @@
+Flowwing seed glosses
+=====================
+
+Dataset id : flowwing-seed-glosses
+Source     : internal
+Licence    : CC0-1.0
+Licence URL: https://creativecommons.org/publicdomain/zero/1.0/
+Commercial : yes
+Share-alike: no
+Copyleft   : no
+Offline only: no
+
+Attribution (use verbatim):
+  Written for Flowwing; no attribution required.
+
+Contributes to:
+  - Word.glosses (demo content)
+
+Notes:
+  Hand-written demo glosses, so the seeded paragraphs have something to show on click.
+
+Full licence text: see https://creativecommons.org/publicdomain/zero/1.0/

@@ -1,42 +1,103 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { Span } from "@/src/lib/tokenize";
+
+interface VocabularyEntry {
+  lemma: string;
+  pos: string;
+  gloss: string | null;
+  glossGenerated: boolean | null;
+  glossSource: string | null;
+  level: string | null;
+  levelEstimated: boolean;
+  difficulty: number;
+  article: string | null;
+  plural: string | null;
+  status: string;
+  timesMet: number;
+  unfamiliarity: number;
+  lookupCount: number;
+  exposureCount: number;
+}
 
 interface Paragraph {
   _id: string;
+  targetLang: "en" | "de";
   title: string;
-  content: string;
   topic: string;
+  content: string;
   wordCount: number;
+  level: string | null;
+  spans: Span[];
+  marked: Record<string, string>;
+  vocabulary: Record<string, VocabularyEntry>;
 }
 
-interface ActiveWord {
-  index: number;
-  word: string;
+interface Me {
+  userId: string;
+  track: "zh-en" | "en-de";
+  targetLang: "en" | "de";
+  glossLang: "en" | "zh";
+  uiLocale: "en" | "zh";
+  label: string;
+  tracks: Array<{ id: "zh-en" | "en-de"; label: string; targetLang: string }>;
+}
+
+interface ActiveItem {
+  /** charStart of the span that owns this item (a verb owns its detached particle). */
+  ownerStart: number;
+  span: Span;
   rect: DOMRect;
-  timesMet: number;
-  unfamiliarity: number;
-  definition: string;
-  mastered: boolean;
 }
 
-interface WordRecord {
-  _id: string;
-  word: string;
-  definition: string;
-  timesMet: number;
-  unfamiliarity: number;
-}
-
-function getWordIndexAtPoint(x: number, y: number): number | null {
-  const el = document.elementFromPoint(x, y);
-  if (!el) return null;
-  const idx = (el as HTMLElement).dataset.wordIndex;
-  return idx !== undefined ? parseInt(idx, 10) : null;
-}
+const UI: Record<"en" | "zh", Record<string, string>> = {
+  en: {
+    appName: "Flowwing",
+    loading: "Loading…",
+    empty: "No paragraphs for this track yet. Run the seed script.",
+    rollback: "Rollback",
+    next: "Next paragraph",
+    met: "met",
+    unfamiliar: "unfamiliar",
+    lookups: "looked up",
+    exposures: "seen",
+    noGloss: "No gloss yet — import the dictionary layer to fill this in.",
+    estimated: "estimated",
+    coverage: "coverage",
+    compound: "compound",
+    separable: "separable verb",
+    falseFriend: "false friend",
+    cognate: "cognate",
+    mastered: "known",
+    eventLog: "append-only event log",
+    language: "Language",
+  },
+  zh: {
+    appName: "Flowwing",
+    loading: "加载中…",
+    empty: "该学习方向暂无段落，请先运行 seed 脚本。",
+    rollback: "上一段",
+    next: "下一段",
+    met: "遇见",
+    unfamiliar: "生词",
+    lookups: "查询",
+    exposures: "扫过",
+    noGloss: "暂无释义 — 导入词典数据后显示。",
+    estimated: "估算",
+    coverage: "覆盖率",
+    compound: "复合词",
+    separable: "可分动词",
+    falseFriend: "假朋友",
+    cognate: "同源词",
+    mastered: "已掌握",
+    eventLog: "追加式事件日志",
+    language: "语言",
+  },
+};
 
 function amberIntensity(count: number): string {
-  if (count <= 0) return "";
+  if (count <= 0) return "bg-amber-100/60";
   if (count === 1) return "bg-amber-100";
   if (count === 2) return "bg-amber-200";
   if (count === 3) return "bg-amber-300";
@@ -44,33 +105,104 @@ function amberIntensity(count: number): string {
 }
 
 export default function Home() {
+  const [me, setMe] = useState<Me | null>(null);
   const [paragraphs, setParagraphs] = useState<Paragraph[]>([]);
   const [ready, setReady] = useState(false);
   const [paraIndex, setParaIndex] = useState(0);
-  const [hoveredWord, setHoveredWord] = useState<number | null>(null);
-  const [activeWord, setActiveWord] = useState<ActiveWord | null>(null);
+  const [marked, setMarked] = useState<Set<number>>(new Set());
+  const [hoveredOwner, setHoveredOwner] = useState<number | null>(null);
+  const [active, setActive] = useState<ActiveItem | null>(null);
   const [winHeight, setWinHeight] = useState(0);
-
-  // Track marked words this session (indices), + DB-backed word records for lookups
-  const [markedThisSession, setMarkedThisSession] = useState<Set<number>>(new Set());
-  const [wordDB, setWordDB] = useState<Map<string, WordRecord>>(new Map());
-
-  // Keep ref in sync so timer closures always read latest
-  const updateWordDB = (fn: (prev: Map<string, WordRecord>) => Map<string, WordRecord>) => {
-    setWordDB((prev) => {
-      const next = fn(prev);
-      wordDBRef.current = next;
-      return next;
-    });
-  };
+  const [lastEvent, setLastEvent] = useState<string | null>(null);
 
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isOnPopover = useRef(false);
-  const wordDBRef = useRef<Map<string, WordRecord>>(new Map());
+  /** One exposure batch per paragraph per session. */
+  const exposed = useRef<Set<string>>(new Set());
+  const sessionId = useRef<string>(
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `s-${Date.now()}`,
+  );
 
-  const paragraph = paragraphs[paraIndex] || null;
-  const words = paragraph ? paragraph.content.split(" ") : [];
+  const paragraph = paragraphs[paraIndex] ?? null;
+  const t = UI[me?.uiLocale ?? "en"];
+
+  const load = useCallback(async (track?: string) => {
+    const meRes = await fetch("/api/me");
+    const meData: Me = await meRes.json();
+    const wanted = track ?? meData.track;
+    if (track && track !== meData.track) {
+      const patched: Me = await (
+        await fetch("/api/me/track", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ track }),
+        })
+      ).json();
+      setMe(patched);
+      const res = await fetch(`/api/paragraphs?targetLang=${patched.targetLang}`);
+      setParagraphs(await res.json());
+    } else {
+      setMe(meData);
+      const res = await fetch(`/api/paragraphs?targetLang=${meData.targetLang}`);
+      setParagraphs(await res.json());
+    }
+    setParaIndex(0);
+    setReady(true);
+  }, []);
+
+  useEffect(() => {
+    void load();
+    setWinHeight(window.innerHeight);
+  }, [load]);
+
+  // Sync local marks + record exposure whenever the displayed paragraph changes.
+  useEffect(() => {
+    if (!paragraph) return;
+    const next = new Set<number>();
+    for (const [start, status] of Object.entries(paragraph.marked)) {
+      if (status === "marked") next.add(Number(start));
+    }
+    setMarked(next);
+    setActive(null);
+    setHoveredOwner(null);
+
+    if (!me || exposed.current.has(paragraph._id)) return;
+    exposed.current.add(paragraph._id);
+
+    const items = paragraph.spans
+      .filter((s) => s.kind === "word" || s.kind === "number")
+      .map((s) => ({
+        surface: s.surface,
+        lemmaKey: s.lemmaKey,
+        charStart: s.start,
+        charEnd: s.end,
+      }));
+    if (items.length === 0) return;
+
+    void fetch("/api/events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        type: "exposure",
+        targetLang: paragraph.targetLang,
+        paragraphId: paragraph._id,
+        sessionId: sessionId.current,
+        items,
+      }),
+    });
+  }, [paragraph, me]);
+
+  /** A span's item identity: a detached particle belongs to the verb that absorbed it. */
+  const ownerOf = useCallback((span: Span) => span.absorbedInto ?? span.start, []);
+
+  const findSpan = useCallback(
+    (ownerStart: number): Span | null =>
+      paragraph?.spans.find((s) => s.start === ownerStart) ?? null,
+    [paragraph],
+  );
 
   const clearHoverTimer = () => {
     if (hoverTimer.current) {
@@ -79,150 +211,39 @@ export default function Home() {
     }
   };
 
-  // Fetch all paragraphs on mount
-  const fetchParagraphs = async () => {
-    const res = await fetch("/api/paragraphs");
-    const data = await res.json();
-    setParagraphs(data);
-    setReady(true);
-    if (data.length > 0) {
-      setParaIndex(0);
-      setMarkedThisSession(new Set());
-      lookupWords(data[0].content, data[0]._id);
-    }
-  };
-
-  // Look up all words from a paragraph in the Word DB, and restore persisted marks
-  const lookupWords = async (content: string, pid: string) => {
-    const uniqueWords = [...new Set(content.toLowerCase().split(" "))];
-
-    // Batch lookup word records
-    const res = await fetch("/api/words/batch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ words: uniqueWords }),
-    });
-    const records: WordRecord[] = await res.json();
-    const map = new Map<string, WordRecord>();
-    const wordIdToRecord: Map<string, WordRecord> = new Map();
-    for (const r of records) {
-      map.set(r.word, r);
-      wordIdToRecord.set(r._id, r);
-    }
-    updateWordDB(() => map);
-
-    // Fetch persisted ParagraphWord marks and restore markedThisSession
-    if (wordIdToRecord.size > 0) {
-      const pwRes = await fetch("/api/paragraph-words/batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          paragraphId: pid,
-          wordIds: [...wordIdToRecord.keys()],
-        }),
-      });
-      const markedStatus: Record<number, string> = await pwRes.json();
-      // Keys are wordIndex values — use them directly
-      const newMarks = new Set<number>();
-      for (const key of Object.keys(markedStatus)) {
-        if (markedStatus[Number(key)] === "marked") {
-          newMarks.add(Number(key));
-        }
-      }
-      setMarkedThisSession(newMarks);
-    } else {
-      setMarkedThisSession(new Set());
-    }
-  };
-
-  const handleGenerate = async () => {
-    if (!paragraph) return;
-    if (paraIndex >= paragraphs.length - 1) return; // don't cycle past last
-
-    // Figure out which words in this paragraph were ignored
-    const allWords = [...new Set(paragraph.content.toLowerCase().split(" "))];
-    const ignoredWords: string[] = [];
-
-    for (let i = 0; i < words.length; i++) {
-      const w = words[i].toLowerCase();
-      const record = wordDB.get(w);
-      if (record && !markedThisSession.has(i)) {
-        ignoredWords.push(w);
-      }
-    }
-
-    // Send ignored words to decrement counts
-    if (ignoredWords.length > 0) {
-      await fetch("/api/words/ignore", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ words: [...new Set(ignoredWords)], paragraphId: paragraph._id }),
-      });
-    }
-
-    // Move to next paragraph (cycle)
-    const nextIndex = (paraIndex + 1) % paragraphs.length;
-    setParaIndex(nextIndex);
-    setMarkedThisSession(new Set());
-    setHoveredWord(null);
-    setActiveWord(null);
-    clearHoverTimer();
-    lookupWords(paragraphs[nextIndex].content, paragraphs[nextIndex]._id);
-  };
-
-  useEffect(() => {
-    fetchParagraphs();
-    setWinHeight(window.innerHeight);
-  }, []);
-
   const handleMouseMove = useCallback(
     (e: React.MouseEvent) => {
-      const idx = getWordIndexAtPoint(e.clientX, e.clientY);
-      setHoveredWord(idx);
+      const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
+      const raw = el?.closest("[data-owner]") as HTMLElement | null;
+      const ownerStart = raw?.dataset.owner ? Number(raw.dataset.owner) : null;
+      setHoveredOwner(ownerStart);
 
-      if (activeWord && idx !== activeWord.index && !isOnPopover.current) {
+      if (active && ownerStart !== active.ownerStart && !isOnPopover.current) {
         clearHoverTimer();
         leaveTimer.current = setTimeout(() => {
-          setActiveWord(null);
+          setActive(null);
           leaveTimer.current = null;
-        }, 50);
+        }, 60);
       }
-
-      if (activeWord && idx === activeWord.index && leaveTimer.current) {
+      if (active && ownerStart === active.ownerStart && leaveTimer.current) {
         clearTimeout(leaveTimer.current);
         leaveTimer.current = null;
       }
+      if (ownerStart === null || ownerStart === active?.ownerStart) return;
 
-      if (idx !== null && idx !== activeWord?.index) {
-        clearHoverTimer();
-        const el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement;
-        if (el) {
-          const wordEl = el.closest("[data-word-index]") as HTMLElement;
-          const wordStr = words[idx].toLowerCase();
-          const record = wordDBRef.current.get(wordStr);
-          hoverTimer.current = setTimeout(() => {
-            const rect = wordEl?.getBoundingClientRect();
-            if (rect && idx < words.length) {
-              const isMarkedPersisted = markedThisSession.has(idx);
-              setActiveWord({
-                index: idx,
-                word: words[idx],
-                rect,
-                timesMet: record?.timesMet || 0,
-                unfamiliarity: record?.unfamiliarity || 0,
-                definition: record?.definition || "",
-                mastered: isMarkedPersisted && (record?.unfamiliarity || 0) === 0 && (record?.timesMet || 0) > 0,
-              });
-            }
-          }, 400);
-        }
-      }
+      clearHoverTimer();
+      hoverTimer.current = setTimeout(() => {
+        const span = findSpan(ownerStart);
+        if (!span) return;
+        const rect = (raw as HTMLElement).getBoundingClientRect();
+        setActive({ ownerStart, span, rect });
+      }, 350);
     },
-    [activeWord, words, markedThisSession]
+    [active, findSpan],
   );
 
   const handleBoxLeave = () => {
-    setHoveredWord(null);
+    setHoveredOwner(null);
     clearHoverTimer();
     if (leaveTimer.current) {
       clearTimeout(leaveTimer.current);
@@ -230,65 +251,109 @@ export default function Home() {
     }
   };
 
-  const handleClick = useCallback(async () => {
-    if (hoveredWord === null || !paragraph) return;
-    const selection = window.getSelection();
-    if (selection && selection.toString().length > 0) return;
+  const toggleMark = useCallback(async () => {
+    if (!active || !paragraph || !me) return;
+    const span = active.span;
+    const isMarked = marked.has(span.start);
+    const body = {
+      targetLang: paragraph.targetLang,
+      lemmaKey: span.lemmaKey,
+      lemma: span.lemma,
+      surface: span.surface,
+      paragraphId: paragraph._id,
+      charStart: span.start,
+      charEnd: span.end,
+    };
 
-    const word = words[hoveredWord].toLowerCase();
-    const isCurrentlyMarked = markedThisSession.has(hoveredWord);
+    setMarked((prev) => {
+      const next = new Set(prev);
+      if (isMarked) next.delete(span.start);
+      else next.add(span.start);
+      return next;
+    });
 
-    if (isCurrentlyMarked) {
-      // Un-mark
-      setMarkedThisSession((prev) => {
-        const next = new Set(prev);
-        next.delete(hoveredWord);
-        return next;
-      });
-      fetch("/api/words/ignore", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ words: [word], paragraphId: paragraph._id, wordIndex: hoveredWord }),
-      });
-      updateWordDB((prevDB) => {
-        const copy = new Map(prevDB);
-        const existing = copy.get(word);
-        if (existing) copy.set(word, { ...existing, unfamiliarity: Math.max(0, existing.unfamiliarity - 1) });
-        return copy;
-      });
-    } else {
-      // Mark — wait for API before allowing navigation away
-      setMarkedThisSession((prev) => {
-        const next = new Set(prev);
-        next.add(hoveredWord);
-        return next;
-      });
-      try {
-        const res = await fetch("/api/words/mark", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ word, paragraphId: paragraph._id, wordIndex: hoveredWord }),
-        });
-        const updated: WordRecord = await res.json();
-        updateWordDB((prevDB) => {
-          const copy = new Map(prevDB);
-          copy.set(word, { word, definition: updated.definition, timesMet: updated.timesMet, unfamiliarity: updated.unfamiliarity, _id: updated._id });
-          return copy;
-        });
-        // Update popover counter immediately
-        setActiveWord((prev) =>
-          prev?.index === hoveredWord
-            ? { ...prev, timesMet: updated.timesMet, unfamiliarity: updated.unfamiliarity, mastered: updated.unfamiliarity === 0 && updated.timesMet > 0 }
-            : prev
-        );
-      } catch { /* API call failed, but session mark is saved locally */ }
+    const url = isMarked ? "/api/words/ignore" : "/api/words/mark";
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    const state = data?.state;
+    if (state) {
+      setLastEvent(
+        `${isMarked ? "unmark" : "mark"} → met ${state.timesMet}, unfamiliar ${state.unfamiliarity}, ${state.status}`,
+      );
+      // Reflect the recomputed state locally without a refetch.
+      setParagraphs((prev) =>
+        prev.map((p) => {
+          if (p._id !== paragraph._id) return p;
+          const vocab = { ...p.vocabulary };
+          const existing = vocab[span.lemmaKey];
+          vocab[span.lemmaKey] = {
+            lemma: span.lemma,
+            pos: existing?.pos ?? "",
+            gloss: existing?.gloss ?? null,
+            glossGenerated: existing?.glossGenerated ?? null,
+            glossSource: existing?.glossSource ?? null,
+            level: existing?.level ?? null,
+            levelEstimated: existing?.levelEstimated ?? false,
+            difficulty: existing?.difficulty ?? -1,
+            article: existing?.article ?? null,
+            plural: existing?.plural ?? null,
+            status: state.status,
+            timesMet: state.timesMet,
+            unfamiliarity: state.unfamiliarity,
+            lookupCount: state.lookupCount,
+            exposureCount: state.exposureCount,
+          };
+          return { ...p, vocabulary: vocab };
+        }),
+      );
     }
-  }, [hoveredWord, words, paragraph, markedThisSession]);
+  }, [active, paragraph, me, marked]);
+
+  const coverage = useMemo(() => {
+    if (!paragraph) return null;
+    const units = paragraph.spans.filter((s) => s.kind === "word" || s.kind === "number");
+    if (units.length === 0) return null;
+    let unknown = 0;
+    for (const s of units) if (marked.has(ownerOf(s))) unknown += 1;
+    return { total: units.length, unknown, value: (units.length - unknown) / units.length };
+  }, [paragraph, marked, ownerOf]);
+
+  const vocabOf = (span: Span): VocabularyEntry | undefined =>
+    paragraph?.vocabulary[span.lemmaKey];
+
+  const isActiveOwner = (span: Span) => active?.ownerStart === ownerOf(span);
+  const isHoveredOwner = (span: Span) => hoveredOwner === ownerOf(span);
 
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50">
-      <header className="w-full h-14 bg-white border-b border-zinc-200 flex items-center px-6 shrink-0">
-        <h1 className="text-lg font-semibold text-zinc-800">Vocab App</h1>
+      <header className="w-full h-14 bg-white border-b border-zinc-200 flex items-center justify-between px-6 shrink-0">
+        <div className="flex items-center gap-3">
+          <h1 className="text-lg font-semibold text-zinc-800">{t.appName}</h1>
+          {me && (
+            <span className="text-xs text-zinc-400">
+              {me.track} · {t.language}: {me.targetLang}
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-1">
+          {me?.tracks.map((track) => (
+            <button
+              key={track.id}
+              onClick={() => void load(track.id)}
+              className={`h-8 px-3 text-xs font-medium rounded-lg transition-colors ${
+                me.track === track.id
+                  ? "bg-zinc-900 text-white"
+                  : "border border-zinc-200 text-zinc-500 hover:bg-zinc-100"
+              }`}
+            >
+              {track.label}
+            </button>
+          ))}
+        </div>
       </header>
 
       <div className="flex flex-1 overflow-hidden">
@@ -296,37 +361,35 @@ export default function Home() {
           <div className="flex items-center justify-between h-10 mb-3">
             <div className="flex items-center gap-3">
               <span className="text-sm text-zinc-500 font-medium">
-                {paragraph ? `${paragraph.title} · ${paragraph.topic}` : "No paragraphs"}
+                {paragraph ? `${paragraph.title} · ${paragraph.topic}` : t.empty}
               </span>
-              <span className="text-xs text-zinc-400">
-                {paragraph ? `${words.length} words (${paraIndex + 1}/${paragraphs.length})` : ""}
-              </span>
+              {paragraph && (
+                <span className="text-xs text-zinc-400">
+                  {paragraph.wordCount} words ({paraIndex + 1}/{paragraphs.length})
+                  {paragraph.level ? ` · ${paragraph.level}` : ""}
+                </span>
+              )}
+              {coverage && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600">
+                  {t.coverage} {(coverage.value * 100).toFixed(0)}% · {coverage.unknown}/
+                  {coverage.total}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => {
-                  if (paragraphs.length === 0) return;
-                  const prevIndex = paraIndex === 0 ? paragraphs.length - 1 : paraIndex - 1;
-                  setParaIndex(prevIndex);
-                  setMarkedThisSession(new Set());
-                  setHoveredWord(null);
-                  setActiveWord(null);
-                  clearHoverTimer();
-                  lookupWords(paragraphs[prevIndex].content, paragraphs[prevIndex]._id);
-                }}
-                className="h-8 px-4 text-sm font-medium border border-zinc-200 text-zinc-500 rounded-lg hover:bg-zinc-100 transition-colors"
+                onClick={() => setParaIndex((i) => (i === 0 ? paragraphs.length - 1 : i - 1))}
+                disabled={paragraphs.length === 0}
+                className="h-8 px-4 text-sm font-medium border border-zinc-200 text-zinc-500 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
               >
-                Rollback
-              </button>
-              <button className="h-8 px-4 text-sm font-medium border border-zinc-200 text-zinc-500 rounded-lg hover:bg-zinc-100 transition-colors">
-                Topic ▼
+                {t.rollback}
               </button>
               <button
-                onClick={handleGenerate}
-                disabled={paragraphs.length === 0 || paraIndex >= paragraphs.length - 1}
+                onClick={() => setParaIndex((i) => (i + 1) % Math.max(paragraphs.length, 1))}
+                disabled={paragraphs.length === 0}
                 className="h-8 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition-colors"
               >
-                Generate
+                {t.next}
               </button>
             </div>
           </div>
@@ -335,54 +398,45 @@ export default function Home() {
             className="flex-1 bg-white border border-zinc-200 rounded-xl p-6 overflow-auto"
             onMouseMove={handleMouseMove}
             onMouseLeave={handleBoxLeave}
-            onClick={handleClick}
+            onClick={() => void toggleMark()}
           >
             {paragraph ? (
               <p className="text-lg leading-relaxed text-zinc-800 select-text">
-                {words.map((word, i) => {
-                  const record = wordDB.get(word.toLowerCase());
-                  const unfam = record?.unfamiliarity || 0;
-                  const isMarked = markedThisSession.has(i);
-                  const isHovered = hoveredWord === i;
-
-                  // Intensity comes from unfamiliarity. Marked-but-mastered → faint.
-                  if (isMarked) {
-                    const intensity =
-                      unfam > 0
-                        ? amberIntensity(unfam)
-                        : "bg-amber-100/50";
-                    return (
-                      <mark
-                        key={i}
-                        data-word-index={i}
-                        className={`${intensity} text-zinc-800 rounded px-0.5`}
-                      >
-                        {word}{" "}
-                      </mark>
-                    );
+                {paragraph.spans.map((span) => {
+                  if (span.kind === "punct") {
+                    return <span key={span.start}>{span.surface}</span>;
                   }
+                  const owner = ownerOf(span);
+                  const isMarked = marked.has(owner);
+                  const vocab = vocabOf(span);
+                  const unfam = vocab?.unfamiliarity ?? 0;
+                  const highlight = isMarked
+                    ? amberIntensity(unfam)
+                    : isHoveredOwner(span) || isActiveOwner(span)
+                      ? "bg-amber-100"
+                      : "";
+                  const border =
+                    span.absorbedInto !== undefined
+                      ? "border-b border-dashed border-amber-400"
+                      : "";
+                  const compound = span.compoundParts ? "border-b border-dotted border-sky-400" : "";
                   return (
                     <span
-                      key={i}
-                      data-word-index={i}
-                      className={isHovered ? "bg-amber-100 rounded" : ""}
+                      key={span.start}
+                      data-owner={owner}
+                      title={span.lemma}
+                      className={`cursor-pointer rounded px-0.5 ${highlight} ${border} ${compound}`}
                     >
-                      {word}{" "}
+                      {span.surface}
                     </span>
                   );
                 })}
               </p>
-            ) : !ready ? (
-              <p className="text-lg text-zinc-400 italic">
-                Loading...
-              </p>
             ) : (
-              <p className="text-lg text-zinc-400 italic">
-                No paragraphs found. Run the seed script first.
-              </p>
+              <p className="text-lg text-zinc-400 italic">{ready ? t.empty : t.loading}</p>
             )}
 
-            {activeWord && (
+            {active && (
               <div
                 onMouseEnter={() => {
                   isOnPopover.current = true;
@@ -393,41 +447,98 @@ export default function Home() {
                 }}
                 onMouseLeave={() => {
                   isOnPopover.current = false;
-                  if (leaveTimer.current) {
-                    clearTimeout(leaveTimer.current);
-                    leaveTimer.current = null;
-                  }
-                  setActiveWord(null);
+                  setActive(null);
                 }}
-                className="fixed z-50 bg-white border border-zinc-200 rounded-lg shadow-lg p-3 min-w-[120px]"
+                className="fixed z-50 bg-white border border-zinc-200 rounded-lg shadow-lg p-3 min-w-[200px] max-w-[320px]"
                 style={{
-                  left: activeWord.rect.left + activeWord.rect.width / 2,
-                  bottom: winHeight - activeWord.rect.top + 8,
+                  left: active.rect.left + active.rect.width / 2,
+                  bottom: winHeight - active.rect.top + 8,
                   transform: "translateX(-50%)",
                 }}
               >
                 <p className="text-lg font-semibold text-zinc-800">
-                  {activeWord.word}
+                  {(() => {
+                    const vocab = paragraph ? paragraph.vocabulary[active.span.lemmaKey] : undefined;
+                    return vocab?.article ? `${vocab.article} ` : "";
+                  })()}
+                  {active.span.lemma}
+                  {(() => {
+                    const vocab = paragraph ? paragraph.vocabulary[active.span.lemmaKey] : undefined;
+                    return vocab?.plural ? (
+                      <span className="text-xs font-normal text-zinc-400">
+                        {" "}
+                        · pl. {vocab.plural}
+                      </span>
+                    ) : null;
+                  })()}
                 </p>
-                {activeWord.timesMet > 0 || activeWord.mastered ? (
-                  <p className="text-xs text-zinc-400">
-                    Met {activeWord.timesMet} times
-                    {activeWord.mastered
-                      ? " · Mastered"
-                      : activeWord.unfamiliarity > 0
-                        ? ` · Unfamiliar ${activeWord.unfamiliarity}`
-                        : ""}
-                  </p>
-                ) : null}
-                {activeWord.definition && (
-                  <>
-                    <div className="border-t border-zinc-100 my-2" />
-                    <p className="text-xs text-zinc-500">{activeWord.definition}</p>
-                  </>
-                )}
-                {!activeWord.definition && activeWord.timesMet === 0 && (
-                  <p className="text-xs text-zinc-400 mt-0.5">Definition coming soon</p>
-                )}
+
+                <div className="flex flex-wrap gap-1 mt-1">
+                  {(() => {
+                    const vocab = paragraph ? paragraph.vocabulary[active.span.lemmaKey] : undefined;
+                    if (!vocab?.level) return null;
+                    return (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600 font-medium">
+                        {vocab.level}
+                        {vocab.levelEstimated ? ` (${t.estimated})` : ""}
+                      </span>
+                    );
+                  })()}
+                  {active.span.compoundParts && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">
+                      {t.compound}: {active.span.compoundParts.join(" + ")}
+                    </span>
+                  )}
+                  {active.span.detached && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">
+                      {t.separable}
+                    </span>
+                  )}
+                  {(() => {
+                    const vocab = paragraph ? paragraph.vocabulary[active.span.lemmaKey] : undefined;
+                    if (!vocab) return null;
+                    const flags: string[] = [];
+                    if (vocab.status === "known") flags.push(t.mastered);
+                    return flags.map((f) => (
+                      <span
+                        key={f}
+                        className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700"
+                      >
+                        {f}
+                      </span>
+                    ));
+                  })()}
+                </div>
+
+                {(() => {
+                  const vocab = paragraph ? paragraph.vocabulary[active.span.lemmaKey] : undefined;
+                  if (vocab?.gloss) {
+                    return (
+                      <>
+                        <div className="border-t border-zinc-100 my-2" />
+                        <p className="text-sm text-zinc-600">{vocab.gloss}</p>
+                        <p className="text-[10px] text-zinc-400 mt-1">
+                          {vocab.glossSource}
+                          {vocab.glossGenerated ? " · machine-generated" : ""}
+                        </p>
+                      </>
+                    );
+                  }
+                  return (
+                    <p className="text-xs text-zinc-400 mt-2 italic">{t.noGloss}</p>
+                  );
+                })()}
+
+                {(() => {
+                  const vocab = paragraph ? paragraph.vocabulary[active.span.lemmaKey] : undefined;
+                  if (!vocab) return null;
+                  return (
+                    <p className="text-[10px] text-zinc-400 mt-2">
+                      {t.met} {vocab.timesMet} · {t.unfamiliar} {vocab.unfamiliarity} · {t.lookups}{" "}
+                      {vocab.lookupCount} · {t.exposures} {vocab.exposureCount}
+                    </p>
+                  );
+                })()}
               </div>
             )}
           </div>
@@ -438,22 +549,22 @@ export default function Home() {
             <div className="w-16 h-16 rounded-full bg-zinc-200 flex items-center justify-center text-zinc-400 text-2xl">
               ?
             </div>
-            <span className="text-sm text-zinc-500">Guest</span>
-            <button className="text-xs text-zinc-400 hover:text-zinc-600 transition-colors">
-              Sign in →
-            </button>
+            <span className="text-sm text-zinc-500">
+              {me ? `${me.track}` : "…"}
+            </span>
             <div className="flex items-center gap-1 mt-2">
               <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600 font-medium">
-                Learning
+                {me?.targetLang ?? "…"}
               </span>
-              <span className="text-xs text-zinc-400">/</span>
-              <span className="text-xs text-zinc-400">Review</span>
+              <span className="text-xs text-zinc-400">→</span>
+              <span className="text-xs text-zinc-400">{me?.glossLang ?? "…"}</span>
             </div>
           </div>
 
-          <div className="h-1/2 flex flex-col items-center justify-center p-4">
-            <p className="text-xs text-zinc-400 text-center">
-              Questions will appear here after you finish reading.
+          <div className="h-1/2 flex flex-col items-center justify-center p-4 gap-2">
+            <p className="text-[10px] uppercase tracking-wide text-zinc-400">{t.eventLog}</p>
+            <p className="text-xs text-zinc-500 text-center break-words">
+              {lastEvent ?? "—"}
             </p>
           </div>
         </aside>

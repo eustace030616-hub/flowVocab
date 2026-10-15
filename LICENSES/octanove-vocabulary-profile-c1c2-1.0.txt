@@ -1,0 +1,22 @@
+Octanove Vocabulary Profile C1/C2 v1.0
+======================================
+
+Dataset id : octanove-vocabulary-profile-c1c2-1.0
+Source     : https://github.com/openlanguageprofiles/olp-en-cefrj
+Licence    : CC BY-SA 4.0
+Licence URL: https://creativecommons.org/licenses/by-sa/4.0/
+Commercial : yes
+Share-alike: yes
+Copyleft   : no
+Offline only: no
+
+Attribution (use verbatim):
+  Octanove Vocabulary Profile C1/C2 v1.0, Octanove Labs.
+
+Contributes to:
+  - Word.level (C1–C2)
+
+Notes:
+  Built specifically to extend CEFR-J past its B2 ceiling.
+
+Full licence text: see https://creativecommons.org/licenses/by-sa/4.0/

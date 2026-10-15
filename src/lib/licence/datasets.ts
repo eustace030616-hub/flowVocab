@@ -1,0 +1,308 @@
+/**
+ * The dataset catalogue.
+ *
+ * Every external source Flowwing touches, with its licence, whether it may be shipped
+ * commercially, whether it imposes share-alike or copyleft, and whether it is restricted to
+ * offline calibration.
+ *
+ * This is code rather than documentation because the constraints are mechanical:
+ *   • `offlineOnly` sources must never reach the database, the image, or the repo
+ *   • `shareAlike` / `copyleft` sources must stay in their own collections, so that merging
+ *     them with anything else does not make the whole collection an adaptation
+ *   • `commercialUse: false` sources are usable for internal calibration only
+ *
+ * Facts here were verified by fetching the sources and their licence pages; anything that
+ * could not be verified is marked in `notes` rather than silently assumed.
+ */
+
+export interface DatasetSpec {
+  dataset: string;
+  title: string;
+  url: string;
+  license: string;
+  licenseUrl?: string;
+  /** The exact attribution string the licence requires. */
+  attribution: string;
+  commercialUse: boolean;
+  shareAlike: boolean;
+  copyleft: boolean;
+  /** Calibration only: must never be committed, shipped, or written to the database. */
+  offlineOnly: boolean;
+  contributesTo: string[];
+  notes?: string;
+}
+
+export const DATASETS: Record<string, DatasetSpec> = {
+  // ── English item difficulty ──────────────────────────────────────────────────
+  "cefrj-vocabulary-profile-1.5": {
+    dataset: "cefrj-vocabulary-profile-1.5",
+    title: "CEFR-J Vocabulary Profile v1.5 (Open Language Profiles)",
+    url: "https://github.com/openlanguageprofiles/olp-en-cefrj",
+    license: "© Tono Laboratory, TUFS — free for research and commercial use with citation",
+    attribution:
+      "The CEFR-J Wordlist, Version 1.5. Compiled by Yukio Tono, Tokyo University of Foreign Studies.",
+    commercialUse: true,
+    shareAlike: false,
+    copyleft: false,
+    offlineOnly: false,
+    contributesTo: ["Word.level (A1–B2)", "Word.pos"],
+    notes:
+      "Covers A1–B2 only. The repository carries no LICENSE file; the terms live in its README. Keep the attribution in product notices.",
+  },
+  "octanove-vocabulary-profile-c1c2-1.0": {
+    dataset: "octanove-vocabulary-profile-c1c2-1.0",
+    title: "Octanove Vocabulary Profile C1/C2 v1.0",
+    url: "https://github.com/openlanguageprofiles/olp-en-cefrj",
+    license: "CC BY-SA 4.0",
+    licenseUrl: "https://creativecommons.org/licenses/by-sa/4.0/",
+    attribution: "Octanove Vocabulary Profile C1/C2 v1.0, Octanove Labs.",
+    commercialUse: true,
+    shareAlike: true,
+    copyleft: false,
+    offlineOnly: false,
+    contributesTo: ["Word.level (C1–C2)"],
+    notes: "Built specifically to extend CEFR-J past its B2 ceiling.",
+  },
+  "wordfreq-3.1.1": {
+    dataset: "wordfreq-3.1.1",
+    title: "wordfreq 3.1.1",
+    url: "https://github.com/rspeer/wordfreq",
+    license: "code Apache-2.0; data CC BY-SA 4.0",
+    licenseUrl: "https://creativecommons.org/licenses/by-sa/4.0/",
+    attribution: "Robyn Speer",
+    commercialUse: true,
+    shareAlike: true,
+    copyleft: false,
+    offlineOnly: false,
+    contributesTo: ["Word.frequency.wordfreq"],
+    notes:
+      "Its NOTICE.md requires crediting the author by the exact name \"Robyn Speer\". The only documented commercial permission for SUBTLEX runs through this package — do not download the raw SUBTLEX files.",
+  },
+  "kaikki-wiktextract-en": {
+    dataset: "kaikki-wiktextract-en",
+    title: "kaikki.org English Wiktextract",
+    url: "https://kaikki.org/dictionary/English/",
+    license: "CC BY-SA 4.0 + GFDL",
+    licenseUrl: "https://creativecommons.org/licenses/by-sa/4.0/",
+    attribution: "Wiktextract (Tatu Ylonen) derived from Wiktionary contributors.",
+    commercialUse: true,
+    shareAlike: true,
+    copyleft: false,
+    offlineOnly: false,
+    contributesTo: ["Word.surfaceForms", "Word.glosses (en)"],
+    notes: "Supplies inflected forms and senses. Stream it; the file is large.",
+  },
+
+  // ── German item difficulty ───────────────────────────────────────────────────
+  "dwds-lemmadatenbank": {
+    dataset: "dwds-lemmadatenbank",
+    title: "DWDS-Lemmadatenbank",
+    url: "https://www.dwds.de/lemma/csv",
+    license: "CC BY-SA 4.0",
+    licenseUrl: "https://creativecommons.org/licenses/by-sa/4.0/",
+    attribution: "DWDS — Digitales Wörterbuch der deutschen Sprache (BBAW).",
+    commercialUse: true,
+    shareAlike: true,
+    copyleft: false,
+    offlineOnly: false,
+    contributesTo: ["Word.frequency.dwds", "Word.pos", "Word.lemma"],
+    notes:
+      "281,207 lemmas with POS and Häufigkeitsklasse 0–6. The endpoint returns a tdm-policy header — read it before bulk ingest.",
+  },
+  "leipzig-corpora": {
+    dataset: "leipzig-corpora",
+    title: "Leipzig Corpora Collection",
+    url: "https://downloads.wortschatz-leipzig.de/corpora/",
+    license: "CC BY 4.0",
+    licenseUrl: "https://creativecommons.org/licenses/by/4.0/",
+    attribution: "Leipzig Corpora Collection, Universität Leipzig.",
+    commercialUse: true,
+    shareAlike: false,
+    copyleft: false,
+    offlineOnly: false,
+    contributesTo: ["Word.frequency.leipzig"],
+    notes:
+      "The OpenAPI spec states CC BY 4.0. The API exposes only old (2012-era) German corpora; recent ones are bulk-download only.",
+  },
+  "kaikki-wiktextract-de": {
+    dataset: "kaikki-wiktextract-de",
+    title: "kaikki.org German Wiktextract",
+    url: "https://kaikki.org/dictionary/German/kaikki.org-dictionary-German.jsonl",
+    license: "CC BY-SA 4.0 + GFDL",
+    licenseUrl: "https://creativecommons.org/licenses/by-sa/4.0/",
+    attribution: "Wiktextract (Tatu Ylonen) derived from Wiktionary contributors.",
+    commercialUse: true,
+    shareAlike: true,
+    copyleft: false,
+    offlineOnly: false,
+    contributesTo: ["Word.article", "Word.plural", "Word.surfaceForms", "Word.glosses (en)"],
+    notes:
+      "Gender lives in the head template (`de-noun`, e.g. \"1\": \"n,-,-:s\"); full declension tables are template-generated in `forms` via `de-ndecl`.",
+  },
+  "ph98-german-cefr-wordlist": {
+    dataset: "ph98-german-cefr-wordlist",
+    title: "German CEFR wordlist (ph98)",
+    url: "https://github.com/ph98/german-cefr-wordlist",
+    license: "MIT (repository) — but the `rate` column derives from CC BY-SA data",
+    licenseUrl: "https://creativecommons.org/licenses/by-sa/4.0/",
+    attribution: "ph98/german-cefr-wordlist; frequency column derived from hermitdave/FrequencyWords.",
+    commercialUse: true,
+    shareAlike: true,
+    copyleft: false,
+    offlineOnly: false,
+    contributesTo: ["Word.level (A1–C2, estimated)"],
+    notes:
+      "UNVALIDATED PRIOR. Levels are LLM-assigned (Gemini) on a hard-coded frequency prior per its own PRD. Always set levelEstimated = true. The MIT label hides a share-alike obligation, hence shareAlike: true here.",
+  },
+
+  // ── Glosses ──────────────────────────────────────────────────────────────────
+  "cc-cedict": {
+    dataset: "cc-cedict",
+    title: "CC-CEDICT",
+    url: "https://cc-cedict.org/wiki/",
+    license: "CC BY-SA 4.0",
+    licenseUrl: "https://creativecommons.org/licenses/by-sa/4.0/",
+    attribution: "CC-CEDICT (MDBG / community contributors).",
+    commercialUse: true,
+    shareAlike: true,
+    copyleft: false,
+    offlineOnly: false,
+    contributesTo: ["Word.glosses (zh)"],
+    notes:
+      "ZH→EN; invert by indexing the English gloss tokens for EN→ZH. No POS. Do not scrape MDBG's site — use the official file.",
+  },
+  "ding-beolingus-de-en": {
+    dataset: "ding-beolingus-de-en",
+    title: "Frank Richter's ding / Beolingus de-en",
+    url: "https://ftp.tu-chemnitz.de/pub/Local/urz/ding/de-en-devel/",
+    license: "GPL-3+",
+    licenseUrl: "https://www.gnu.org/licenses/gpl-3.0.html",
+    attribution: "Copyright (c) Frank Richter 1995–2024. Licensed under the GNU General Public License.",
+    commercialUse: true,
+    shareAlike: true,
+    copyleft: true,
+    offlineOnly: false,
+    contributesTo: ["Word.glosses (en) for targetLang=de"],
+    notes:
+      "Copyleft: ship the unmodified source file plus COPYING, and keep it as a separate data file. The BEOLINGUS online service closed in 2024; the dictionary is still maintained.",
+  },
+  "wikdict-en-de": {
+    dataset: "wikdict-en-de",
+    title: "WikDict en–de",
+    url: "https://www.wikdict.com/page/download",
+    license: "CC BY-SA (site: 4.0; FreeDict build: 3.0)",
+    licenseUrl: "https://creativecommons.org/licenses/by-sa/4.0/",
+    attribution: "WikDict, Karl Bartel; derived from Wiktionary via DBnary.",
+    commercialUse: true,
+    shareAlike: true,
+    copyleft: false,
+    offlineOnly: false,
+    contributesTo: ["Word.glosses (en) for targetLang=de"],
+    notes: "Non-copyleft alternative to ding. Pin the licence version from the file you ship.",
+  },
+  tatoeba: {
+    dataset: "tatoeba",
+    title: "Tatoeba sentence pairs",
+    url: "https://tatoeba.org/en/downloads",
+    license: "CC BY 2.0 FR (a subset is additionally CC0 1.0)",
+    licenseUrl: "https://creativecommons.org/licenses/by/2.0/fr/",
+    attribution: "Tatoeba contributors (see sentences_detailed.csv for per-sentence usernames).",
+    commercialUse: true,
+    shareAlike: false,
+    copyleft: false,
+    offlineOnly: false,
+    contributesTo: ["Word examples"],
+    notes: "Unmoderated; some links pivot through a third language. Filter before showing to learners.",
+  },
+
+  // ── Project-authored ─────────────────────────────────────────────────────────
+  "flowwing-seed-glosses": {
+    dataset: "flowwing-seed-glosses",
+    title: "Flowwing seed glosses",
+    url: "internal",
+    license: "CC0-1.0",
+    licenseUrl: "https://creativecommons.org/publicdomain/zero/1.0/",
+    attribution: "Written for Flowwing; no attribution required.",
+    commercialUse: true,
+    shareAlike: false,
+    copyleft: false,
+    offlineOnly: false,
+    contributesTo: ["Word.glosses (demo content)"],
+    notes: "Hand-written demo glosses, so the seeded paragraphs have something to show on click.",
+  },
+
+  // ── Offline calibration only — MUST NEVER SHIP ───────────────────────────────
+  "goethe-wortlisten-a1-a2-b1": {
+    dataset: "goethe-wortlisten-a1-a2-b1",
+    title: "Goethe-Institut Wortlisten A1/A2/B1 (+ DTZ, telc)",
+    url: "https://www.goethe.de/de/spr/kup/prf.html",
+    license: "© Goethe-Institut — all rights reserved; written consent required for any use",
+    attribution: "© Goethe-Institut.",
+    commercialUse: false,
+    shareAlike: false,
+    copyleft: false,
+    offlineOnly: true,
+    contributesTo: ["offline calibration of the frequency→CEFR curve only"],
+    notes:
+      "The PDFs state that saving and network distribution require prior written consent, explicitly including intranets. DWDS republishes them as CSV/JSON (dwds.de/api/lemma/goethe/A1.csv) but the copyright is unchanged. NEVER commit, ship, or write these to the database.",
+  },
+  derewo: {
+    dataset: "derewo",
+    title: "DeReWo (IDS Mannheim)",
+    url: "https://www.ids-mannheim.de/digspra/kl/projekte/methoden/derewo/",
+    license: "CC BY-NC 3.0 — commercial use expressly not permitted",
+    licenseUrl: "https://creativecommons.org/licenses/by-nc/3.0/",
+    attribution: "DeReWo, Institut für Deutsche Sprache, Mannheim.",
+    commercialUse: false,
+    shareAlike: false,
+    copyleft: false,
+    offlineOnly: true,
+    contributesTo: [],
+    notes:
+      "Rejected: best-constructed German frequency file, worst licence. Its POS lineage is TreeTagger, itself free for research/evaluation only — so no TreeTagger in production either.",
+  },
+  "minimax-mt-glosses": {
+    dataset: "minimax-mt-glosses",
+    title: "Existing LLM-generated Chinese glosses (translate.py)",
+    url: "internal",
+    license: "UNVERIFIED — vendor terms on persisting translations not yet checked",
+    attribution: "Machine-generated; no attribution possible.",
+    commercialUse: false,
+    shareAlike: false,
+    copyleft: false,
+    offlineOnly: true,
+    contributesTo: [],
+    notes:
+      "The 8,653 Chinese glosses in the CEFR wordbank were produced by persisting Minimax MT output. Most MT vendors restrict storing translations to build a dataset. Treat as internal-only and replace with CC-CEDICT-derived glosses.",
+  },
+};
+
+export function dataset(id: string): DatasetSpec {
+  const spec = DATASETS[id];
+  if (!spec) throw new Error(`unknown dataset "${id}" — add it to src/lib/licence/datasets.ts`);
+  return spec;
+}
+
+/** Datasets safe to ship in a commercial build. */
+export function shippableDatasets(): DatasetSpec[] {
+  return Object.values(DATASETS).filter((d) => d.commercialUse && !d.offlineOnly);
+}
+
+/** Datasets whose licence constrains how they may be combined with others. */
+export function restrictedDatasets(): DatasetSpec[] {
+  return Object.values(DATASETS).filter((d) => d.shareAlike || d.copyleft);
+}
+
+/**
+ * Fail the build if a shippable dataset ever declares an offline-only source.
+ * Called by the importers so a misconfiguration cannot silently ship Goethe data.
+ */
+export function assertShippable(id: string): DatasetSpec {
+  const spec = dataset(id);
+  if (spec.offlineOnly) {
+    throw new Error(
+      `dataset "${id}" is offline-calibration-only (${spec.license}) and must never be imported, committed, or shipped`,
+    );
+  }
+  return spec;
+}

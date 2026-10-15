@@ -43,3 +43,14 @@ next-env.d.ts
 
 # docker (optional — keep only if you want to commit the lockfile)
 # package-lock.json
+
+# third-party data and the npm cache are never committed.
+# data/offline-anchors/ holds calibration-only sources (Goethe/DTZ/telc, DeReWo) whose
+# licences forbid distribution — see src/lib/licence/datasets.ts
+/data/
+/.npm-cache/
+
+# machine-local scratch
+*.tmp.ts
+probe.tmp.ts
+

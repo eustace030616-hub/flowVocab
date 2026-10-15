@@ -1,0 +1,25 @@
+kaikki.org German Wiktextract
+=============================
+
+Dataset id : kaikki-wiktextract-de
+Source     : https://kaikki.org/dictionary/German/kaikki.org-dictionary-German.jsonl
+Licence    : CC BY-SA 4.0 + GFDL
+Licence URL: https://creativecommons.org/licenses/by-sa/4.0/
+Commercial : yes
+Share-alike: yes
+Copyleft   : no
+Offline only: no
+
+Attribution (use verbatim):
+  Wiktextract (Tatu Ylonen) derived from Wiktionary contributors.
+
+Contributes to:
+  - Word.article
+  - Word.plural
+  - Word.surfaceForms
+  - Word.glosses (en)
+
+Notes:
+  Gender lives in the head template (`de-noun`, e.g. "1": "n,-,-:s"); full declension tables are template-generated in `forms` via `de-ndecl`.
+
+Full licence text: see https://creativecommons.org/licenses/by-sa/4.0/

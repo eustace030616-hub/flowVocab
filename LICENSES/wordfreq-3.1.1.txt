@@ -1,0 +1,22 @@
+wordfreq 3.1.1
+==============
+
+Dataset id : wordfreq-3.1.1
+Source     : https://github.com/rspeer/wordfreq
+Licence    : code Apache-2.0; data CC BY-SA 4.0
+Licence URL: https://creativecommons.org/licenses/by-sa/4.0/
+Commercial : yes
+Share-alike: yes
+Copyleft   : no
+Offline only: no
+
+Attribution (use verbatim):
+  Robyn Speer
+
+Contributes to:
+  - Word.frequency.wordfreq
+
+Notes:
+  Its NOTICE.md requires crediting the author by the exact name "Robyn Speer". The only documented commercial permission for SUBTLEX runs through this package — do not download the raw SUBTLEX files.
+
+Full licence text: see https://creativecommons.org/licenses/by-sa/4.0/

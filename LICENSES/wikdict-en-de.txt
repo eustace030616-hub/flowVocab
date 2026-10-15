@@ -1,0 +1,22 @@
+WikDict en–de
+=============
+
+Dataset id : wikdict-en-de
+Source     : https://www.wikdict.com/page/download
+Licence    : CC BY-SA (site: 4.0; FreeDict build: 3.0)
+Licence URL: https://creativecommons.org/licenses/by-sa/4.0/
+Commercial : yes
+Share-alike: yes
+Copyleft   : no
+Offline only: no
+
+Attribution (use verbatim):
+  WikDict, Karl Bartel; derived from Wiktionary via DBnary.
+
+Contributes to:
+  - Word.glosses (en) for targetLang=de
+
+Notes:
+  Non-copyleft alternative to ding. Pin the licence version from the file you ship.
+
+Full licence text: see https://creativecommons.org/licenses/by-sa/4.0/

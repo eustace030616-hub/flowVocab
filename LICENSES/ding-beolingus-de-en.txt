@@ -1,0 +1,22 @@
+Frank Richter's ding / Beolingus de-en
+======================================
+
+Dataset id : ding-beolingus-de-en
+Source     : https://ftp.tu-chemnitz.de/pub/Local/urz/ding/de-en-devel/
+Licence    : GPL-3+
+Licence URL: https://www.gnu.org/licenses/gpl-3.0.html
+Commercial : yes
+Share-alike: yes
+Copyleft   : yes
+Offline only: no
+
+Attribution (use verbatim):
+  Copyright (c) Frank Richter 1995–2024. Licensed under the GNU General Public License.
+
+Contributes to:
+  - Word.glosses (en) for targetLang=de
+
+Notes:
+  Copyleft: ship the unmodified source file plus COPYING, and keep it as a separate data file. The BEOLINGUS online service closed in 2024; the dictionary is still maintained.
+
+Full licence text: see https://www.gnu.org/licenses/gpl-3.0.html

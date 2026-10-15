@@ -1,0 +1,22 @@
+CC-CEDICT
+=========
+
+Dataset id : cc-cedict
+Source     : https://cc-cedict.org/wiki/
+Licence    : CC BY-SA 4.0
+Licence URL: https://creativecommons.org/licenses/by-sa/4.0/
+Commercial : yes
+Share-alike: yes
+Copyleft   : no
+Offline only: no
+
+Attribution (use verbatim):
+  CC-CEDICT (MDBG / community contributors).
+
+Contributes to:
+  - Word.glosses (zh)
+
+Notes:
+  ZH→EN; invert by indexing the English gloss tokens for EN→ZH. No POS. Do not scrape MDBG's site — use the official file.
+
+Full licence text: see https://creativecommons.org/licenses/by-sa/4.0/

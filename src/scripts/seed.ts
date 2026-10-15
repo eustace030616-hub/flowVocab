@@ -1,90 +1,114 @@
+/**
+ * Seed both tracks.
+ *
+ *   npm run seed
+ *
+ * Content lives in seed-data.ts so the tests can tokenize the exact same text.
+ *
+ * The German paragraphs deliberately contain a compound ("Wortschatzaufbau"), a separable verb
+ * ("steht … auf" → aufstehen), an inseparable one that must NOT be split ("versteht"), and a
+ * false friend ("Gift" = poison, not a present) — because those are the cases the old
+ * space-split, array-index model could not represent, and a seed that does not exercise them
+ * would let a regression hide.
+ */
+
 import { connectDB } from "../lib/db";
 import { Paragraph } from "../models/Paragraph";
 import { Word } from "../models/Word";
-import { ParagraphWord } from "../models/ParagraphWord";
+import { Mark } from "../models/Mark";
+import { Event } from "../models/Event";
+import { User } from "../models/User";
+import { Provenance } from "../models/Provenance";
+import { lemmaKeyOf } from "../lib/tokenize/normalize";
+import { tokenize, wordSpans } from "../lib/tokenize";
+import {
+  difficultyFromSeedLevel,
+  SEED_PARAGRAPHS,
+  SEED_WORDS,
+} from "./seed-data";
+import { runIfEntry } from "./run";
 
 async function seed() {
   await connectDB();
 
-  await Word.deleteMany({});
-  await Paragraph.deleteMany({});
-  await ParagraphWord.deleteMany({});
-
-  // ── Paragraphs (all contain "dog" for the test) ──
-
-  await Paragraph.create([
-    {
-      title: "The Dog",
-      content:
-        "The dog ran through the meadow, its fur rippling like wheat in the wind. " +
-        "A profound silence followed as it vanished into the thicket, leaving only " +
-        "the faint trace of its ephemeral presence.",
-      topic: "environment",
-      wordCount: 34,
-    },
-    {
-      title: "A Loyal Dog",
-      content:
-        "A well-trained dog can provide companionship and emotional support to its owner. " +
-        "Studies show that dog owners tend to have lower blood pressure and reduced stress " +
-        "levels, making the dog an ideal partner for mental health improvement.",
-      topic: "society_health",
-      wordCount: 39,
-    },
-    {
-      title: "Dog Training",
-      content:
-        "Teaching a dog basic commands requires patience and consistency. Positive reinforcement " +
-        "is widely regarded as the most effective method for shaping a dog's behaviour, " +
-        "as it builds trust between the dog and its handler over time.",
-      topic: "education",
-      wordCount: 38,
-    },
-    {
-      title: "Dogs in the Workplace",
-      content:
-        "Many tech companies now allow employees to bring their dog to the office. " +
-        "A friendly dog roaming the workspace can boost morale and encourage social " +
-        "interaction among colleagues, though some worry about allergies and distractions.",
-      topic: "work_business",
-      wordCount: 37,
-    },
+  await Promise.all([
+    Word.deleteMany({}),
+    Paragraph.deleteMany({}),
+    Mark.deleteMany({}),
+    Event.deleteMany({}),
+    User.deleteMany({}),
+    Provenance.deleteMany({}),
   ]);
 
-  const paragraphs = await Paragraph.find();
-
-  // ── Pre-seeded unfamiliar words (NOT "dog" — user marks it during test) ──
-
-  const words = [
-    { word: "meadow", definition: "A field with grass and flowers, often used for hay." },
-    { word: "rippling", definition: "Moving in small waves; having a wavy motion." },
-    { word: "thicket", definition: "A dense group of bushes or small trees." },
-    { word: "profound", definition: "Very great or intense; having deep meaning." },
-    { word: "ephemeral", definition: "Lasting for a very short time; fleeting." },
-    { word: "companionship", definition: "The feeling of friendship and support from being with someone." },
-    { word: "reinforcement", definition: "The process of encouraging a behaviour by reward or punishment." },
-    { word: "consistent", definition: "Always acting or behaving in the same way." },
-    { word: "morale", definition: "The confidence and enthusiasm of a group of people." },
-    { word: "distraction", definition: "Something that takes attention away from what one is doing." },
-  ];
-
-  for (let i = 0; i < words.length; i++) {
-    // Spread words across different paragraphs
-    const paragraphId = paragraphs[i % paragraphs.length]._id;
+  // ── Vocabulary ────────────────────────────────────────────────────────────
+  for (const word of SEED_WORDS) {
     await Word.create({
-      ...words[i],
+      targetLang: word.targetLang,
+      lemmaKey: lemmaKeyOf(word.lemma),
+      lemma: word.lemma,
+      pos: word.pos,
+      surfaceForms: [],
+      glosses: word.glosses,
+      level: word.level,
+      // Hand-assigned for the demo, so it is flagged as an estimate rather than implied to come
+      // from a CEFR list.
+      levelEstimated: true,
+      levelSource: "seed-manual",
+      difficulty: difficultyFromSeedLevel(word.level),
+      frequency: {},
+      article: word.article,
+      plural: word.plural,
+      cognateWithEn: word.cognateWithEn,
+      falseFriend: word.falseFriend,
       status: "unfamiliar",
-      markedFrom: [paragraphId],
-      timesMet: 1,
-      unfamiliarity: 1,
+      timesMet: 0,
+      unfamiliarity: 0,
+      lookupCount: 0,
+      exposureCount: 0,
     });
   }
 
-  console.log("Seed complete!");
-  console.log(`  Paragraphs: ${await Paragraph.countDocuments()}`);
-  console.log(`  Words: ${await Word.countDocuments()}`);
+  // ── Paragraphs ────────────────────────────────────────────────────────────
+  for (const paragraph of SEED_PARAGRAPHS) {
+    // wordCount comes from the tokenizer, not from a hand-maintained number.
+    const wordCount = wordSpans(tokenize(paragraph.content, paragraph.targetLang)).length;
+    await Paragraph.create({
+      targetLang: paragraph.targetLang,
+      title: paragraph.title,
+      content: paragraph.content,
+      topic: paragraph.topic,
+      wordCount,
+      level: paragraph.level,
+      difficulty: difficultyFromSeedLevel(paragraph.level),
+      difficultySource: "seed-manual",
+      coverage: -1,
+      tokenizerVersion: 1,
+      source: "seed",
+    });
+  }
 
-  process.exit(0);
+  const counts = {
+    paragraphs: {
+      en: await Paragraph.countDocuments({ targetLang: "en" }),
+      de: await Paragraph.countDocuments({ targetLang: "de" }),
+    },
+    words: {
+      en: await Word.countDocuments({ targetLang: "en" }),
+      de: await Word.countDocuments({ targetLang: "de" }),
+    },
+  };
+
+  console.log("Seed complete");
+  console.log("─────────────");
+  console.log(`  paragraphs   en ${counts.paragraphs.en} · de ${counts.paragraphs.de}`);
+  console.log(`  words        en ${counts.words.en} · de ${counts.words.de}`);
+  console.log("  events       0 (the log starts empty; marks derive from it)");
+  console.log();
+  console.log("  German seed deliberately contains:");
+  console.log("    compound          Wortschatzaufbau  → wortschatz + aufbau");
+  console.log("    separable verb    steht … auf       → aufstehen");
+  console.log("    inseparable       versteht          → verstehen (never split)");
+  console.log("    false friend      Gift              → poison, not a present");
 }
 
-seed();
+runIfEntry(import.meta.url, seed);

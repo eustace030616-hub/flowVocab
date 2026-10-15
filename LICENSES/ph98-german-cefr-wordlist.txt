@@ -1,0 +1,22 @@
+German CEFR wordlist (ph98)
+===========================
+
+Dataset id : ph98-german-cefr-wordlist
+Source     : https://github.com/ph98/german-cefr-wordlist
+Licence    : MIT (repository) — but the `rate` column derives from CC BY-SA data
+Licence URL: https://creativecommons.org/licenses/by-sa/4.0/
+Commercial : yes
+Share-alike: yes
+Copyleft   : no
+Offline only: no
+
+Attribution (use verbatim):
+  ph98/german-cefr-wordlist; frequency column derived from hermitdave/FrequencyWords.
+
+Contributes to:
+  - Word.level (A1–C2, estimated)
+
+Notes:
+  UNVALIDATED PRIOR. Levels are LLM-assigned (Gemini) on a hard-coded frequency prior per its own PRD. Always set levelEstimated = true. The MIT label hides a share-alike obligation, hence shareAlike: true here.
+
+Full licence text: see https://creativecommons.org/licenses/by-sa/4.0/

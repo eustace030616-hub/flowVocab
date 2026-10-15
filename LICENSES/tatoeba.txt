@@ -1,0 +1,22 @@
+Tatoeba sentence pairs
+======================
+
+Dataset id : tatoeba
+Source     : https://tatoeba.org/en/downloads
+Licence    : CC BY 2.0 FR (a subset is additionally CC0 1.0)
+Licence URL: https://creativecommons.org/licenses/by/2.0/fr/
+Commercial : yes
+Share-alike: no
+Copyleft   : no
+Offline only: no
+
+Attribution (use verbatim):
+  Tatoeba contributors (see sentences_detailed.csv for per-sentence usernames).
+
+Contributes to:
+  - Word examples
+
+Notes:
+  Unmoderated; some links pivot through a third language. Filter before showing to learners.
+
+Full licence text: see https://creativecommons.org/licenses/by/2.0/fr/

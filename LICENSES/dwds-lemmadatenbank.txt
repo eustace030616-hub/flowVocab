@@ -1,0 +1,24 @@
+DWDS-Lemmadatenbank
+===================
+
+Dataset id : dwds-lemmadatenbank
+Source     : https://www.dwds.de/lemma/csv
+Licence    : CC BY-SA 4.0
+Licence URL: https://creativecommons.org/licenses/by-sa/4.0/
+Commercial : yes
+Share-alike: yes
+Copyleft   : no
+Offline only: no
+
+Attribution (use verbatim):
+  DWDS — Digitales Wörterbuch der deutschen Sprache (BBAW).
+
+Contributes to:
+  - Word.frequency.dwds
+  - Word.pos
+  - Word.lemma
+
+Notes:
+  281,207 lemmas with POS and Häufigkeitsklasse 0–6. The endpoint returns a tdm-policy header — read it before bulk ingest.
+
+Full licence text: see https://creativecommons.org/licenses/by-sa/4.0/

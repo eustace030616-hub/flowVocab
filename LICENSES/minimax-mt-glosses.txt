@@ -1,0 +1,18 @@
+Existing LLM-generated Chinese glosses (translate.py)
+=====================================================
+
+Dataset id : minimax-mt-glosses
+Source     : internal
+Licence    : UNVERIFIED — vendor terms on persisting translations not yet checked
+Commercial : NO
+Share-alike: no
+Copyleft   : no
+Offline only: YES — must never ship
+
+Attribution (use verbatim):
+  Machine-generated; no attribution possible.
+
+Contributes to:
+
+Notes:
+  The 8,653 Chinese glosses in the CEFR wordbank were produced by persisting Minimax MT output. Most MT vendors restrict storing translations to build a dataset. Treat as internal-only and replace with CC-CEDICT-derived glosses.
