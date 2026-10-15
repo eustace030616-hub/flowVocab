@@ -55,6 +55,9 @@ const MAX_ATTEMPTS = 4;
  */
 const MAX_UNUSABLE_REPLIES = 4;
 
+/** Judge samples per acceptance check; the majority decides. Odd, so there is always a majority. */
+const JUDGE_SAMPLES = 3;
+
 /** Difficulty band for a level, matching the rubric's one-band window. */
 function bandFor(level: CefrLevel): { low: number; high: number; centre: number } {
   const centre = levelMidpoint(level);
@@ -290,26 +293,38 @@ export async function generateOne(
       // The objective rubric cannot see whether the sentences relate to each other. Every measurable
       // property was correct in the passage that produced "Sie tanzt am Abgrund. Anscheinend
       // studieren sie Physik." — so a reader is asked, and its complaints go back into the loop.
-      const judgeCall = await provider.complete({
-        system: buildJudgeSystemPrompt(spec.targetLang),
-        user: buildJudgeUserPrompt(parsed.content),
-        maxTokens: 3000,
-        json: true,
-      });
-      providerCalls += 1;
-      reasoningTokens += judgeCall.reasoningTokens;
-      const judgement = parseJudge(judgeCall.text);
+      // Three samples, majority decides. The judge is judging, not writing, so it runs at
+      // temperature 0 — but even then a single sample is one opinion, and a paragraph that had been
+      // accepted was rejected on a later single-sample re-judging. Majority costs two extra cheap
+      // calls and removes that coin flip, while a genuinely incoherent passage is rejected by all
+      // three (the one about the crime novel, genetic research and theology was).
+      const judgements = [];
+      for (let sample = 0; sample < JUDGE_SAMPLES; sample += 1) {
+        const judgeCall = await provider.complete({
+          system: buildJudgeSystemPrompt(spec.targetLang),
+          user: buildJudgeUserPrompt(parsed.content),
+          maxTokens: 3000,
+          json: true,
+          temperature: 0,
+        });
+        providerCalls += 1;
+        reasoningTokens += judgeCall.reasoningTokens;
+        judgements.push(parseJudge(judgeCall.text));
+      }
+      const accepts = judgements.filter((j) => j.coherent).length;
+      const coherent = accepts * 2 > JUDGE_SAMPLES;
+      const problems = [...new Set(judgements.flatMap((j) => j.problems))];
 
       options.onAttempt?.(
-        `    attempt ${attempts}: measures up · judge ${judgement.coherent ? "accepts" : "rejects"}` +
+        `    attempt ${attempts}: measures up · judge ${accepts}/${JUDGE_SAMPLES} accept` +
           // The text itself, because a rejection is not diagnosable from a list of complaints.
-          (judgement.coherent ? "" : ` · "${parsed.content.slice(0, 90)}…"`),
+          (coherent ? "" : ` · "${parsed.content.slice(0, 80)}…"`),
       );
 
-      if (!judgement.coherent) {
+      if (!coherent) {
         feedback = [
           "The passage was rejected as incoherent. Fix exactly this:",
-          ...judgement.problems,
+          ...problems.slice(0, 5),
           "Rewrite it as one scene where each sentence follows from the previous one.",
         ];
         continue;

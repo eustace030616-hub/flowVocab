@@ -31,7 +31,11 @@ export const BRIEFS: BriefSpec[] = [
   {
     targetLang: "de",
     level: "A2",
-    topic: "A neighbour asks you to water their plants while they are away",
+    // Chosen for A2 vocabulary, not just A2 grammar. The first topic — watering a neighbour's plants
+    // — needs *gießen* and *Pflanze*, which the difficulty data places above A2, so the brief was
+    // asking for a level of language the level does not have. The model's own topic-word proposals
+    // for it scored 0 usable out of 15. Rain, a bus and no umbrella is a scene A2 can tell.
+    topic: "It starts to rain and you have no umbrella",
     words: 90,
     coreSize: 15,
   },

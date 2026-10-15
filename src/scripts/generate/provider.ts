@@ -24,6 +24,12 @@ export interface CompletionRequest {
   maxTokens?: number;
   /** Ask for a JSON object; the provider does not validate it, the caller does. */
   json?: boolean;
+  /**
+   * Sampling temperature. Defaults to 1, which is right for writing and wrong for judging: a judge
+   * that answers differently each time makes acceptance a coin flip for borderline text, and one
+   * paragraph that had been accepted was rejected on re-judging.
+   */
+  temperature?: number;
 }
 
 export interface Completion {
@@ -81,7 +87,7 @@ export function deepseekProvider(env: Record<string, string> = loadEnv()): Provi
           { role: "user", content: request.user },
         ],
         max_tokens: request.maxTokens ?? 8000,
-        temperature: 1,
+        temperature: request.temperature ?? 1,
       };
       if (reasoningEffort) body.reasoning_effort = reasoningEffort;
       if (request.json) body.response_format = { type: "json_object" };
