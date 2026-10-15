@@ -209,7 +209,11 @@ export interface PlacementSubmitResult {
   hits: number;
   falseAlarms: number;
   corrected: number;
+  /** Real words *answered*, so an early exit does not read as a score out of the full test. */
   total: number;
+  /** Items answered in total, and the size of the test as served. */
+  answered: number;
+  sessionSize: number;
   falseAlarmRate: number;
   dPrime: number;
   theta: number;
@@ -231,7 +235,12 @@ export async function submitPlacement(
   // Mongoose's inference through a subdocument array loses the shape, so the item set is read once
   // with its declared type and used for both the score and the counts.
   const items = session.items as unknown as PlacementItem[];
-  const totalReal = items.filter((item) => !item.isPseudoword).length;
+  const answeredIds = new Set(responses.map((entry) => entry.id));
+  // Counts describe what was answered, not what was served: reporting "8/67" for a learner who
+  // answered thirty items reads as a score out of the whole test.
+  const answeredReal = items.filter(
+    (item) => !item.isPseudoword && answeredIds.has(item.id),
+  ).length;
   if (session.completedAt) {
     // Already scored: return the stored result rather than folding the test in twice.
     const stored = session.score;
@@ -240,7 +249,9 @@ export async function submitPlacement(
         hits: stored.hits,
         falseAlarms: stored.falseAlarms,
         corrected: stored.corrected,
-        total: totalReal,
+        total: answeredReal,
+        answered: answeredIds.size,
+        sessionSize: items.length,
         falseAlarmRate: stored.falseAlarmRate,
         dPrime: stored.dPrime,
         theta: stored.theta,
@@ -275,7 +286,9 @@ export async function submitPlacement(
     hits: score.hits,
     falseAlarms: score.falseAlarms,
     corrected: score.corrected,
-    total: totalReal,
+    total: answeredReal,
+    answered: answeredIds.size,
+    sessionSize: items.length,
     falseAlarmRate: score.falseAlarmRate,
     dPrime: score.dPrime,
     theta: score.estimate.theta,

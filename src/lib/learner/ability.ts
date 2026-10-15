@@ -47,17 +47,19 @@ const THETA_CEILING = 0.99;
 export const LEVEL_SE_THRESHOLD = 0.05;
 
 /**
- * Separate reading sessions in which a word must be met, without a lookup, before that counts as
- * evidence of knowing it.
+ * Reading sessions in which a word must be met before exposure counts as evidence of knowing it.
  *
- * Counting raw occurrences does not work, and the measurement showed it: reading one paragraph four
- * times gave every word four exposures, and the estimate went to C1/C2 — because the model read
- * "was on screen four times in one minute" as knowledge. Repetition inside a single sitting is not
- * evidence; meeting the same word again on another day, and still not needing to look it up, is.
+ * One. This is the app's premise and it is worth stating plainly: **the reader marks what they do
+ * not know, so a word they read past is a word they knew.** Reading a paragraph and marking nothing
+ * asserts that every word in it was understood.
  *
- * So exposures are counted per session, never per view.
+ * An earlier version required three separate sessions, which inverted the premise: a paragraph read
+ * once produced no evidence at all, so a learner could read ten paragraphs, mark nothing, and have
+ * the estimate stand exactly where it started. Counting raw occurrences instead is the other
+ * failure — four reads in one minute is not four times the knowledge — so exposures are counted
+ * once per session, and one session is enough.
  */
-export const SESSIONS_FOR_KNOWN = 3;
+export const SESSIONS_FOR_KNOWN = 1;
 
 export interface Observation {
   /** Item difficulty in the same units as θ. */
@@ -236,15 +238,22 @@ export function fitAbility(
     theta,
     se,
     n,
-    level: se <= LEVEL_SE_THRESHOLD && n >= 1 ? levelAt(theta) : null,
+    // A level is claimed when the interval does not span more than one band — either because the
+    // standard error is small, or because the interval genuinely sits inside a single band. Only
+    // testing the standard error produced the contradiction of "level: none, range A1–A1": at the
+    // floor the interval is one-sided, so it can be narrow while `se` stays above the threshold.
+    level: (se <= LEVEL_SE_THRESHOLD || levelAt(low) === levelAt(high)) && n >= 1 ? levelAt(theta) : null,
     levelLow: levelAt(low),
     levelHigh: levelAt(high),
   };
 }
 
 /** Whether an estimate is solid enough to show as a single level. */
-export function isLevelClaimable(estimate: Pick<AbilityEstimate, "se" | "n">): boolean {
-  return estimate.se <= LEVEL_SE_THRESHOLD && estimate.n >= 1;
+export function isLevelClaimable(
+  estimate: Pick<AbilityEstimate, "se" | "n" | "levelLow" | "levelHigh">,
+): boolean {
+  if (estimate.n < 1) return false;
+  return estimate.se <= LEVEL_SE_THRESHOLD || estimate.levelLow === estimate.levelHigh;
 }
 
 /** Evidence weights. Named, because the relative sizes are the model's real content. */
@@ -253,8 +262,14 @@ export const EVIDENCE_WEIGHT = {
   confirmed: 1.5,
   /** "Not sure" but answered — modelled as evidence, not as a plain wrong answer. */
   notSure: 1,
-  /** The learner marked the word as unknown. A deliberate statement about themselves. */
-  mark: 0.5,
+  /**
+   * The learner marked the word as unknown — a deliberate statement about themselves.
+   *
+   * Deliberately heavier than any amount of passive exposure can reach: an unmarked word is assumed
+   * known, so if simply reading a paragraph twice could outweigh an explicit "I do not know this",
+   * the marking would be meaningless.
+   */
+  mark: 1,
   /** The learner opened the word. Weak and biased, but real. */
   lookup: 0.5,
   /** One exposure, once the word has been met enough times for it to count. */

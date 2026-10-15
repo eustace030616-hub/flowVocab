@@ -12,6 +12,7 @@ import {
   PSEUDOWORDS,
   REAL_WORDS,
   generatePseudowords,
+  placementObservations,
   scorePlacement,
   seedFrom,
   type PlacementItem,
@@ -129,4 +130,51 @@ test("a perfect score still produces a level, and an empty set does not crash", 
   assert.equal(empty.hits, 0);
   assert.equal(empty.falseAlarmRate, 0);
   assert.equal(empty.estimate.n, 0);
+});
+
+test("a partial test scores over what was answered, not over what was skipped", () => {
+  // "Exit whenever you like" is only honest if unanswered items are absent rather than wrong.
+  // Scoring the full set would count them as "don't know" — depressing the hit rate, and changing
+  // the false-alarm rate according to how far the learner got.
+  const items: PlacementItem[] = [];
+  for (let i = 0; i < 20; i += 1) {
+    items.push({ id: `r${i}`, text: `w${i}`, isPseudoword: false, difficulty: 0.1 + i * 0.04 });
+  }
+  for (let i = 0; i < 10; i += 1) {
+    items.push({ id: `p${i}`, text: `z${i}`, isPseudoword: true });
+  }
+
+  // Answered the first ten real words, all correctly, and four fakes, all denied.
+  const responses = [
+    ...items.slice(0, 10).map((i) => ({ id: i.id, yes: true })),
+    ...items.filter((i) => i.isPseudoword).slice(0, 4).map((i) => ({ id: i.id, yes: false })),
+  ];
+
+  const partial = scorePlacement(items, responses);
+  assert.equal(partial.hits, 10, "ten answered yes");
+  assert.equal(partial.falseAlarms, 0);
+  assert.equal(partial.falseAlarmRate, 0, "the rate is over the four fakes seen, not all ten");
+
+  // The full set answered the same way is comparable: the skipped difficult half does not drag the
+  // hit rate down, because difficulty is what the fit uses to interpret the hits.
+  const complete = scorePlacement(
+    items,
+    items.map((i) => ({ id: i.id, yes: !i.isPseudoword && (i.difficulty ?? 1) < 0.3 })),
+  );
+  assert.equal(complete.hits, 5);
+  assert.ok(
+    partial.estimate.theta > complete.estimate.theta,
+    "answering only the easy ones and getting them right is not the same as answering everything",
+  );
+});
+
+test("an unanswered item produces no observation at all", () => {
+  const items: PlacementItem[] = [
+    { id: "r0", text: "a", isPseudoword: false, difficulty: 0.2 },
+    { id: "r1", text: "b", isPseudoword: false, difficulty: 0.8 },
+  ];
+  const observations = placementObservations(items, [{ id: "r0", yes: true }]);
+  assert.equal(observations.length, 1, "the skipped word is absent, not recorded as unknown");
+  assert.equal(observations[0].difficulty, 0.2);
+  assert.equal(observations[0].known, true);
 });

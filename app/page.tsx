@@ -120,6 +120,10 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     placementFalseAlarms: "fake words claimed",
     placementCorrected: "corrected score",
     placementClose: "Done",
+    placementExit: "Exit",
+    placementRetake: "Take it again",
+    placementOneAtATime: "Answer for this word",
+    placementPartial: "answered — a shorter test gives a wider interval, not a wrong one",
     levelUnknown: "not measured yet",
     levelFromOther: "seeded from your other language",
     levelRange: "somewhere in",
@@ -168,6 +172,10 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     placementFalseAlarms: "误选的非词",
     placementCorrected: "校正后得分",
     placementClose: "完成",
+    placementExit: "退出",
+    placementRetake: "重新测试",
+    placementOneAtATime: "请判断这个词",
+    placementPartial: "已作答 — 题目越少区间越宽，但不会偏。",
     levelUnknown: "尚未测量",
     levelFromOther: "来自另一语言的水平",
     levelRange: "大致范围",
@@ -304,11 +312,15 @@ export default function Home() {
     items: Array<{ id: string; text: string }>;
   } | null>(null);
   const [placementAnswers, setPlacementAnswers] = useState<Record<string, boolean>>({});
+  /** Which word of the test is on screen. One at a time: the judgement is meant to be fast. */
+  const [placementIndex, setPlacementIndex] = useState(0);
   const [placementResult, setPlacementResult] = useState<{
     hits: number;
     falseAlarms: number;
     falseAlarmRate: number;
     corrected: number;
+    answered: number;
+    sessionSize: number;
     dPrime: number;
     theta: number;
     se: number;
@@ -484,6 +496,7 @@ export default function Home() {
     setPlacementBusy(true);
     setPlacementResult(null);
     setPlacementAnswers({});
+    setPlacementIndex(0);
     try {
       const res = await fetch("/api/placement", { method: "POST" });
       if (!res.ok) return;
@@ -497,7 +510,7 @@ export default function Home() {
     }
   }, []);
 
-  const submitPlacement = useCallback(async () => {
+  const submitPlacement = useCallback(async (answers: Record<string, boolean> = placementAnswers) => {
     if (!placement) return;
     setPlacementBusy(true);
     try {
@@ -506,10 +519,11 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sessionId: placement.sessionId,
-          responses: placement.items.map((item) => ({
-            id: item.id,
-            yes: placementAnswers[item.id] === true,
-          })),
+          // Only the items actually answered. Sending the rest as "no" would score a learner who
+          // exited early as if they had denied every word they never reached.
+          responses: placement.items
+            .filter((item) => answers[item.id] !== undefined)
+            .map((item) => ({ id: item.id, yes: answers[item.id] === true })),
         }),
       });
       if (!res.ok) return;
@@ -523,6 +537,45 @@ export default function Home() {
       setPlacementBusy(false);
     }
   }, [placement, placementAnswers]);
+
+  /**
+   * Answer the word on screen.
+   *
+   * Advancing on the answer is the whole interaction: the yes/no judgement is meant to be fast and
+   * instinctive, and the protocol warns against over-claiming precisely because deliberation invites
+   * it. The last answer submits rather than leaving a finished test waiting on a button.
+   */
+  const answerPlacement = useCallback(
+    (yes: boolean) => {
+      if (!placement) return;
+      const item = placement.items[placementIndex];
+      if (!item) return;
+
+      const answers = { ...placementAnswers, [item.id]: yes };
+      setPlacementAnswers(answers);
+      if (placementIndex + 1 >= placement.items.length) {
+        void submitPlacement(answers);
+      } else {
+        setPlacementIndex(placementIndex + 1);
+      }
+    },
+    [placement, placementIndex, placementAnswers, submitPlacement],
+  );
+
+  /**
+   * Leave the test. Whatever was answered is scored; nothing answered simply closes it.
+   *
+   * Abandoning silently would throw away real evidence, and a partial test is not an invalid one —
+   * rates over the answered subset are unbiased, and the interval widens to say so.
+   */
+  const exitPlacement = useCallback(() => {
+    if (!placement) return;
+    if (Object.keys(placementAnswers).length === 0) {
+      setPlacement(null);
+      return;
+    }
+    void submitPlacement();
+  }, [placement, placementAnswers, submitPlacement]);
 
   /** A span's item identity: a detached particle belongs to the verb that absorbed it. */
   const ownerOf = useCallback((span: Span) => span.absorbedInto ?? span.start, []);
@@ -1208,64 +1261,53 @@ export default function Home() {
 
             {placement && (
               <>
-                <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mt-3">
-                  {t.placementWarn}
-                </p>
-                <div className="flex-1 overflow-auto mt-4 -mx-1 px-1">
-                  <div className="grid grid-cols-4 gap-2">
-                    {placement.items.map((item) => {
-                      const answer = placementAnswers[item.id];
-                      return (
-                        <div
-                          key={item.id}
-                          className="flex items-center justify-between gap-2 border border-zinc-200 rounded-lg px-3 py-2"
-                        >
-                          <span className="text-sm text-zinc-700 truncate">{item.text}</span>
-                          <div className="flex items-center gap-1 shrink-0">
-                            <button
-                              onClick={() =>
-                                setPlacementAnswers((prev) => ({ ...prev, [item.id]: true }))
-                              }
-                              className={`text-[10px] px-2 py-1 rounded ${
-                                answer === true
-                                  ? "bg-emerald-600 text-white"
-                                  : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"
-                              }`}
-                            >
-                              {t.placementKnown}
-                            </button>
-                            <button
-                              onClick={() =>
-                                setPlacementAnswers((prev) => ({ ...prev, [item.id]: false }))
-                              }
-                              className={`text-[10px] px-2 py-1 rounded ${
-                                answer === false
-                                  ? "bg-zinc-700 text-white"
-                                  : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"
-                              }`}
-                            >
-                              {t.placementUnknown}
-                            </button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
+                {/* One word at a time. The progress bar is the only ornament: it tells the learner
+                    how much is left without inviting them to plan their answers. */}
+                <div className="h-1 bg-zinc-100 rounded-full mt-4 overflow-hidden">
+                  <div
+                    className="h-full bg-zinc-800 transition-all"
+                    style={{
+                      width: `${((placementIndex + 1) / Math.max(placement.items.length, 1)) * 100}%`,
+                    }}
+                  />
                 </div>
-                <div className="flex items-center justify-end gap-2 pt-4">
+
+                <div className="flex-1 flex flex-col items-center justify-center">
+                  <p className="text-sm text-zinc-400">{t.placementOneAtATime}</p>
+                  <p className="text-4xl font-semibold text-zinc-800 mt-4 mb-10">
+                    {placement.items[placementIndex]?.text}
+                  </p>
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => answerPlacement(true)}
+                      className="h-11 px-8 text-sm font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+                    >
+                      {t.placementKnown}
+                    </button>
+                    <button
+                      onClick={() => answerPlacement(false)}
+                      className="h-11 px-8 text-sm font-medium border border-zinc-300 text-zinc-600 rounded-lg hover:bg-zinc-100"
+                    >
+                      {t.placementUnknown}
+                    </button>
+                  </div>
+                  <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mt-10 max-w-md text-center">
+                    {t.placementWarn}
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-between pt-4">
                   <button
-                    onClick={() => setPlacement(null)}
-                    className="h-9 px-4 text-sm text-zinc-500 hover:text-zinc-700"
-                  >
-                    {t.placementCancel}
-                  </button>
-                  <button
-                    onClick={() => void submitPlacement()}
+                    onClick={exitPlacement}
                     disabled={placementBusy}
-                    className="h-9 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50"
+                    className="h-9 px-4 text-sm text-zinc-500 hover:text-zinc-700 disabled:opacity-50"
                   >
-                    {t.placementSubmit}
+                    {t.placementExit}
                   </button>
+                  <span className="text-xs text-zinc-400">
+                    {placementIndex + 1}/{placement.items.length} · {Object.keys(placementAnswers).length}{" "}
+                    {t.placementAnswered}
+                  </span>
                 </div>
               </>
             )}
@@ -1282,6 +1324,11 @@ export default function Home() {
                     θ={placementResult.theta.toFixed(2)} ± {placementResult.se.toFixed(2)}
                     {placementResult.level ? "" : ` · ${t.levelRange}`}
                   </p>
+                  {placementResult.answered < placementResult.sessionSize && (
+                    <p className="text-xs text-zinc-400 mt-1">
+                      {placementResult.answered}/{placementResult.sessionSize} {t.placementPartial}
+                    </p>
+                  )}
                   <dl className="mt-6 space-y-1.5 text-sm">
                     <div className="flex justify-between">
                       <dt className="text-zinc-500">{t.placementHits}</dt>
@@ -1304,12 +1351,22 @@ export default function Home() {
                       <dd className="text-zinc-700">{placementResult.dPrime.toFixed(2)}</dd>
                     </div>
                   </dl>
-                  <button
-                    onClick={() => setPlacementResult(null)}
-                    className="mt-6 h-9 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800"
-                  >
-                    {t.placementClose}
-                  </button>
+                  <div className="flex items-center gap-2 mt-6">
+                    <button
+                      onClick={() => setPlacementResult(null)}
+                      className="h-9 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800"
+                    >
+                      {t.placementClose}
+                    </button>
+                    {/* Retaking replaces the previous result rather than averaging with it: only the
+                        newest completed test is folded into the estimate. */}
+                    <button
+                      onClick={() => void startPlacement()}
+                      className="h-9 px-4 text-sm text-zinc-500 hover:text-zinc-700"
+                    >
+                      {t.placementRetake}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

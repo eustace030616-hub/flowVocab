@@ -119,23 +119,29 @@ test("evidence decays, so pKnown can fall without anything being deleted", () =>
   );
 });
 
-test("repeated sessions of exposure accumulate, within one session they do not", () => {
+test("one reading session is enough, and further sessions add little", () => {
   const now = Date.now();
   const oneSession = foldWordEvidence([
     { type: "exposure", items: [{ lemmaKey: "wort" }], sessionId: "s1", ts: now },
     { type: "exposure", items: [{ lemmaKey: "wort" }], sessionId: "s1", ts: now },
     { type: "exposure", items: [{ lemmaKey: "wort" }], sessionId: "s1", ts: now },
   ]);
-  assert.equal(oneSession.get("wort")?.sessions, 1);
-  assert.equal(oneSession.get("wort")?.positive, 0, "three views in one sitting is not knowledge");
+  assert.equal(oneSession.get("wort")?.sessions, 1, "repeats within a sitting are one session");
+  assert.ok(
+    (oneSession.get("wort")?.positive ?? 0) > 0,
+    "reading past a word once is evidence of knowing it",
+  );
 
-  const threeSessions = foldWordEvidence([
+  const fourSessions = foldWordEvidence([
     { type: "exposure", items: [{ lemmaKey: "wort" }], sessionId: "s1", ts: now },
     { type: "exposure", items: [{ lemmaKey: "wort" }], sessionId: "s2", ts: now },
     { type: "exposure", items: [{ lemmaKey: "wort" }], sessionId: "s3", ts: now },
+    { type: "exposure", items: [{ lemmaKey: "wort" }], sessionId: "s4", ts: now },
   ]);
-  assert.equal(threeSessions.get("wort")?.sessions, 3);
-  assert.ok((threeSessions.get("wort")?.positive ?? 0) > 0);
+  const one = oneSession.get("wort")!.positive;
+  const four = fourSessions.get("wort")!.positive;
+  assert.ok(four > one, "meeting it again does add");
+  assert.ok(four <= one * 2, "but not in proportion — the credit is capped");
 });
 
 test("unmarking retracts the claim instead of adding evidence for it", () => {

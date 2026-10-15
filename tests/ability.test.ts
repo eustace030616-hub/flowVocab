@@ -9,6 +9,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
+import { scorePlacement, type PlacementItem } from "../src/lib/learner/placement";
 import {
   ABILITY_SCALE,
   headSuffixCandidates,
@@ -99,44 +100,44 @@ test("an empty log yields no level rather than a default one", () => {
   assert.ok(empty.se > 0.2, "with no evidence the interval must be wide");
 });
 
-test("an exposure pattern is only positive evidence across separate sessions", () => {
-  // Sessions, not views: reading one paragraph four times in a minute is one session, and the
-  // measurement that exposed this pushed a learner to C1/C2 on that basis alone.
-  const once = observationFor(
+test("reading past a word is evidence of knowing it", () => {
+  // The app's premise: the reader marks what they do not know, so an unmarked word was known. An
+  // earlier version demanded three separate sessions, which meant a paragraph read once produced no
+  // evidence and the estimate never moved however much was read.
+  const oneRead = observationFor(
     { exposures: 1, lookups: 0, marks: 0, unmarks: 0, confirmed: 0, notSure: 0 },
     0.5,
   );
-  assert.equal(once, null, "one glance at a word is not knowledge");
+  assert.ok(oneRead?.known, "one read with no mark asserts the word was understood");
+  assert.ok((oneRead?.weight ?? 0) > 0, "and it carries weight, or reading changes nothing");
 
-  const repeated = observationFor(
-    {
-      exposures: SESSIONS_FOR_KNOWN,
-      lookups: 0,
-      marks: 0,
-      unmarks: 0,
-      confirmed: 0,
-      notSure: 0,
-    },
-    0.5,
-  );
-  assert.ok(repeated?.known, "met repeatedly and never looked up is evidence of knowing");
-
-  // Additional exposures help, but with diminishing force — a word met ten times is not ten times
-  // as known as one met three times.
+  // More readings help, with sharply diminishing force: a word passed over five times is not five
+  // times as known as one passed over once.
   const many = observationFor(
     { exposures: 20, lookups: 0, marks: 0, unmarks: 0, confirmed: 0, notSure: 0 },
     0.5,
   )!;
-  assert.ok(many.weight < repeated!.weight * 3);
+  assert.ok(many.weight < oneRead!.weight * 3);
 });
 
-test("a single lookup outweighs a single exposure", () => {
-  // Otherwise a learner who consults every word would look like a learner who knows them.
+test("looking a word up outweighs having read past it", () => {
+  // Otherwise a learner who consults every word would look like a learner who knows them: exposure
+  // alone is now positive evidence, so the negative signals have to be able to beat it.
   const consulted = observationFor(
-    { exposures: 6, lookups: 2, marks: 0, unmarks: 0, confirmed: 0, notSure: 0 },
+    { exposures: 3, lookups: 2, marks: 0, unmarks: 0, confirmed: 0, notSure: 0 },
     0.5,
   );
-  assert.equal(consulted?.known, false, "consulting a word twice is not a sign of knowing it");
+  assert.equal(consulted?.known, false, "consulting a word is not a sign of knowing it");
+});
+
+test("an explicit mark outlasts any amount of reading past the word", () => {
+  // The failure this guards: if exposure accumulated without limit, reading a paragraph repeatedly
+  // would eventually overturn the learner's own statement that they do not know the word.
+  const readManyTimes = observationFor(
+    { exposures: 50, lookups: 0, marks: 1, unmarks: 0, confirmed: 0, notSure: 0 },
+    0.5,
+  );
+  assert.equal(readManyTimes?.known, false, "a mark is not undone by passive re-reading");
 });
 
 test("a confirmed answer outranks an earlier lookup", () => {
@@ -228,4 +229,36 @@ test("a compound can find its head, so marking one is evidence rather than silen
   assert.deepEqual(headSuffixCandidates("haus"), []);
   // And a word is never its own head.
   assert.equal(headSuffixCandidates("wortschatz").includes("wortschatz"), false);
+});
+
+test("a level is not withheld when the interval already sits inside one band", () => {
+  // The contradiction this fixes: "level: none, range A1–A1". At the floor the interval is
+  // one-sided, so it can sit inside a single band while the standard error stays just above the
+  // threshold — withholding the level there contradicts the range printed beside it.
+  //
+  // Real numbers from a placement test: 40 real words and 20 pseudowords answered, claiming the
+  // easiest tenth and 6 of the fakes.
+  const items: PlacementItem[] = [];
+  for (let i = 0; i < 40; i += 1) {
+    items.push({ id: `r${i}`, text: `w${i}`, isPseudoword: false, difficulty: 0.1 + (i / 40) * 0.4 });
+  }
+  for (let i = 0; i < 20; i += 1) items.push({ id: `p${i}`, text: `z${i}`, isPseudoword: true });
+
+  const responses = [
+    ...items.filter((i) => !i.isPseudoword).map((i) => ({ id: i.id, yes: (i.difficulty ?? 1) < 0.12 })),
+    ...items.filter((i) => i.isPseudoword).map((i, index) => ({ id: i.id, yes: index < 6 })),
+  ];
+
+  const estimate = scorePlacement(items, responses).estimate;
+  assert.equal(estimate.levelLow, "A1");
+  assert.equal(estimate.levelHigh, "A1", "the interval is inside one band");
+  assert.ok(estimate.se > 0.05, `and the standard error alone would have withheld it (${estimate.se})`);
+  assert.equal(estimate.level, "A1", "so the band is the claim");
+  assert.equal(isLevelClaimable(estimate), true);
+
+  // A wide interval across several bands still refuses.
+  const wide = fitAbility(known(0.5));
+  assert.notEqual(wide.levelLow, wide.levelHigh);
+  assert.equal(wide.level, null);
+  assert.equal(isLevelClaimable(wide), false);
 });

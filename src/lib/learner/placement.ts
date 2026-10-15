@@ -202,8 +202,15 @@ export function scorePlacement(
 ): PlacementScore {
   const byId = new Map(responses.map((r) => [r.id, r.yes]));
 
-  const realItems = items.filter((item) => !item.isPseudoword);
-  const pseudoItems = items.filter((item) => item.isPseudoword);
+  // Only answered items count, in both halves of the test.
+  //
+  // This is what makes "exit whenever you like" honest. Scoring the full item set treats every
+  // unanswered word as a "don't know", which depresses the hit rate — and, worse, silently changes
+  // the false-alarm rate depending on how far the learner got. Rates over the answered subset are
+  // unbiased; a shorter test is simply a noisier one, and the standard error says so.
+  const answered = items.filter((item) => byId.has(item.id));
+  const realItems = answered.filter((item) => !item.isPseudoword);
+  const pseudoItems = answered.filter((item) => item.isPseudoword);
 
   const observations: Observation[] = [];
   let hits = 0;
@@ -243,12 +250,12 @@ export function placementObservations(
   responses: PlacementResponse[],
 ): Observation[] {
   const byId = new Map(responses.map((r) => [r.id, r.yes]));
-  const falseAlarms = items.filter((i) => i.isPseudoword && byId.get(i.id) === true).length;
-  const pseudowordCount = items.filter((i) => i.isPseudoword).length;
-  const floor = pseudowordCount ? falseAlarms / pseudowordCount : 0;
+  const answeredPseudo = items.filter((i) => i.isPseudoword && byId.has(i.id));
+  const falseAlarms = answeredPseudo.filter((i) => byId.get(i.id) === true).length;
+  const floor = answeredPseudo.length ? falseAlarms / answeredPseudo.length : 0;
 
   return items
-    .filter((item) => !item.isPseudoword && item.difficulty !== undefined)
+    .filter((item) => !item.isPseudoword && item.difficulty !== undefined && byId.has(item.id))
     .map((item) => ({
       difficulty: item.difficulty as number,
       known: byId.get(item.id) === true,
