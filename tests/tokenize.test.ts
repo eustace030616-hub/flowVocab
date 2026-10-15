@@ -202,3 +202,12 @@ test("English: one-letter words resolve to themselves", () => {
     assert.ok(candidate.length >= 2, `derived candidate ${candidate} is too short to look up`);
   }
 });
+
+test("English: a possessive resolves to the word it belongs to", () => {
+  // "dog's" is not an inflection the suffix rules can reach — the apostrophe stops them — so it was
+  // served as a word with no explanation.
+  assert.ok(englishCandidates("dog's").includes("dog"));
+  assert.ok(englishCandidates("town’s").includes("town"), "and with a typographic apostrophe");
+  // The possessive of a word that is itself short still works.
+  assert.ok(englishCandidates("cat's").includes("cat"));
+});

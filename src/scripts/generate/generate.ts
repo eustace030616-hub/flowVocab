@@ -25,15 +25,17 @@ import { levelMidpoint } from "../../lib/difficulty";
 import { glossLangFor, type CefrLevel, type TargetLang } from "../../lib/lang";
 import { tokenizeWithLexicon } from "../../lib/learner/lexicon";
 import { checkParagraph, measureParagraph, RUBRIC_LIMITS } from "../../lib/content/rubric";
-import { BRIEFS, type BriefSpec } from "./briefs";
+import { BRIEFS, briefIdOf, type BriefSpec } from "./briefs";
 import { deepseekProvider, describeProvider, type Provider } from "./provider";
 import {
   buildJudgeSystemPrompt,
   buildJudgeUserPrompt,
   buildSystemPrompt,
+  buildTopicVocabularyPrompt,
   buildUserPrompt,
   parseGenerated,
   parseJudge,
+  parseTopicVocabulary,
   type Brief,
   type VocabularyItem,
 } from "./prompt";
@@ -41,6 +43,17 @@ import { runIfEntry } from "../run";
 
 const SOURCE = "agent";
 const MAX_ATTEMPTS = 4;
+
+/**
+ * How many replies may be unusable before giving up.
+ *
+ * Counted separately from measured attempts, and this is the reliability fix. An empty reply or
+ * truncated JSON is an infrastructure failure, not a verdict on the text — but it was consuming one
+ * of the four attempts, so a brief could burn its whole budget on two empty replies and one
+ * malformed one and never be measured at all. That is exactly what happened to the German B2 brief:
+ * four attempts, of which two produced no usable text.
+ */
+const MAX_UNUSABLE_REPLIES = 4;
 
 /** Difficulty band for a level, matching the rubric's one-band window. */
 function bandFor(level: CefrLevel): { low: number; high: number; centre: number } {
@@ -90,6 +103,56 @@ async function sampleVocabulary(targetLang: TargetLang, level: CefrLevel, size: 
   return { core: coreRows.map(toItem), target: targetRows.map(toItem) };
 }
 
+/**
+ * Ask the model what the topic needs, then keep only what the data agrees is simple enough.
+ *
+ * Every proposal is looked up: it must be in the vocabulary, at or below the level's band, and have
+ * a gloss in the reader's language. A word the model thinks is simple but the data places at C1 is
+ * dropped — which is the whole reason to ask the data rather than trust the answer.
+ */
+async function proposeTopicWords(
+  provider: Provider,
+  spec: BriefSpec,
+  options: { onAttempt?: (line: string) => void } = {},
+): Promise<VocabularyItem[]> {
+  const { system, user } = buildTopicVocabularyPrompt(spec.targetLang, spec.level, spec.topic);
+  const completion = await provider.complete({ system, user, maxTokens: 2000, json: true });
+  const proposed = parseTopicVocabulary(completion.text);
+  if (proposed.length === 0) return [];
+
+  const { high } = bandFor(spec.level);
+  const keys = proposed.map((word) => word.toLowerCase().replace(/^(der|die|das|the|a|an)\s+/, "").trim());
+  const rows = await Word.find({
+    targetLang: spec.targetLang,
+    lemmaKey: { $in: keys },
+    origin: "import",
+    difficulty: { $gte: 0, $lte: high },
+  })
+    .select("lemma lemmaKey difficulty")
+    .lean();
+
+  const glossLang = glossLangFor(spec.targetLang);
+  const glosses = await Gloss.find({
+    targetLang: spec.targetLang,
+    lang: glossLang,
+    lemmaKey: { $in: rows.map((r) => r.lemmaKey) },
+  })
+    .sort({ rank: 1 })
+    .select("lemmaKey text")
+    .lean();
+  const glossOf = new Map<string, string>();
+  for (const g of glosses) if (!glossOf.has(g.lemmaKey)) glossOf.set(g.lemmaKey, g.text);
+
+  const kept = rows
+    .filter((row) => glossOf.has(row.lemmaKey))
+    .map((row) => ({ word: row.lemma, gloss: glossOf.get(row.lemmaKey) ?? null }));
+
+  options.onAttempt?.(
+    `    topic words: ${proposed.length} proposed · ${rows.length} at or below ${spec.level} · ${kept.length} glossed`,
+  );
+  return kept;
+}
+
 export interface GenerationOutcome {
   spec: BriefSpec;
   attempts: number;
@@ -117,21 +180,33 @@ export async function generateOne(
   spec: BriefSpec,
   options: { dryRun?: boolean; onAttempt?: (line: string) => void } = {},
 ): Promise<GenerationOutcome> {
+  let attempts = 0;
+  let providerCalls = 0;
+  let reasoningTokens = 0;
+
   const vocabulary = await sampleVocabulary(spec.targetLang, spec.level, spec.coreSize);
+
   const brief: Brief = {
     targetLang: spec.targetLang,
     level: spec.level,
     topic: spec.topic,
     words: spec.words,
+    // Topic words come first: they are the ones the scene actually needs, and a random sample below
+    // the level does not reliably contain them.
     core: vocabulary.core,
     target: vocabulary.target,
   };
 
+  const topicWords = await proposeTopicWords(provider, spec, options);
+  providerCalls += 1;
+  if (topicWords.length) {
+    const seen = new Set(brief.core.map((item) => item.word.toLowerCase()));
+    const merged = [...topicWords.filter((item) => !seen.has(item.word.toLowerCase())), ...brief.core];
+    brief.core = merged.slice(0, Math.max(spec.coreSize, 20));
+  }
+
   const system = buildSystemPrompt(brief);
   let feedback: string[] | undefined;
-  let attempts = 0;
-  let providerCalls = 0;
-  let reasoningTokens = 0;
   let lastIssues: string[] = [];
   let lastMetrics: { coverage: number; measuredLevel: CefrLevel | null } = { coverage: 0, measuredLevel: null };
 
@@ -139,7 +214,8 @@ export async function generateOne(
   // the cause is almost always that the model thought until the budget ran out and never wrote.
   let budget = 8000;
 
-  while (attempts < MAX_ATTEMPTS) {
+  let unusableReplies = 0;
+  while (attempts < MAX_ATTEMPTS && unusableReplies < MAX_UNUSABLE_REPLIES) {
     attempts += 1;
     const user = buildUserPrompt(brief, feedback);
     const completion = await provider.complete({ system, user, maxTokens: budget, json: true });
@@ -149,8 +225,10 @@ export async function generateOne(
     if (!completion.text.trim()) {
       // Not a formatting problem, and rubric feedback cannot fix it: the model spent the whole budget
       // on reasoning. Retrying with the same limit would fail identically, so the limit changes.
+      unusableReplies += 1;
       options.onAttempt?.(
-        `    attempt ${attempts}: empty reply — ${completion.reasoningTokens} reasoning tokens of ${budget}; raising the budget`,
+        `    reply ${attempts}: empty — ${completion.reasoningTokens} reasoning tokens of ${budget}; ` +
+          `raising the budget, attempt not counted`,
       );
       budget = Math.min(budget * 2, 32000);
       feedback = undefined;
@@ -159,9 +237,10 @@ export async function generateOne(
 
     const parsed = parseGenerated(completion.text);
     if (!parsed) {
+      unusableReplies += 1;
       feedback = ["The reply was not readable as JSON with a title and content."];
       options.onAttempt?.(
-        `    attempt ${attempts}: unreadable reply (${completion.text.length} chars, ${completion.reasoningTokens} reasoning tokens)`,
+        `    reply ${attempts}: unreadable (${completion.text.length} chars, ${completion.reasoningTokens} reasoning tokens), attempt not counted`,
       );
       continue;
     }
@@ -318,11 +397,14 @@ async function importParagraph(outcome: GenerationOutcome): Promise<string> {
   // The prompt is kept for provenance, as the schema intends.
   const promptSnapshot = outcome.prompt.length > 4000 ? `${outcome.prompt.slice(0, 4000)}…` : outcome.prompt;
 
+  // Identity is the brief. The title is model output and changes between runs; using it as the key
+  // made every regeneration a new paragraph rather than a replacement.
   const result = await Paragraph.findOneAndUpdate(
-    { targetLang: spec.targetLang, title: outcome.title },
+    { targetLang: spec.targetLang, briefId: briefIdOf(spec) },
     {
       $set: {
         targetLang: spec.targetLang,
+        briefId: briefIdOf(spec),
         title: outcome.title,
         content: outcome.content,
         topic: spec.topic,
@@ -339,6 +421,65 @@ async function importParagraph(outcome: GenerationOutcome): Promise<string> {
     { upsert: true, returnDocument: "after" },
   );
   return String(result?._id ?? "?");
+}
+
+/**
+ * Re-measure every stored generated paragraph against the rubric, as the reader would serve it.
+ *
+ * The acceptance test runs at generation time; this is the same test run later, over what is actually
+ * in the database, with the current lexicon and glossary. Without it there is no way to tell an
+ * accepted paragraph from one that was accepted under a glossary that has since changed — which is
+ * exactly what happened when the function-word and irregular-verb imports landed.
+ */
+async function verifyStored(): Promise<number> {
+  const stored = await Paragraph.find({ source: SOURCE })
+    .select("targetLang title content level")
+    .lean();
+  if (stored.length === 0) {
+    console.log("  no stored generated paragraphs to verify");
+    return 0;
+  }
+
+  let failed = 0;
+  for (const paragraph of stored) {
+    const level = (paragraph.level ?? "A2") as CefrLevel;
+    const spans = await tokenizeWithLexicon(paragraph.content, paragraph.targetLang as TargetLang);
+    const keys = [...new Set(spans.filter((s) => s.kind === "word").map((s) => s.lemmaKey))];
+
+    const words = await Word.find({ targetLang: paragraph.targetLang, lemmaKey: { $in: keys }, origin: "import" })
+      .select("lemmaKey difficulty")
+      .lean();
+    const difficultyOf = new Map<string, number>();
+    for (const w of words) {
+      const current = difficultyOf.get(w.lemmaKey);
+      if (current === undefined || w.difficulty < current) difficultyOf.set(w.lemmaKey, w.difficulty);
+    }
+    const glossKeys = new Set(
+      (
+        await Gloss.find({
+          targetLang: paragraph.targetLang,
+          lang: glossLangFor(paragraph.targetLang as TargetLang),
+          lemmaKey: { $in: keys },
+        })
+          .select("lemmaKey")
+          .lean()
+      ).map((g) => g.lemmaKey),
+    );
+
+    const verdict = checkParagraph(
+      spans.map((s) => ({ lemmaKey: s.lemmaKey, kind: s.kind })),
+      { level, difficultyOf: (key) => difficultyOf.get(key), hasGloss: (key) => glossKeys.has(key) },
+    );
+    const mark = verdict.passed ? "ok  " : "FAIL";
+    if (!verdict.passed) failed += 1;
+    console.log(
+      `  ${mark} ${paragraph.targetLang} ${level} · ${paragraph.title} · ` +
+        `${verdict.metrics.wordTokens} words · coverage ${(verdict.metrics.coverage * 100).toFixed(1)}% · ` +
+        `glossed ${(verdict.metrics.glossed * 100).toFixed(0)}%` +
+        (verdict.passed ? "" : ` · ${verdict.issues.join("; ")}`),
+    );
+  }
+  return failed;
 }
 
 async function main() {
@@ -360,6 +501,13 @@ async function main() {
   console.log("");
 
   await connectDB();
+
+  if (process.argv.includes("--verify")) {
+    const failed = await verifyStored();
+    console.log(`\n  ${failed === 0 ? "all stored paragraphs still measure up" : `${failed} no longer measure up`}`);
+    process.exitCode = failed === 0 ? 0 : 1;
+    return;
+  }
 
   const specs = BRIEFS.filter(
     (b) => (!onlyLevel || b.level === onlyLevel) && (!onlyLang || b.targetLang === onlyLang),

@@ -72,6 +72,8 @@ export function buildSystemPrompt(brief: Brief): string {
     "- The TARGET list is a pool of new words at this level. Choose the five to eight that fit the",
     "  scene you write, and use each one where its meaning is clear from the context. Leave the rest.",
     "- Short sentences. No idioms, no wordplay, no metaphors.",
+    "- If the scene needs a word that is too advanced, change what happens in the scene rather than",
+    "  forcing an awkward phrase to avoid it. A simpler event told naturally beats a strained one.",
     "",
     "Reply with JSON only, no code fences:",
     '{"title": "short title", "content": "the passage"}',
@@ -166,6 +168,60 @@ export function buildUserPrompt(brief: Brief, feedback?: string[]): string {
   return parts.join("\n");
 }
 
+/**
+ * Ask the model which words the topic needs, so the operator's list is not the only source.
+ *
+ * The German A2 brief failed on coherence while passing the difficulty rubric, with a scene whose
+ * key verb had been replaced by an awkward paraphrase ("Mach meine Blumen nass" for *gießen*). The
+ * cause was the vocabulary I supplied: sampled randomly from below the level, it happened not to
+ * contain the words that talking about watering plants requires, so the model used what it had.
+ *
+ * The model is the right party to name those words and the wrong party to judge whether they are
+ * simple enough. So it proposes and the data disposes: everything it suggests is looked up and kept
+ * only if it is at or below the level and has a gloss.
+ */
+export function buildTopicVocabularyPrompt(
+  targetLang: TargetLang,
+  level: CefrLevel,
+  topic: string,
+): { system: string; user: string } {
+  const { name } = LANGUAGE[targetLang];
+  return {
+    system: [
+      `You list vocabulary for ${name} reading passages at level ${level}.`,
+      "Reply with JSON only, no code fences.",
+      '{"words": ["word", "word"]}',
+    ].join("\n"),
+    user: [
+      `Topic: ${topic}`,
+      "",
+      `List 15 ${name} words that a passage on this topic would need — the nouns, verbs and`,
+      "adjectives that carry the scene, not function words.",
+      `Use only words an ${level} learner would meet. Prefer the simplest word that means it.`,
+      "Give the dictionary form: nouns with their article, verbs in the infinitive.",
+    ].join("\n"),
+  };
+}
+
+/** Read the proposed word list, tolerating fences and prose around the JSON. */
+export function parseTopicVocabulary(text: string): string[] {
+  const trimmed = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  const first = trimmed.indexOf("{");
+  const last = trimmed.lastIndexOf("}");
+  const candidate = first >= 0 && last > first ? trimmed.slice(first, last + 1) : trimmed;
+  try {
+    const parsed = JSON.parse(candidate) as { words?: unknown };
+    if (!Array.isArray(parsed.words)) return [];
+    return parsed.words
+      .filter((w): w is string => typeof w === "string")
+      .map((w) => w.trim())
+      .filter((w) => w.length > 0 && w.length < 40)
+      .slice(0, 20);
+  } catch {
+    return [];
+  }
+}
+
 export interface GeneratedParagraph {
   title: string;
   content: string;
@@ -201,6 +257,25 @@ export function parseGenerated(text: string): GeneratedParagraph | null {
       return { title: title || "Untitled", content };
     } catch {
       // Not JSON; the next candidate, or the fallback below.
+    }
+  }
+
+  // A reply that was cut off mid-JSON is still a usable passage: the content field is what matters,
+  // and the model reached it before running out of budget. Salvaging it costs one regex instead of a
+  // whole regeneration — the second most common failure after an empty reply.
+  const contentMatch = /"content"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(withoutFences);
+  if (contentMatch) {
+    const salvaged = contentMatch[1]
+      .replace(/\\n/g, "\n")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\")
+      .trim();
+    if (salvaged.length > 40) {
+      const titleMatch = /"title"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(withoutFences);
+      return {
+        title: titleMatch?.[1]?.replace(/\\"/g, '"').trim() || "Untitled",
+        content: salvaged,
+      };
     }
   }
 

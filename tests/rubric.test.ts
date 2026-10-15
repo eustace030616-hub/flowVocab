@@ -147,3 +147,59 @@ test("a code-fenced judgement is read", () => {
   assert.equal(verdict.coherent, false);
   assert.deepEqual(verdict.problems, ["one long quotation"]);
 });
+
+// ── topic vocabulary proposal ─────────────────────────────────────────────────
+//
+// The model proposes the words a topic needs; the data decides whether they are simple enough. The
+// parsing is the part that can be tested without a network.
+
+import { parseGenerated, parseTopicVocabulary } from "../src/scripts/generate/prompt";
+
+test("a proposed word list is read, fenced or not", () => {
+  assert.deepEqual(parseTopicVocabulary('{"words": ["Blume", "gießen"]}'), ["Blume", "gießen"]);
+  assert.deepEqual(parseTopicVocabulary('```json\n{"words": ["Blume"]}\n```'), ["Blume"]);
+});
+
+test("junk in a proposal is dropped rather than passed to the database", () => {
+  const parsed = parseTopicVocabulary('{"words": ["Blume", 42, "", "   ", null, "ok"]}');
+  assert.deepEqual(parsed, ["Blume", "ok"]);
+
+  // A runaway entry is not a word, and looking it up would only add noise.
+  const long = parseTopicVocabulary(`{"words": ["${"x".repeat(60)}", "Blume"]}`);
+  assert.deepEqual(long, ["Blume"]);
+});
+
+test("an unusable proposal yields nothing, so the sampled list is used instead", () => {
+  assert.deepEqual(parseTopicVocabulary("I suggest: Blume, Wasser"), []);
+  assert.deepEqual(parseTopicVocabulary(""), []);
+  assert.deepEqual(parseTopicVocabulary('{"words": "Blume"}'), []);
+});
+
+test("a reply cut off mid-JSON is salvaged rather than thrown away", () => {
+  // The second most common failure: the model reaches the content and runs out of budget. The text
+  // is there; only the punctuation is missing. The length guard keeps it from salvaging a fragment
+  // too short to be a passage at all.
+  const truncated =
+    '{"title": "Der Zug", "content": "Der Zug hat heute zwanzig Minuten Verspätung. Ich warte auf dem ' +
+    'Bahnsteig und schaue auf die Uhr. Ein Mann neben mir sagt, dass der späte Zug ruhiger ist.';
+
+  const salvaged = parseGenerated(truncated);
+  assert.ok(salvaged, "a truncated reply should still yield its passage");
+  assert.equal(salvaged!.title, "Der Zug");
+  assert.match(salvaged!.content, /^Der Zug hat heute zwanzig Minuten/);
+
+  // The guard applies to salvage specifically: a truncated fragment too short to be a passage is
+  // not rescued into one. (Valid JSON is returned whatever its length — the rubric rejects a text
+  // that short, which is the right place for that judgement.)
+  assert.equal(parseGenerated('{"title": "T", "content": "Zu kurz'), null);
+});
+
+test("escapes in a salvaged passage are decoded", () => {
+  const truncated =
+    '{"title": "T", "content": "Er sagt: \\"Guten Morgen, wie geht es Ihnen heute?\\" Dann nimmt er ' +
+    'seine Tasche und geht langsam zur Tür."}';
+  const salvaged = parseGenerated(truncated);
+  assert.ok(salvaged);
+  assert.match(salvaged!.content, /^Er sagt: "Guten Morgen/);
+  assert.ok(!salvaged!.content.includes('\\"'), "the escaped quotes are decoded, not left in");
+});

@@ -78,6 +78,12 @@ export function englishCandidates(surface: string): string[] {
   const irregular = EN_IRREGULAR[key];
   if (irregular) push(irregular);
 
+  // Possessive: "dog's" is the word "dog". Left unresolved, a possessive is a word the reader cannot
+  // explain, and they are common in prose. The stem is only used if the lexicon recognises it, so a
+  // contraction ("dog's eating") resolves to the noun rather than to nonsense — a harmless reading.
+  const possessive = key.replace(/[’']s$/, "");
+  if (possessive !== key) push(possessive);
+
   if (key.length > 3 && !EN_NO_STRIP.has(key)) {
     // plural / 3rd person singular
     if (key.endsWith("ies")) push(key.slice(0, -3) + "y");

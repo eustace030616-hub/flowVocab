@@ -69,7 +69,26 @@ export const RUBRIC_LIMITS = {
   minGlossed: 0.9,
   /** Above this, the vocabulary has no idea what the text is made of. */
   maxUnresolvedShare: 0.15,
-  /** i+1: supported reading. Below the floor the text is too hard at the level it claims. */
+  /**
+   * i+1: supported reading. Below the floor the text is too hard at the level it claims.
+   *
+   * **Calibration, settled by measurement.** The German A2 brief failed four attempts at 92.3%,
+   * 93.3%, 93.4% and 94.0% against this floor, which raised the obvious question of whether the
+   * floor is simply too strict. It is not:
+   *
+   *   - It already sits *below* the literature's figure. 95% is Nation's minimal coverage and
+   *     Laufer & Ravenhorst-Kalovski's 4,000–5,000 families; the floor concedes a point to
+   *     generation. Lowering it further would be fitting the threshold to the generator.
+   *   - It is reachable at every level, including A2. A text whose words all sit at the learner's
+   *     level scores exactly `KNOWN_AT_LEVEL` = 95%, and the accepted B1/B2 paragraphs measure
+   *     97.8–98.8%. The A2 failures were not the floor's fault: the text contained words above A2.
+   *   - It was fixed by telling the model *which* words were too hard, not by moving the line. Once
+   *     the repair feedback named them (see `generate.ts`), A2 cleared the floor on the next
+   *     attempt.
+   *
+   * So the constraint on A2 is vocabulary, not the threshold, and it is enforced the honest way:
+   * by measuring and asking for specific simplifications.
+   */
   minCoverage: MINIMAL_COVERAGE - 0.01,
   /** And not so easy that it teaches nothing. */
   maxCoverage: COMFORTABLE_COVERAGE + 0.01,

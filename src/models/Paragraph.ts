@@ -32,6 +32,15 @@ export interface IParagraph extends Document {
   tokenizerVersion: number;
 
   source: ParagraphSource;
+  /**
+   * The brief this text fulfils, as a stable key — `de:A2:water-the-plants`.
+   *
+   * Identity for generated paragraphs has to be the *brief*, not the title. Titles are written by the
+   * model and vary between runs of the same brief, so upserting on the title produced a new paragraph
+   * every time instead of replacing one: five briefs became nine paragraphs, two of them the same
+   * topic under different names, all of them shown to the reader.
+   */
+  briefId?: string | null;
   /** Prompt snapshot for generated text, as specified in FLOWWING.md. */
   promptSnapshot?: string;
   createdAt: Date;
@@ -57,6 +66,7 @@ const ParagraphSchema = new Schema<IParagraph>(
     tokenizerVersion: { type: Number, default: 1 },
 
     source: { type: String, enum: ["seed", "agent", "import"], default: "seed" },
+    briefId: { type: String, default: null },
     promptSnapshot: { type: String },
   },
   { timestamps: true },

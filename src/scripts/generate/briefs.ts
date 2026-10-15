@@ -65,3 +65,15 @@ export const BRIEFS: BriefSpec[] = [
     coreSize: 15,
   },
 ];
+
+/** A stable key for a brief: what identity means for a generated paragraph. */
+export function briefIdOf(spec: BriefSpec): string {
+  const slug = spec.topic
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .split("-")
+    .slice(0, 5)
+    .join("-");
+  return `${spec.targetLang}:${spec.level}:${slug}`;
+}
