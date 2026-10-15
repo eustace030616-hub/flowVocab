@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Span } from "@/src/lib/tokenize";
 import { DEFAULT_POPOVER, placePopover } from "@/src/lib/ui/popover";
+import { groupMeanings } from "@/src/lib/ui/meanings";
 
 interface VocabularyEntry {
   lemma: string;
@@ -10,6 +11,12 @@ interface VocabularyEntry {
   gloss: string | null;
   glossGenerated: boolean | null;
   glossSource: string | null;
+  /** Estimated part of speech of the translation, e.g. "verb". */
+  glossTermPos: string | null;
+  /** Part of speech of the headword this gloss belongs to. */
+  glossPos: string | null;
+  /** Every reading of this headword, each labelled, when the source distinguishes them. */
+  meanings: Array<{ pos: string | null; termPos: string | null; text: string; source: string }>;
   level: string | null;
   levelEstimated: boolean;
   difficulty: number;
@@ -124,6 +131,19 @@ const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffec
  */
 const HOVER_OPEN_DELAY_MS = 600;
 const HOVER_CLOSE_DELAY_MS = 120;
+
+/** Compact part-of-speech labels for the preview. */
+const POS_SHORT: Record<string, string> = {
+  verb: "v",
+  noun: "n",
+  adjective: "adj",
+  adverb: "adv",
+};
+
+function posLabel(pos: string | null | undefined): string | null {
+  if (!pos) return null;
+  return POS_SHORT[pos] ?? pos;
+}
 
 function amberIntensity(count: number): string {
   if (count <= 0) return "bg-amber-100/60";
@@ -631,6 +651,17 @@ export default function Home() {
 
                 <div className="flex flex-wrap gap-1 mt-1">
                   {(() => {
+                    // Which entry was clicked: "train" is a noun and a verb, and they gloss
+                    // differently, so the reading should be visible.
+                    const label = posLabel(activeVocab?.glossPos);
+                    if (!label) return null;
+                    return (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500 font-mono">
+                        {label}
+                      </span>
+                    );
+                  })()}
+                  {(() => {
                     const vocab = activeVocab;
                     if (!vocab?.level) return null;
                     return (
@@ -669,10 +700,34 @@ export default function Home() {
                 {(() => {
                   const vocab = activeVocab;
                   if (vocab?.gloss) {
+                    // A word can have several readings — "train" is a noun (火车) and a verb (训练).
+                    // A running-text token carries no part of speech, so rather than let database
+                    // order pick one, the readings are grouped and labelled.
+                    const groups = groupMeanings(vocab.meanings);
                     return (
                       <>
                         <div className="border-t border-zinc-100 my-2" />
-                        <p className="text-sm text-zinc-600">{vocab.gloss}</p>
+                        {groups.length > 1 ? (
+                          <ul className="space-y-1">
+                            {groups.map((group) => (
+                              <li key={group.pos ?? "-"} className="flex items-baseline gap-1.5">
+                                <span className="font-mono text-[10px] text-zinc-400 w-6 shrink-0">
+                                  {posLabel(group.pos) ?? "—"}
+                                </span>
+                                <span className="text-sm text-zinc-600">{group.texts.join(", ")}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        ) : (
+                          <p className="text-sm text-zinc-600">
+                            {vocab.gloss}
+                            {posLabel(vocab.glossTermPos) && (
+                              <span className="ml-1.5 text-[10px] font-mono text-zinc-400">
+                                {posLabel(vocab.glossTermPos)}
+                              </span>
+                            )}
+                          </p>
+                        )}
                         <p className="text-[10px] text-zinc-400 mt-1">
                           {vocab.glossSource}
                           {vocab.glossGenerated ? " · machine-generated" : ""}

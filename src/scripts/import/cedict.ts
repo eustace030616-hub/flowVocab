@@ -34,6 +34,17 @@ export interface InvertedGlosses {
    * is listed as a gloss of "beautiful", while 美 is less frequent and simply *is* the word.
    */
   genericness: Map<string, number>;
+  /** Simplified form → its normalised English glosses, for part-of-speech evidence. */
+  byForm: Map<string, string[]>;
+  /**
+   * Simplified form → how many of its glosses were verb-marked with "to ".
+   *
+   * CC-CEDICT carries no part of speech, but it does mark infinitives, and normalising a gloss
+   * ("to train" → "train") discards exactly that information. Counting it before discarding is what
+   * makes "train" resolvable: 训练 is glossed "to train" and 火车 is glossed "train", so the
+   * headword's own part of speech can pick between them.
+   */
+  verbMarked: Map<string, number>;
 }
 
 /** Lines that carry structure rather than a translation. */
@@ -120,9 +131,16 @@ export function parseCedict(text: string): { entries: CedictEntry[]; skipped: nu
  * words anyone would actually use. "Specific" turns out to mean "obscure", so ranking needs a
  * frequency signal instead, supplied by the caller.
  */
+/** True when the raw gloss is an infinitive, i.e. CC-CEDICT's only part-of-speech marker. */
+export function isVerbMarked(raw: string): boolean {
+  return /^to\s+\S/i.test(raw.trim());
+}
+
 export function invertGlosses(entries: CedictEntry[]): InvertedGlosses {
   const byGloss = new Map<string, string[]>();
   const genericness = new Map<string, number>();
+  const byForm = new Map<string, string[]>();
+  const verbMarked = new Map<string, number>();
 
   for (const entry of entries) {
     const form = entry.simplified;
@@ -139,6 +157,14 @@ export function invertGlosses(entries: CedictEntry[]): InvertedGlosses {
         byGloss.set(gloss, [form]);
       }
 
+      const formGlosses = byForm.get(form);
+      if (formGlosses) {
+        if (!formGlosses.includes(gloss)) formGlosses.push(gloss);
+      } else {
+        byForm.set(form, [gloss]);
+      }
+      if (isVerbMarked(raw)) verbMarked.set(form, (verbMarked.get(form) ?? 0) + 1);
+
       // One form counts once per gloss, or an entry with three senses would inflate it.
       if (!seenForEntry.has(gloss)) {
         seenForEntry.add(gloss);
@@ -147,7 +173,54 @@ export function invertGlosses(entries: CedictEntry[]): InvertedGlosses {
     }
   }
 
-  return { byGloss, genericness };
+  return { byGloss, genericness, byForm, verbMarked };
+}
+
+export type PartOfSpeech = "verb" | "noun" | "adjective" | "adverb";
+
+export interface PosContext {
+  /** The inverted dictionary, for a form's own glosses. */
+  inverted: InvertedGlosses;
+  /** English lemma → its parts of speech, from our own vocabulary. */
+  vocabPos: Map<string, string[]>;
+}
+
+/**
+ * Estimate the part of speech of a Chinese form, from evidence rather than from a tag.
+ *
+ * Two sources, because neither is complete:
+ *
+ *   the infinitive marker   "to train" is a verb, "train" is not. CC-CEDICT's only explicit signal.
+ *   our own vocabulary      if a gloss is itself a headword we hold, we know its part of speech.
+ *
+ * Returns null rather than guessing when the evidence is thin — an unlabelled gloss is honest, a
+ * wrong label is not.
+ */
+export function estimateTermPos(
+  form: string,
+  context: PosContext,
+): { pos: PartOfSpeech | null; votes: Record<PartOfSpeech, number> } {
+  const votes: Record<PartOfSpeech, number> = { verb: 0, noun: 0, adjective: 0, adverb: 0 };
+  const glosses = context.inverted.byForm.get(form) ?? [];
+
+  for (const gloss of glosses) {
+    for (const pos of context.vocabPos.get(gloss) ?? []) {
+      if (pos in votes) votes[pos as PartOfSpeech] += 1;
+    }
+  }
+
+  // The infinitive marker is stronger evidence than a gloss we happen to hold, because it is a
+  // statement about this entry rather than about the English word in general.
+  const marked = context.inverted.verbMarked.get(form) ?? 0;
+  if (glosses.length > 0 && marked / glosses.length >= 0.5) votes.verb += 2;
+
+  const ranked = (Object.entries(votes) as Array<[PartOfSpeech, number]>).sort((a, b) => b[1] - a[1]);
+  if (ranked[0][1] === 0) return { pos: null, votes };
+
+  // Require a clear winner: a form with one noun vote and one verb vote is not decidable, and
+  // labelling it would narrow the search in the wrong direction.
+  if (ranked[0][1] === ranked[1][1]) return { pos: null, votes };
+  return { pos: ranked[0][0], votes };
 }
 
 /**
@@ -199,8 +272,24 @@ export function scoreChineseCandidate(text: string, signals: CandidateSignals): 
   return zipf - GENERICNESS_PENALTY * Math.log(generic) - guard;
 }
 
+/** How much a candidate gains for matching the headword's part of speech, in Zipf units. */
+export const POS_MATCH_BONUS = 1.5;
+
+export interface RankOptions {
+  /** The headword's part of speech, from the vocabulary entry being glossed. */
+  preferPos?: string;
+  /** Estimated part of speech of a candidate term. */
+  termPosOf?: (form: string) => PartOfSpeech | null;
+  posBonus?: number;
+}
+
 /**
  * Order the Chinese candidates for one English headword, best first.
+ *
+ * The score is frequency adjusted for specificity (`scoreChineseCandidate`), plus a bonus when the
+ * candidate's estimated part of speech matches the headword's. That last term is what resolves the
+ * case this ranking exists for: `train/verb` must rank 训练 ("to train") above 火车 ("railway
+ * train"), which frequency alone puts first because the noun reading is more common overall.
  *
  * Candidates with no frequency score sort after those that have one, then by length — a short form
  * is more likely to be the everyday word than a long technical one.
@@ -208,10 +297,23 @@ export function scoreChineseCandidate(text: string, signals: CandidateSignals): 
 export function rankChineseCandidates(
   candidates: string[],
   signals: CandidateSignals,
+  options: RankOptions = {},
 ): string[] {
+  const bonus = options.posBonus ?? POS_MATCH_BONUS;
+  const score = (form: string) => {
+    let value = scoreChineseCandidate(form, signals);
+    if (options.preferPos && options.termPosOf) {
+      const pos = options.termPosOf(form);
+      // Only a positive match earns a bonus. An unknown part of speech is not evidence against a
+      // candidate, or the roughly half of forms with no evidence would all be pushed to the bottom.
+      if (pos && pos === options.preferPos) value += bonus;
+    }
+    return value;
+  };
+
   return [...candidates].sort((a, b) => {
-    const sa = scoreChineseCandidate(a, signals);
-    const sb = scoreChineseCandidate(b, signals);
+    const sa = score(a);
+    const sb = score(b);
     if (sa !== sb) return sb - sa;
     const za = signals.zipf.get(a) ?? 0;
     const zb = signals.zipf.get(b) ?? 0;

@@ -20,14 +20,16 @@ import path from "node:path";
 
 import { connectDB } from "../../lib/db";
 import { Word } from "../../models/Word";
-import { Gloss } from "../../models/Gloss";
+import { ensureGlossIndexes, Gloss } from "../../models/Gloss";
 import { Provenance } from "../../models/Provenance";
 import { provenanceDocs } from "../../lib/licence";
 import { assertShippable, dataset } from "../../lib/licence/datasets";
 import {
+  estimateTermPos,
   invertGlosses,
   parseCedict,
   rankChineseCandidates,
+  type PartOfSpeech,
 } from "./cedict";
 import { runIfEntry } from "../run";
 
@@ -88,14 +90,41 @@ async function main() {
   console.log(`  licence      ${spec.license} (share-alike: kept in its own collection)`);
 
   const { entries, skipped } = parseCedict(readFileSync(TEXT, "utf8"));
-  const { byGloss, genericness } = invertGlosses(entries);
+  const inverted = invertGlosses(entries);
+  const { byGloss, genericness, byForm, verbMarked } = inverted;
   console.log(`  entries      ${entries.length.toLocaleString()} (${skipped} lines skipped)`);
   console.log(`  gloss keys   ${byGloss.size.toLocaleString()} distinct English words indexed`);
 
-  // Only score the forms that are candidates for vocabulary we actually hold.
   await connectDB();
-  const englishKeys = await Word.find({ targetLang: "en" }).select("lemmaKey").lean();
-  const wanted = new Set(englishKeys.map((w) => w.lemmaKey));
+
+  const dropped = await ensureGlossIndexes();
+  for (const name of dropped) console.log(`  index        dropped stale unique index ${name}`);
+
+  // The English vocabulary carries the part of speech of every headword — the signal CC-CEDICT
+  // itself lacks — and also tells us the part of speech of any gloss that is itself a headword.
+  const englishWords = await Word.find({ targetLang: "en" }).select("lemmaKey pos").lean();
+  const wanted = new Set(englishWords.map((w) => w.lemmaKey));
+  const vocabPos = new Map<string, string[]>();
+  for (const word of englishWords) {
+    if (!word.pos) continue;
+    const list = vocabPos.get(word.lemmaKey);
+    if (list) {
+      if (!list.includes(word.pos)) list.push(word.pos);
+    } else {
+      vocabPos.set(word.lemmaKey, [word.pos]);
+    }
+  }
+  console.log(`  pos signals  ${vocabPos.size.toLocaleString()} English headwords carry a part of speech`);
+
+  const termPosCache = new Map<string, PartOfSpeech | null>();
+  const termPosOf = (form: string): PartOfSpeech | null => {
+    if (!termPosCache.has(form)) {
+      termPosCache.set(form, estimateTermPos(form, { inverted, vocabPos }).pos);
+    }
+    return termPosCache.get(form) ?? null;
+  };
+  void byForm;
+  void verbMarked;
 
   const candidateForms = new Set<string>();
   for (const key of wanted) {
@@ -113,12 +142,19 @@ async function main() {
   let unranked = 0;
   let ops: Array<Parameters<typeof Gloss.bulkWrite>[0][number]> = [];
 
-  for (const doc of await Word.find({ targetLang: "en" }).select("lemmaKey").lean()) {
+  // One pass per vocabulary ENTRY, not per lemma: train/noun and train/verb are separate rows and
+  // must get separate gloss sets.
+  for (const doc of await Word.find({ targetLang: "en" })
+    .select("lemmaKey pos")
+    .lean()) {
     const candidates = byGloss.get(doc.lemmaKey);
     if (!candidates?.length) continue;
     matched += 1;
 
-    const ranked = rankChineseCandidates(candidates, { zipf, genericness }).slice(0, MAX_CANDIDATES);
+    const ranked = rankChineseCandidates(candidates, { zipf, genericness }, {
+      preferPos: doc.pos || undefined,
+      termPosOf,
+    }).slice(0, MAX_CANDIDATES);
     if (ranked.every((form) => (zipf.get(form) ?? 0) === 0)) unranked += 1;
 
     ranked.forEach((text, index) => {
@@ -128,6 +164,7 @@ async function main() {
           filter: {
             targetLang: "en",
             lemmaKey: doc.lemmaKey,
+            pos: doc.pos ?? "",
             lang: "zh",
             source: SOURCE,
             text,
@@ -139,6 +176,7 @@ async function main() {
               generated: false,
               rank: FIRST_RANK + index,
               weight: zipf.get(text) ?? 0,
+              termPos: termPosOf(text),
             },
           },
           upsert: true,

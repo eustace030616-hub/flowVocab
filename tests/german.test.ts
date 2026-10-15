@@ -20,11 +20,25 @@ import {
 import { assertShippable, shippableDatasets, DATASETS } from "../src/lib/licence/datasets";
 import { parseDingLine, rankEntries } from "../src/scripts/import/ding";
 import {
+  estimateTermPos,
   invertGlosses,
+  isVerbMarked,
   normalizeGloss,
   parseCedict,
   rankChineseCandidates,
 } from "../src/scripts/import/cedict";
+
+/** Parse lines and invert them, with frequencies supplied per test. */
+function build(lines: string[]) {
+  const { entries } = parseCedict(lines.join("\n"));
+  const inverted = invertGlosses(entries);
+  const zipf = new Map<string, number>();
+  // Give every form a frequency so the tests are about ordering, not about missing scores.
+  for (const form of inverted.byForm.keys()) zipf.set(form, 3);
+  zipf.set("火车", 5); // the frequent noun reading
+  zipf.set("训练", 4);
+  return { entries, inverted, zipf };
+}
 
 const DWDS_PATH = path.join(process.cwd(), "data", "de", "dwds-lemmata.csv");
 const PH98_PATH = path.join(process.cwd(), "data", "de", "ph98-german-cefr-wordlist.json");
@@ -300,4 +314,61 @@ test("cedict: a candidate with no frequency score sorts last", () => {
   };
   // 马脚 has no Zipf entry, so it scores 0 and cannot outrank a real word.
   assert.equal(rankChineseCandidates(["马脚", "猫"], signals)[0], "猫");
+});
+
+test("cedict: the infinitive marker survives normalisation as part-of-speech evidence", () => {
+  // "to train" and "train" normalise to the same key, which is what made this invisible: the only
+  // part-of-speech signal CC-CEDICT offers was being discarded during normalisation.
+  assert.equal(isVerbMarked("to train"), true);
+  assert.equal(isVerbMarked("to drill"), true);
+  assert.equal(isVerbMarked("train"), false);
+  assert.equal(isVerbMarked("railway train"), false);
+
+  const { inverted } = build([
+    "火車 火车 [huo3 che1] /train/railway train/",
+    "訓練 训练 [xun4 lian4] /to train/to drill/training/drill/",
+  ]);
+  // A form with no verb-marked gloss has no entry at all; the estimator treats that as zero.
+  assert.equal(inverted.verbMarked.get("火车") ?? 0, 0);
+  assert.equal(inverted.verbMarked.get("训练"), 2, "'to train' and 'to drill'");
+});
+
+test("cedict: a verb headword picks the verb reading of an ambiguous word", () => {
+  // The reported bug: "trained" is train/VERB, but the noun reading 火车 (railway train) ranked
+  // first because it is more frequent overall.
+  const { inverted, zipf } = build([
+    "火車 火车 [huo3 che1] /train/railway train/",
+    "列車 列车 [lie4 che1] /train/",
+    "訓練 训练 [xun4 lian4] /to train/to drill/training/drill/",
+  ]);
+  const signals = { zipf, genericness: inverted.genericness };
+
+  // 火车 is the more frequent word, so plain ranking puts it first whatever the headword is.
+  assert.equal(rankChineseCandidates(["火车", "列车", "训练"], signals)[0], "火车");
+
+  const vocabPos = new Map([["train", ["noun", "verb"]]]);
+  const termPosOf = (form: string) => estimateTermPos(form, { inverted, vocabPos }).pos;
+  assert.equal(termPosOf("训练"), "verb");
+  assert.equal(termPosOf("火车"), null, "no evidence either way is not a noun claim");
+
+  const ranked = rankChineseCandidates(["火车", "列车", "训练"], signals, {
+    preferPos: "verb",
+    termPosOf,
+  });
+  assert.equal(ranked[0], "训练", "the verb reading must win for a verb headword");
+});
+
+test("cedict: an unclear part of speech yields null rather than a guess", () => {
+  const { inverted } = build(["X X [x] /train/railway train/"]);
+  const votes = estimateTermPos("X", {
+    inverted,
+    // One noun reading and one verb reading: a genuine tie.
+    vocabPos: new Map([
+      ["train", ["noun"]],
+      ["railway train", ["verb"]],
+    ]),
+  });
+  assert.equal(votes.votes.noun, 1);
+  assert.equal(votes.votes.verb, 1);
+  assert.equal(votes.pos, null, "a tie must not be resolved into a label");
 });

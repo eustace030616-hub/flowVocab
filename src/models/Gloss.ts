@@ -31,6 +31,22 @@ export interface IGloss extends Document {
   /** Disambiguator when a source distinguishes senses. */
   sense?: string;
 
+  /**
+   * Part of speech of the *headword* this gloss belongs to, when known.
+   *
+   * This is what keeps "train" apart: the vocabulary holds `train/noun` and `train/verb` as
+   * separate entries, and a single flat gloss list gives the learner 火车 (railway train) when
+   * they clicked a verb. It is part of the uniqueness key for the same reason.
+   */
+  pos: string;
+  /**
+   * Part of speech of the *gloss term* itself, when it could be estimated.
+   *
+   * Shown next to the translation so an ambiguous word is visibly ambiguous — "火车 n" and
+   * "训练 v" — instead of hiding two readings behind one unlabelled line.
+   */
+  termPos?: string | null;
+
   /** Dataset id from src/lib/licence/datasets.ts, e.g. "ding-beolingus-de-en". */
   source: string;
   /** Licence string as published by that dataset. */
@@ -54,6 +70,9 @@ const GlossSchema = new Schema<IGloss>(
     text: { type: String, required: true },
     sense: { type: String },
 
+    pos: { type: String, default: "" },
+    termPos: { type: String, default: null },
+
     source: { type: String, required: true },
     license: { type: String, required: true },
     generated: { type: Boolean, default: false },
@@ -65,13 +84,39 @@ const GlossSchema = new Schema<IGloss>(
 );
 
 // The read path.
-GlossSchema.index({ targetLang: 1, lemmaKey: 1, lang: 1, rank: 1 });
+GlossSchema.index({ targetLang: 1, lemmaKey: 1, pos: 1, lang: 1, rank: 1 });
 // Re-importing a source must be idempotent, so the same gloss cannot land twice.
 GlossSchema.index(
-  { targetLang: 1, lemmaKey: 1, lang: 1, source: 1, text: 1 },
+  { targetLang: 1, lemmaKey: 1, pos: 1, lang: 1, source: 1, text: 1 },
   { unique: true },
 );
 // The licence path: find everything one dataset contributed, to attribute it or remove it.
 GlossSchema.index({ source: 1 });
 
 export const Gloss = models.Gloss || model<IGloss>("Gloss", GlossSchema);
+
+/**
+ * Bring the collection's indexes in line with the schema.
+ *
+ * Mongoose creates new indexes but never drops removed ones, and an old unique index is not
+ * harmless here: before `pos` became part of the key, the same gloss text could not be attached to
+ * both `train/noun` and `train/verb`, so every such write would fail. Dropping is explicit and
+ * logged rather than silent, because it is the kind of migration that otherwise shows up as a
+ * confusing duplicate-key error much later.
+ */
+export async function ensureGlossIndexes(): Promise<string[]> {
+  const dropped: string[] = [];
+  const existing = await Gloss.collection.indexes();
+
+  for (const index of existing) {
+    const name = index.name;
+    if (!name || name === "_id_") continue;
+    if (index.unique && !("pos" in (index.key ?? {}))) {
+      await Gloss.collection.dropIndex(name);
+      dropped.push(name);
+    }
+  }
+
+  await Gloss.syncIndexes();
+  return dropped;
+}

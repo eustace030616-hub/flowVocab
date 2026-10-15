@@ -30,7 +30,7 @@ import {
 import { WordState } from "@/src/models/WordState";
 import { tokenizeWithLexicon, wordsForSpans } from "@/src/lib/learner/lexicon";
 import { pickExistingWord } from "@/src/lib/learner/resolve";
-import { allGlossesFor, glossesFor } from "@/src/lib/learner/glosses";
+import { allGlossesFor, glossesByLemma, pickGloss } from "@/src/lib/learner/glosses";
 import { wordSpans, TOKENIZER_VERSION } from "@/src/lib/tokenize";
 
 type Variables = { user: ResolvedUser };
@@ -138,13 +138,20 @@ app.get("/paragraphs", async (c) => {
 
     // This learner's own state, which lives in WordState rather than on the shared Word.
     const states = await statesFor(user.userId, targetLang, keys);
-    // Translations, from their own collection — one per source, attributed.
-    const glosses = await glossesFor(targetLang, glossLang, keys);
+    // Translations from their own collection, grouped by lemma so EVERY reading is available.
+    //
+    // A token in running text carries no part of speech — nothing tells us "well-trained" is a
+    // verb — so picking one reading by database order glossed a verb with the noun's 火车. All the
+    // readings are returned, labelled, and the interface shows them together.
+    const glosses = await glossesByLemma(targetLang, glossLang, keys);
 
     const vocabulary: Record<string, unknown> = {};
     for (const word of words) {
       if (vocabulary[word.lemmaKey]) continue;
-      const gloss = glosses.get(word.lemmaKey) ?? null;
+      const meanings = glosses.get(word.lemmaKey) ?? [];
+      // The entry's own part of speech decides which reading leads, when it has one.
+      const gloss =
+        meanings.find((m) => m.pos && m.pos === word.pos) ?? meanings[0] ?? null;
       const state = states.get(word.lemmaKey);
       vocabulary[word.lemmaKey] = {
         lemma: word.lemma,
@@ -152,6 +159,16 @@ app.get("/paragraphs", async (c) => {
         gloss: gloss?.text ?? null,
         glossGenerated: gloss?.generated ?? null,
         glossSource: gloss?.source ?? null,
+        // Estimated part of speech of the translation, so a word with several readings shows
+        // which one is which rather than hiding them behind one unlabelled line.
+        glossTermPos: gloss?.termPos ?? null,
+        glossPos: gloss?.pos ?? null,
+        meanings: meanings.map((m) => ({
+          pos: m.pos || null,
+          termPos: m.termPos ?? null,
+          text: m.text,
+          source: m.source,
+        })),
         level: word.level,
         levelEstimated: word.levelEstimated,
         difficulty: word.difficulty,

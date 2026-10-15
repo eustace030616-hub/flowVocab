@@ -23,7 +23,7 @@ import path from "node:path";
 
 import { connectDB } from "../../lib/db";
 import { Word } from "../../models/Word";
-import { Gloss } from "../../models/Gloss";
+import { ensureGlossIndexes, Gloss } from "../../models/Gloss";
 import { Provenance } from "../../models/Provenance";
 import { provenanceDocs } from "../../lib/licence";
 import { assertShippable, dataset } from "../../lib/licence/datasets";
@@ -68,11 +68,17 @@ async function main() {
 
   await connectDB();
 
+  const dropped = await ensureGlossIndexes();
+  for (const name of dropped) console.log(`  index         dropped stale unique index ${name}`);
+
   // Re-importing must not leave stale rows behind, so clear this source first.
   const removed = await Gloss.deleteMany({ source: SOURCE });
   if (removed.deletedCount) console.log(`  cleared       ${removed.deletedCount.toLocaleString()} previous rows`);
 
-  const cursor = Word.find({ targetLang: "de" }).select("lemma lemmaKey article plural").lean().cursor();
+  const cursor = Word.find({ targetLang: "de" })
+    .select("lemma lemmaKey pos article plural")
+    .lean()
+    .cursor();
 
   let considered = 0;
   let matched = 0;
@@ -110,6 +116,7 @@ async function main() {
           filter: {
             targetLang: "de",
             lemmaKey: doc.lemmaKey,
+            pos: doc.pos ?? "",
             lang: "en",
             source: SOURCE,
             text,

@@ -151,7 +151,30 @@ score = zipf − 0.8·ln(genericness) − (function word ? 3 : 0)
 ```
 
 It is a heuristic, not a sense disambiguator. Ambiguous verbs remain the weak spot (`run` → 运行
-rather than 跑), which is why up to three candidates are stored and only the first is shown.
+rather than 跑), which is why up to three candidates are stored per reading.
+
+### Part of speech is part of a meaning's identity
+
+`train` is two vocabulary entries — `train/noun` (A1) and `train/verb` (A2) — and glosses are keyed
+by `(lemma, pos)`, not by the lemma alone. A single flat list gave the *verb* reading 火车 (railway
+train), because the noun sense is more frequent overall.
+
+CC-CEDICT has no part-of-speech tags, but it marks infinitives, and normalising a gloss
+(`to train` → `train`) was discarding exactly that. Counting the marker before discarding it, plus
+the parts of speech of any gloss that is itself a headword we hold, gives a **derived** part of
+speech per candidate — used both to rank (`train/verb` → 训练) and to label what is shown.
+
+Where a token in running text has no part of speech — nothing knows `well-trained` is a verb — the
+readings are **not** picked silently. They are grouped and shown labelled:
+
+```
+n   火车, 列车
+v   训练, 培训, 培育
+```
+
+`termPos` coverage: 17,854 of 19,855 English→Chinese rows (90%). A label is emitted only when the
+evidence is not a tie, and a group label is dropped if its readings disagree — an unlabelled gloss
+is honest, a wrong label is not.
 
 ## Difficulty and levels
 
