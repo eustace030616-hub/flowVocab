@@ -1,1 +1,26 @@
 @import "tailwindcss";
+
+/*
+ * The word preview fades in rather than snapping on.
+ *
+ * The hover dwell in page.tsx already waits before opening, but an instant appearance still reads
+ * as a flicker when the pointer is sweeping across a line. A short fade makes the same delay feel
+ * deliberate without adding latency.
+ */
+@keyframes fv-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Honour a stated preference for less motion: appear immediately, no movement. */
+@media (prefers-reduced-motion: reduce) {
+  .fv-popover {
+    animation: none !important;
+  }
+}

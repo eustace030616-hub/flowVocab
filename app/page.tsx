@@ -114,6 +114,17 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
  */
 const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
 
+/**
+ * Hover timing.
+ *
+ * The dwell is long enough that sweeping the pointer across a line of text does not flash the
+ * preview on every word, and the close delay is a grace period so a small wobble off the word
+ * does not dismiss it. The two are deliberately asymmetric: opening should feel considered,
+ * closing should feel immediate.
+ */
+const HOVER_OPEN_DELAY_MS = 600;
+const HOVER_CLOSE_DELAY_MS = 120;
+
 function amberIntensity(count: number): string {
   if (count <= 0) return "bg-amber-100/60";
   if (count === 1) return "bg-amber-100";
@@ -297,7 +308,7 @@ export default function Home() {
         leaveTimer.current = setTimeout(() => {
           setActive(null);
           leaveTimer.current = null;
-        }, 60);
+        }, HOVER_CLOSE_DELAY_MS);
       }
       if (active && ownerStart === active.ownerStart && leaveTimer.current) {
         clearTimeout(leaveTimer.current);
@@ -311,7 +322,7 @@ export default function Home() {
         if (!span) return;
         const rect = (raw as HTMLElement).getBoundingClientRect();
         setActive({ ownerStart, span, rect });
-      }, 350);
+      }, HOVER_OPEN_DELAY_MS);
     },
     [active, findSpan],
   );
@@ -591,12 +602,14 @@ export default function Home() {
                 }}
                 onClick={(e) => e.stopPropagation()}
                 ref={popoverRef}
-                className="fixed z-50 bg-white border border-zinc-200 rounded-lg shadow-lg p-3 min-w-[200px] max-w-[320px]"
+                className="fv-popover fixed z-50 bg-white border border-zinc-200 rounded-lg shadow-lg p-3 min-w-[200px] max-w-[320px]"
                 style={{
                   top: popoverPos?.top ?? 0,
                   left: popoverPos?.left ?? 0,
                   // Hidden for the single frame before it is measured, so it never paints misplaced.
                   visibility: popoverPos ? "visible" : "hidden",
+                  // Fades in only once it is placed, so the animation is not wasted on the hidden frame.
+                  animation: popoverPos ? "fv-popover-in 140ms ease-out" : undefined,
                 }}
               >
                 <p className="text-lg font-semibold text-zinc-800">
