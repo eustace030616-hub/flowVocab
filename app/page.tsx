@@ -1,7 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Span } from "@/src/lib/tokenize";
+import { DEFAULT_POPOVER, placePopover } from "@/src/lib/ui/popover";
 
 interface VocabularyEntry {
   lemma: string;
@@ -104,6 +105,15 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
   },
 };
 
+/**
+ * `useLayoutEffect` on the client, `useEffect` on the server.
+ *
+ * Placement must be measured before paint, but React warns about `useLayoutEffect` during
+ * server rendering, and this component is server-rendered even though the popover itself only
+ * ever appears after a hover.
+ */
+const useIsomorphicLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
 function amberIntensity(count: number): string {
   if (count <= 0) return "bg-amber-100/60";
   if (count === 1) return "bg-amber-100";
@@ -141,7 +151,7 @@ export default function Home() {
   const [marked, setMarked] = useState<Set<number>>(new Set());
   const [hoveredOwner, setHoveredOwner] = useState<number | null>(null);
   const [active, setActive] = useState<ActiveItem | null>(null);
-  const [winHeight, setWinHeight] = useState(0);
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const [lastEvent, setLastEvent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   /**
@@ -209,7 +219,12 @@ export default function Home() {
 
   useEffect(() => {
     void load();
-    setWinHeight(window.innerHeight);
+    // Both dimensions, kept current: placement clamps against the viewport, so a stale size
+    // shows up as a popover in the wrong place.
+    const measure = () => setViewport({ width: window.innerWidth, height: window.innerHeight });
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
   }, [load]);
 
   // Sync local marks + record exposure when the displayed paragraph changes.
@@ -387,6 +402,35 @@ export default function Home() {
 
   const activeVocab = active ? vocabOf(active.span) : undefined;
 
+  /**
+   * The popover is positioned by an explicit top-left corner, computed from the word's own rect.
+   *
+   * `useLayoutEffect` so the measurement happens before paint: the box is rendered hidden for one
+   * frame and then placed, which avoids a visible jump. An earlier version positioned it with a
+   * `bottom` offset derived from the viewport height instead — that anchors it *above* the word, and
+   * if the value is ever invalid the element falls back to its static position and appears to float
+   * in the middle of the page.
+   */
+  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const [popoverPos, setPopoverPos] = useState<{ top: number; left: number } | null>(null);
+
+  useIsomorphicLayoutEffect(() => {
+    if (!active) {
+      setPopoverPos(null);
+      return;
+    }
+    const box = popoverRef.current;
+    const size = box
+      ? { width: box.offsetWidth, height: box.offsetHeight }
+      : DEFAULT_POPOVER;
+    const { top, left } = placePopover({
+      anchor: active.rect,
+      viewport,
+      popover: size,
+    });
+    setPopoverPos({ top, left });
+  }, [active, viewport, activeVocab]);
+
   const isActiveOwner = (span: Span) => active?.ownerStart === ownerOf(span);
   const isHoveredOwner = (span: Span) => hoveredOwner === ownerOf(span);
 
@@ -539,11 +583,13 @@ export default function Home() {
                   setActive(null);
                 }}
                 onClick={(e) => e.stopPropagation()}
+                ref={popoverRef}
                 className="fixed z-50 bg-white border border-zinc-200 rounded-lg shadow-lg p-3 min-w-[200px] max-w-[320px]"
                 style={{
-                  left: active.rect.left + active.rect.width / 2,
-                  bottom: winHeight - active.rect.top + 8,
-                  transform: "translateX(-50%)",
+                  top: popoverPos?.top ?? 0,
+                  left: popoverPos?.left ?? 0,
+                  // Hidden for the single frame before it is measured, so it never paints misplaced.
+                  visibility: popoverPos ? "visible" : "hidden",
                 }}
               >
                 <p className="text-lg font-semibold text-zinc-800">
