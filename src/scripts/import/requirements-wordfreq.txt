@@ -1,0 +1,3 @@
+wordfreq
+# wordfreq needs jieba to tokenise Chinese; without it zipf_frequency(..., "zh") raises.
+jieba

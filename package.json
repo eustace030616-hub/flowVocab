@@ -17,7 +17,8 @@
     "import:frequency": "tsx src/scripts/import/import-frequency.ts",
     "import:german-rank": "tsx src/scripts/import/import-german-rank.ts",
     "recompute:difficulty": "tsx src/scripts/import/recompute-difficulty.ts",
-    "import:ding": "tsx src/scripts/import/import-ding.ts"
+    "import:ding": "tsx src/scripts/import/import-ding.ts",
+    "import:cedict": "tsx src/scripts/import/import-cedict.ts"
   },
   "dependencies": {
     "hono": "^4.11.1",

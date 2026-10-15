@@ -127,10 +127,31 @@ Gloss language follows the **content**, not the learner's stored track — Engli
 Chinese, German in English. Reading it off the track instead meant a request for German paragraphs
 while the track was still `zh-en` looked for Chinese glosses and silently found none.
 
-| Track | Gloss source | Coverage of the 100k most frequent German words |
-|---|---|---|
-| `en-de` | ding / Beolingus, **GPL-3+** (copyleft) | 93% of DWDS class 6, 85% of class 4, 11% of class 0 |
-| `zh-en` | CC-CEDICT, CC BY-SA 4.0 | **not imported yet** — the demo shows seed glosses only |
+| Track | Gloss source | Coverage |
+|---|---|---|---|
+| `en-de` | ding / Beolingus, **GPL-3+** (copyleft) | 69,489 German words; 93% of the most frequent, 11% of the rare tail |
+| `zh-en` | CC-CEDICT, CC BY-SA 4.0 | 6,793 of 8,657 English headwords (79%) |
+
+### Ranking a gloss is not free
+
+CC-CEDICT is a *bilingual dictionary*, so inverting it asks "which Chinese word is the translation
+of this English word", and both obvious answers are wrong:
+
+```
+frequency only      beautiful → 那 ("that", Zipf 6.0)     poison → 药 ("medicine")
+specificity only    dog → 犬                             beautiful → 姹
+```
+
+Frequency picks function words; specificity picks obscure ones — translating exactly one English
+word is also what makes a form rare. The score combines them, with a small guard list for deictic
+words, and the weight was chosen by measuring a sample at three settings:
+
+```
+score = zipf − 0.8·ln(genericness) − (function word ? 3 : 0)
+```
+
+It is a heuristic, not a sense disambiguator. Ambiguous verbs remain the weak spot (`run` → 运行
+rather than 跑), which is why up to three candidates are stored and only the first is shown.
 
 ## Difficulty and levels
 
@@ -197,9 +218,12 @@ npm run import:english      # CEFR-J + Octanove → Word  (9,779 rows)
 npm run import:german       # DWDS + kaikki morphology → Word  (-- --with-kaikki)
 npm run import:licences     # regenerate LICENSES/
 npm run export:frequency    # word list → wordfreq Zipf table (needs .venv-data)
+                            #   python3 -m venv .venv-data && ./.venv-data/bin/pip install -r src/scripts/import/requirements-wordfreq.txt
+                            #   (jieba is required — without it wordfreq cannot tokenise Chinese)
 npm run import:frequency    # attach Zipf, scored on the best of a word's forms
 npm run import:german-rank  # Leipzig corpus ranks (splits the DWDS rare tail)
 npm run import:ding         # German→English glosses (GPL-3+, own collection)
+npm run import:cedict       # English→Chinese glosses (CC BY-SA, own collection)
 npm run recompute:difficulty  # fit the curve and write difficulty  (-- --with-goethe-anchors)
 npm run seed                # reset and seed demo data
 ```

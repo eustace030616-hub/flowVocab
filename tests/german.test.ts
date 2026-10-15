@@ -19,6 +19,12 @@ import {
 } from "../src/scripts/import/import-german";
 import { assertShippable, shippableDatasets, DATASETS } from "../src/lib/licence/datasets";
 import { parseDingLine, rankEntries } from "../src/scripts/import/ding";
+import {
+  invertGlosses,
+  normalizeGloss,
+  parseCedict,
+  rankChineseCandidates,
+} from "../src/scripts/import/cedict";
 
 const DWDS_PATH = path.join(process.cwd(), "data", "de", "dwds-lemmata.csv");
 const PH98_PATH = path.join(process.cwd(), "data", "de", "ph98-german-cefr-wordlist.json");
@@ -224,4 +230,74 @@ test("ding: an exact case match beats a case-folded one", () => {
 
   assert.deepEqual(rankEntries([noun, verb], "verstehen")[0].glosses, ["to understand"]);
   assert.deepEqual(rankEntries([noun, verb], "Verstehen")[0].glosses, ["understanding"]);
+});
+
+// ── CC-CEDICT: the English→Chinese gloss source ───────────────────────────────
+
+test("cedict: glosses that are definitions rather than translations are rejected", () => {
+  assert.equal(normalizeGloss("the emergency number for law enforcement in Mainland China"), null);
+  assert.equal(normalizeGloss("CL:個|个[ge4]"), null);
+  assert.equal(normalizeGloss("variant of 島|岛[dao3]"), null);
+  // An aside is stripped, not fatal: the gloss underneath is still a usable headword.
+  assert.equal(normalizeGloss("(archaic) cat"), "cat");
+
+  // Headword-shaped glosses survive, with the infinitive marker and articles stripped.
+  assert.equal(normalizeGloss("to run"), "run");
+  assert.equal(normalizeGloss("a dog"), "dog");
+  assert.equal(normalizeGloss("cat"), "cat");
+  assert.equal(normalizeGloss("credit card"), "credit card");
+});
+
+test("cedict: a line is inverted into gloss → Chinese forms", () => {
+  const { entries } = parseCedict(
+    [
+      "# comment",
+      "狗 狗 [gou3] /dog/CL:隻|只[zhi1]/",
+      "犬 犬 [quan3] /dog/hound/",
+    ].join("\n"),
+  );
+  assert.equal(entries.length, 2);
+  const { byGloss, genericness } = invertGlosses(entries);
+  assert.deepEqual(byGloss.get("dog"), ["狗", "犬"]);
+  assert.equal(genericness.get("狗"), 1);
+  assert.equal(genericness.get("犬"), 2, "犬 also translates 'hound'");
+});
+
+test("cedict: frequency alone would pick the wrong word, so specificity is subtracted", () => {
+  // The two real failure modes, with the real numbers measured from CC-CEDICT + wordfreq:
+  //   那 ("that") is a gloss of "beautiful" and is MORE frequent than 美丽 ("beautiful")
+  //   姹 is a gloss of "beautiful" and translates nothing else at all
+  const zipf = new Map([
+    ["那", 6.0], ["美", 5.4], ["美丽", 5.0], ["姹", 2.1],
+    ["药", 4.7], ["毒", 4.4], ["毒药", 3.95],
+    ["犬", 4.1], ["狗", 5.2],
+  ]);
+  const genericness = new Map([
+    ["那", 5], ["美", 4], ["美丽", 1], ["姹", 1],
+    ["药", 3], ["毒", 6], ["毒药", 1],
+    ["犬", 1], ["狗", 1],
+  ]);
+  const signals = { zipf, genericness };
+
+  // Pure frequency ranks 那 first; the combined score must not.
+  const byFrequency = [...zipf.entries()].filter(([f]) => ["那", "美", "美丽", "姹"].includes(f))
+    .sort((a, b) => b[1] - a[1])[0][0];
+  assert.equal(byFrequency, "那");
+
+  assert.equal(rankChineseCandidates(["那", "美", "美丽", "姹"], signals)[0], "美丽");
+
+  // 药 ("medicine") must not win for "poison" on frequency alone.
+  assert.equal(rankChineseCandidates(["药", "毒", "毒药"], signals)[0], "毒药");
+
+  // And specificity alone would pick the obscure 犬 over 狗.
+  assert.equal(rankChineseCandidates(["犬", "狗"], signals)[0], "狗");
+});
+
+test("cedict: a candidate with no frequency score sorts last", () => {
+  const signals = {
+    zipf: new Map([["猫", 4.7]]),
+    genericness: new Map([["猫", 3], ["马脚", 1]]),
+  };
+  // 马脚 has no Zipf entry, so it scores 0 and cannot outrank a real word.
+  assert.equal(rankChineseCandidates(["马脚", "猫"], signals)[0], "猫");
 });
