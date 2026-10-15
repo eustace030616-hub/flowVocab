@@ -49,6 +49,7 @@ next-env.d.ts
 # licences forbid distribution — see src/lib/licence/datasets.ts
 /data/
 /.npm-cache/
+/.venv-data/
 
 # machine-local scratch
 *.tmp.ts

@@ -115,3 +115,35 @@ test("an empty candidate is rejected rather than passing vacuously", () => {
   assert.equal(result.passed, false);
   assert.equal(result.metrics.wordTokens, 0);
 });
+
+// ── the coherence judge ───────────────────────────────────────────────────────
+//
+// The objective rubric passed a passage whose sentences were unrelated to each other — right length,
+// right coverage, every word glossed, and unreadable. Difficulty is arithmetic; "is this a text" is
+// a judgement, and these pin how the judge's answer is read.
+
+import { parseJudge } from "../src/scripts/generate/prompt";
+
+test("a judge that names its problems is believed", () => {
+  const verdict = parseJudge('{"coherent": false, "problems": ["sentences are unrelated"]}');
+  assert.equal(verdict.coherent, false);
+  assert.deepEqual(verdict.problems, ["sentences are unrelated"]);
+});
+
+test("a rejection with no stated problem is not actionable, so it is not looped on", () => {
+  // Otherwise the repair step gets "it is incoherent" and regenerates into the same complaint.
+  assert.equal(parseJudge('{"coherent": false, "problems": []}').coherent, true);
+  assert.equal(parseJudge('{"coherent": false}').coherent, true);
+});
+
+test("an unusable judgement passes rather than blocking a text the rubric already accepted", () => {
+  assert.equal(parseJudge("I think it is fine!").coherent, true);
+  assert.equal(parseJudge("").coherent, true);
+  assert.equal(parseJudge("{broken").coherent, true);
+});
+
+test("a code-fenced judgement is read", () => {
+  const verdict = parseJudge('```json\n{"coherent": false, "problems": ["one long quotation"]}\n```');
+  assert.equal(verdict.coherent, false);
+  assert.deepEqual(verdict.problems, ["one long quotation"]);
+});

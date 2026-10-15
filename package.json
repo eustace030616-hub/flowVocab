@@ -19,7 +19,10 @@
     "recompute:difficulty": "tsx src/scripts/import/recompute-difficulty.ts",
     "import:ding": "tsx src/scripts/import/import-ding.ts",
     "import:cedict": "tsx src/scripts/import/import-cedict.ts",
-    "import:kaikki": "tsx src/scripts/import/import-kaikki.ts"
+    "import:kaikki": "tsx src/scripts/import/import-kaikki.ts",
+    "generate:paragraphs": "tsx src/scripts/generate/generate.ts",
+    "import:function-words": "tsx src/scripts/import/import-function-words.ts",
+    "import:english-inflections": "tsx src/scripts/import/import-english-inflections.ts"
   },
   "dependencies": {
     "hono": "^4.11.1",
