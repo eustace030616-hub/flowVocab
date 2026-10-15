@@ -34,6 +34,7 @@ import { allGlossesFor, glossesByLemma, pickGloss } from "@/src/lib/learner/glos
 import { abilitiesFor, recomputeAllAbilities } from "@/src/lib/learner/profile";
 import { knownProbabilities } from "@/src/lib/learner/reading";
 import { coverageOf } from "@/src/lib/learner/coverage";
+import { createPlacementSession, submitPlacement } from "@/src/lib/learner/placement-service";
 import { wordSpans, TOKENIZER_VERSION } from "@/src/lib/tokenize";
 
 type Variables = { user: ResolvedUser };
@@ -541,6 +542,59 @@ app.post("/events", async (c) => {
   // Both languages: an English event can change the prior German is using.
   const ability = await recomputeAllAbilities(user.userId);
   return c.json({ ok: true, event: event._id, state, ability }, 201);
+});
+
+// ── Placement test ────────────────────────────────────────────────────────────
+
+/**
+ * Serve a fresh placement test.
+ *
+ * A POST because it creates a session, and because a cached page must not hand out the same test
+ * twice.
+ */
+app.post("/placement", async (c) => {
+  const user = c.get("user");
+  const targetLang = trackOf(user).targetLang;
+  const session = await createPlacementSession(user.userId, targetLang);
+  return c.json(session, 201);
+});
+
+/**
+ * Score a submitted test and fold it into the ability estimate.
+ *
+ * The answers are checked against the stored session rather than trusted from the body, so the
+ * pseudoword correction cannot be side-stepped by omitting items.
+ */
+app.post("/placement/submit", async (c) => {
+  const user = c.get("user");
+  const body = (await c.req.json()) as {
+    sessionId?: unknown;
+    responses?: unknown;
+  };
+
+  if (typeof body.sessionId !== "string") {
+    return c.json({ error: "sessionId is required" }, 400);
+  }
+  if (!Array.isArray(body.responses)) {
+    return c.json({ error: "responses must be an array" }, 400);
+  }
+
+  const responses = body.responses
+    .filter(
+      (entry): entry is { id: string; yes: boolean } =>
+        typeof entry === "object" &&
+        entry !== null &&
+        typeof (entry as { id?: unknown }).id === "string" &&
+        typeof (entry as { yes?: unknown }).yes === "boolean",
+    )
+    .map((entry) => ({ id: entry.id, yes: entry.yes }));
+
+  const result = await submitPlacement(user.userId, body.sessionId, responses);
+  if (!result) return c.json({ error: "Not found" }, 404);
+
+  // The placement is now evidence, so the estimate has to be refolded for both languages.
+  const ability = await recomputeAllAbilities(user.userId);
+  return c.json({ ok: true, result, ability }, 201);
 });
 
 // ── Licences ──────────────────────────────────────────────────────────────────

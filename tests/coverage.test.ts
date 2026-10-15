@@ -15,6 +15,8 @@ import {
   verdictFor,
 } from "../src/lib/learner/coverage";
 import {
+  EVIDENCE_WINDOW_HALF_LIVES,
+  EVIDENCE_WINDOW_MS,
   MODEL_PRIOR_STRENGTH,
   decayFactor,
   foldWordEvidence,
@@ -165,4 +167,14 @@ test("a compound is scored by its weakest part, not as an unknown word", () => {
 
   // Minimum rather than product: multiplying two sub-0.5 probabilities describes no learner.
   assert.notEqual(weakest, 0.8 * 0.4);
+});
+
+test("the fold window is justified by the decay it already applies", () => {
+  // The bound is only legitimate if evidence at the edge really is negligible; otherwise it is a
+  // performance fix that quietly changes the estimate.
+  const halfLife = RECENCY_HALF_LIFE_DAYS * 24 * 60 * 60 * 1000;
+  assert.equal(EVIDENCE_WINDOW_MS, halfLife * EVIDENCE_WINDOW_HALF_LIVES);
+  const atEdge = decayFactor(EVIDENCE_WINDOW_MS);
+  assert.ok(atEdge < 0.07, `evidence at the window edge weighs ${atEdge}, not negligible enough`);
+  assert.ok(atEdge > 0.05, "and it is not so small that the window could be halved again for free");
 });

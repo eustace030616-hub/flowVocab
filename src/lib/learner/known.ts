@@ -37,6 +37,29 @@ import { probabilityKnown, EVIDENCE_WEIGHT, SESSIONS_FOR_KNOWN } from "./ability
 export const RECENCY_HALF_LIFE_DAYS = 90;
 
 /**
+ * How far back the fold reads, in half-lives.
+ *
+ * Four half-lives is ~360 days, by which point evidence carries 6% of its original weight — it is
+ * already invisible in the result. Reading the whole log instead made every page load do work
+ * proportional to the learner's entire history: 54 events today, and ~100,000 a year at ten
+ * paragraphs a day. The bound keeps the fold flat as the log grows.
+ */
+export const EVIDENCE_WINDOW_HALF_LIVES = 4;
+
+/** The window as a duration, for the query that implements it. */
+export const EVIDENCE_WINDOW_MS =
+  RECENCY_HALF_LIFE_DAYS * EVIDENCE_WINDOW_HALF_LIVES * 24 * 60 * 60 * 1000;
+
+/**
+ * Hard ceiling on events folded in one read.
+ *
+ * A backstop, not the mechanism: the time window is what normally bounds the work. This exists so
+ * that a pathological log — an import, a client looping on a bad render — degrades the estimate
+ * gracefully instead of hanging a page load. Reaching it is logged rather than hidden.
+ */
+export const MAX_EVENTS_FOLDED = 20_000;
+
+/**
  * Weight of the model's prediction, in evidence units.
  *
  * Set so that it takes real word-specific history to overturn the model: one lookup should not

@@ -10,7 +10,14 @@ import { Event } from "../../models/Event";
 import { Word } from "../../models/Word";
 import { AbilityState } from "../../models/AbilityState";
 import type { TargetLang } from "../lang";
-import { foldWordEvidence, modelPrediction, pKnownFor, type EventLike } from "./known";
+import {
+  EVIDENCE_WINDOW_MS,
+  foldWordEvidence,
+  MAX_EVENTS_FOLDED,
+  modelPrediction,
+  pKnownFor,
+  type EventLike,
+} from "./known";
 import { coverageOf, type CoverageResult, type CoverageToken } from "./coverage";
 
 /** Ability assumed when a learner has no estimate yet: the middle of the scale, no opinion. */
@@ -48,11 +55,27 @@ export async function knownProbabilities(
 
   const [ability, events] = await Promise.all([
     AbilityState.findOne({ userId, targetLang }).select("theta").lean(),
-    // Only this learner's events, and only the fields the fold needs.
-    Event.find({ userId, targetLang })
+    // Bounded by time: evidence older than four half-lives carries 6% of its weight and cannot
+    // change the answer, so reading it made every page load do work proportional to the learner's
+    // whole history for no effect. `ts` descending plus a ceiling keeps a pathological log from
+    // hanging the read; the index on (userId, targetLang, ts) serves exactly this query.
+    Event.find({
+      userId,
+      targetLang,
+      ts: { $gte: new Date(Date.now() - EVIDENCE_WINDOW_MS) },
+    })
+      .sort({ ts: -1 })
+      .limit(MAX_EVENTS_FOLDED)
       .select("type lemmaKey items sessionId ts")
       .lean(),
   ]);
+
+  if (events.length >= MAX_EVENTS_FOLDED) {
+    console.warn(
+      `[reading] evidence fold hit the ${MAX_EVENTS_FOLDED}-event ceiling for ${userId}/${targetLang}; ` +
+        "the estimate is based on the most recent events only",
+    );
+  }
 
   const theta = ability?.theta ?? UNMEASURED_THETA;
   const folded = foldWordEvidence(events as EventLike[]);

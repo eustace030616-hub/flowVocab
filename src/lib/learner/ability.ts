@@ -28,6 +28,7 @@ import { levelFromDifficulty } from "../difficulty";
 import type { CefrLevel } from "../lang";
 import { Event } from "../../models/Event";
 import { Word } from "../../models/Word";
+import { EVIDENCE_WINDOW_MS, MAX_EVENTS_FOLDED } from "./known";
 
 /** Slope of the logistic. A 0.15 difficulty gap is roughly 73% expected success. */
 export const ABILITY_SCALE = 0.15;
@@ -65,6 +66,15 @@ export interface Observation {
   known: boolean;
   /** Strength of that evidence; a confirmed answer outranks a single exposure. */
   weight: number;
+  /**
+   * False-alarm rate for this observation's response curve, if it came from a test where "yes" is
+   * cheap.
+   *
+   * Per observation rather than per fit, because the two kinds of evidence have different curves: a
+   * placement answer can be a lucky claim, while "read past it without looking it up" cannot. One
+   * floor for the whole fit would correct the reading evidence for guessing that never happened.
+   */
+  guessing?: number;
 }
 
 export interface AbilityPrior {
@@ -72,6 +82,17 @@ export interface AbilityPrior {
   theta: number;
   /** How many observations the prior is worth. Two is a nudge; ten is an opinion. */
   weight: number;
+}
+
+export interface FitOptions {
+  prior?: AbilityPrior;
+  /**
+   * False-alarm rate to correct for, in [0, 1).
+   *
+   * A test where "yes" is cheap scores lucky claims as knowledge; the floor keeps them from being
+   * counted as ability. Zero for evidence that has no guessing, such as reading behaviour.
+   */
+  guessing?: number;
 }
 
 export interface AbilityEstimate {
@@ -107,6 +128,19 @@ export function probabilityKnown(theta: number, difficulty: number): number {
 }
 
 /**
+ * Probability of answering "yes" to an item of this difficulty.
+ *
+ * A yes/no test lets a learner who does not know a word claim it anyway, so the response curve has
+ * a floor at the false-alarm rate. On a three-option quiz that floor would be ~1/3; here it is
+ * measured from the learner's own responses to the pseudowords in the same test, which is why the
+ * placement test carries them.
+ */
+export function probabilityYes(theta: number, difficulty: number, guessing = 0): number {
+  const p = probabilityKnown(theta, difficulty);
+  return guessing + (1 - guessing) * p;
+}
+
+/**
  * Fit ability by maximum likelihood (Rasch, one parameter) with Newton-Raphson.
  *
  * A weak prior keeps the estimate finite when the evidence is one-sided — a learner who knows every
@@ -115,8 +149,15 @@ export function probabilityKnown(theta: number, difficulty: number): number {
  */
 export function fitAbility(
   observations: Observation[],
-  prior?: AbilityPrior,
+  options: AbilityPrior | FitOptions = {},
 ): AbilityEstimate {
+  // Accept a bare prior, which is what every existing call site passes.
+  const asPrior = "theta" in options ? (options as AbilityPrior) : (options as FitOptions).prior;
+  // The floor may reach 1: a learner who claims every pseudoword has told us nothing, and the fit
+  // has to be able to say so. Capping it below 1 let the residual sliver of discrimination be read
+  // as high ability, which is the opposite of the truth.
+  const guessing = "theta" in options ? 0 : Math.min(1, Math.max(0, (options as FitOptions).guessing ?? 0));
+  const prior = asPrior;
   const usable = observations.filter(
     (o) => Number.isFinite(o.difficulty) && o.weight > 0,
   );
@@ -125,8 +166,8 @@ export function fitAbility(
   if (prior && prior.weight > 0) {
     const half = prior.weight / 2;
     weighted.push(
-      { difficulty: prior.theta, known: true, weight: half },
-      { difficulty: prior.theta, known: false, weight: half },
+      { difficulty: prior.theta, known: true, weight: half, guessing: 0 },
+      { difficulty: prior.theta, known: false, weight: half, guessing: 0 },
     );
   }
 
@@ -156,10 +197,13 @@ export function fitAbility(
     let gradient = 0;
     let curvature = 0;
     for (const o of weighted) {
-      const p = probabilityKnown(theta, o.difficulty);
+      // With a floor, the observed curve is `g + (1-g)·logistic`, so both the residual and the
+      // slope carry the (1-g) factor. Skipping it would fit a curve the responses never followed.
+      const floor = o.guessing ?? guessing;
+      const p = probabilityYes(theta, o.difficulty, floor);
       const y = o.known ? 1 : 0;
       gradient += o.weight * (y - p);
-      curvature += o.weight * p * (1 - p);
+      curvature += o.weight * (1 - floor) * p * (1 - p);
     }
     if (curvature < 1e-9) break;
 
@@ -174,8 +218,9 @@ export function fitAbility(
 
   let information = 0;
   for (const o of weighted) {
-    const p = probabilityKnown(theta, o.difficulty);
-    information += o.weight * p * (1 - p);
+    const floor = o.guessing ?? guessing;
+    const p = probabilityYes(theta, o.difficulty, floor);
+    information += o.weight * (1 - floor) * p * (1 - p);
   }
   // Fisher information for the logistic slope: se = scale / sqrt(information).
   const se = information > 0 ? ABILITY_SCALE / Math.sqrt(information) : ABILITY_SCALE * 4;
@@ -289,7 +334,15 @@ export async function observationsFor(
   userId: string,
   targetLang: string,
 ): Promise<Observation[]> {
-  const events = await Event.find({ userId, targetLang })
+  // The same time bound as the read path, for the same reason: evidence beyond four half-lives is
+  // 6% of its weight, and reading it made the estimate cost grow with the whole history.
+  const events = await Event.find({
+    userId,
+    targetLang,
+    ts: { $gte: new Date(Date.now() - EVIDENCE_WINDOW_MS) },
+  })
+    .sort({ ts: -1 })
+    .limit(MAX_EVENTS_FOLDED)
     .select("type lemmaKey items difficulty sessionId ts")
     .lean();
 

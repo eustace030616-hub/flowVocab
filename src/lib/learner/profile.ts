@@ -12,6 +12,7 @@
  */
 
 import { AbilityState } from "../../models/AbilityState";
+import { PlacementSession } from "../../models/PlacementSession";
 import type { TargetLang } from "../lang";
 import {
   fitAbility,
@@ -20,6 +21,7 @@ import {
   type AbilityEstimate,
 } from "./ability";
 import { levelFromDifficulty } from "../difficulty";
+import { placementObservations } from "./placement";
 
 /** Collapse a fully uncertain estimate to a single point, so it cannot masquerade as a range. */
 function levelAtTheta(theta: number): NonNullable<AbilityEstimate["level"]> {
@@ -62,12 +64,32 @@ export async function recomputeAbility(
 ): Promise<AbilityView> {
   const observations = await observationsFor(userId, targetLang);
 
+  // The placement test is evidence like any other, folded into the same fit — its observations carry
+  // the test's own false-alarm rate as a guessing floor, so a learner who claims pseudowords is
+  // corrected rather than believed. This is why the cold start is a measurement and not a guess.
+  const placement = await PlacementSession.findOne({
+    userId,
+    targetLang,
+    completedAt: { $ne: null },
+  })
+    .sort({ createdAt: -1 })
+    .select("items responses score")
+    .lean();
+
+  // A completed session carries both the item set and the answers, so the evidence is exact rather
+  // than reconstructed from a summary.
+  const withPlacement =
+    placement?.items?.length && placement.responses?.length
+      ? [...observations, ...placementObservations(placement.items, placement.responses)]
+      : observations;
+
   // A prior is only needed when the language has little to say for itself. Once there is real
-  // evidence, another language's level is a distraction rather than a starting point.
+  // evidence — including a placement test — another language's level is a distraction rather than a
+  // starting point.
   let prior: { theta: number; weight: number } | undefined;
   let fromTransfer = false;
 
-  if (observations.length < TRANSFER_PRIOR_WEIGHT) {
+  if (withPlacement.length < TRANSFER_PRIOR_WEIGHT) {
     const source = PRIOR_SOURCE[targetLang];
     if (source) {
       const donor = await AbilityState.findOne({ userId, targetLang: source }).lean();
@@ -76,12 +98,12 @@ export async function recomputeAbility(
       // unreliable number into a second language.
       if (donor && donor.n > 0 && donor.se <= LEVEL_SE_THRESHOLD * 2) {
         prior = { theta: donor.theta, weight: TRANSFER_PRIOR_WEIGHT };
-        fromTransfer = observations.length === 0;
+        fromTransfer = withPlacement.length === 0;
       }
     }
   }
 
-  const estimate = fitAbility(observations, prior);
+  const estimate = fitAbility(withPlacement, prior);
 
   await AbilityState.updateOne(
     { userId, targetLang },
