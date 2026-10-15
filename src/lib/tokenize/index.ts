@@ -239,7 +239,9 @@ export function tokenize(
       matched: resolved.matched,
     };
 
-    if (compounds && kind === "word") {
+    // Decompose only an unknown word. A word the lexicon already resolved is not a compound
+    // problem — it is an inflection, a known compound, or an ordinary word.
+    if (compounds && kind === "word" && !resolved.matched) {
       const parts = splitCompound(part.segment, lookup);
       if (parts.length) span.compoundParts = parts;
     }

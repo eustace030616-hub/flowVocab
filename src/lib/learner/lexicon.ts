@@ -73,7 +73,13 @@ export async function tokenizeAgainst(
 export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
   return async (candidates) => {
     if (candidates.length === 0) return new Set();
-    const found = await Word.find({ targetLang, lemmaKey: { $in: candidates } })
+    const found = await Word.find({
+      targetLang,
+      lemmaKey: { $in: candidates },
+      // Dataset entries only. A word the learner marked is created on the spot, and letting those
+      // in would make any marked word look like a dictionary headword to the tokenizer.
+      origin: "import",
+    })
       .select("lemmaKey")
       .lean();
     return new Set(found.map((w) => w.lemmaKey));

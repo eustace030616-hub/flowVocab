@@ -287,6 +287,8 @@ async function main() {
       filter: { targetLang: "de" as const, lemmaKey: row.lemmaKey, pos: row.pos },
       update: {
         $set: {
+          // Present in a dataset, so it is a dictionary entry and may inform tokenization.
+          origin: "import" as const,
           lemma: row.lemma,
           level: row.level,
           levelEstimated: row.levelEstimated,

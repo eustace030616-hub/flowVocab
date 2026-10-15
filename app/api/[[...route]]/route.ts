@@ -129,7 +129,10 @@ app.get("/paragraphs", async (c) => {
 
     // Vocabulary records behind the spans, so the popover has a gloss without a second round trip.
     const lexicon = await wordsForSpans(targetLang, spans);
-    const keys = [...lexicon.keys()];
+    // Compound parts are not tokens, so they are not in the lexicon map — but their glosses are
+    // what makes a compound understandable. Add them to the keys so both lookups cover them.
+    const partKeys = spans.flatMap((span) => span.compoundParts ?? []);
+    const keys = [...new Set([...lexicon.keys(), ...partKeys])];
     const words = keys.length
       ? await Word.find({ targetLang, lemmaKey: { $in: keys } })
           .select("lemmaKey lemma pos level levelEstimated difficulty frequency article plural cognateWithEn falseFriend")

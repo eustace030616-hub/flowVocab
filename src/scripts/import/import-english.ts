@@ -72,6 +72,8 @@ async function main() {
       filter: { targetLang: "en" as const, lemmaKey: word.lemmaKey, pos: word.pos },
       update: {
         $set: {
+          // Present in a dataset, so it is a dictionary entry and may inform tokenization.
+          origin: "import" as const,
           lemma: word.lemma,
           difficulty: difficultyFromLevel(word.level),
           level: word.level,

@@ -82,6 +82,9 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     estimated: "estimated",
     coverage: "coverage",
     compound: "compound",
+    parts: "Parts",
+    headWord: "base word",
+    partsNote: "A word-formation breakdown to read, not a translation.",
     separable: "separable verb",
     falseFriend: "false friend",
     cognate: "cognate",
@@ -103,6 +106,9 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     estimated: "估算",
     coverage: "覆盖率",
     compound: "复合词",
+    parts: "构词成分",
+    headWord: "核心词",
+    partsNote: "这是构词拆解，用于理解，并非译文。",
     separable: "可分动词",
     falseFriend: "假朋友",
     cognate: "同源词",
@@ -673,7 +679,7 @@ export default function Home() {
                   })()}
                   {active.span.compoundParts && (
                     <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">
-                      {t.compound}: {active.span.compoundParts.join(" + ")}
+                      {t.compound}
                     </span>
                   )}
                   {active.span.detached && (
@@ -743,6 +749,51 @@ export default function Home() {
                     <p className="text-xs text-zinc-400 mt-2 italic">{t.noGloss}</p>
                   );
                 })()}
+
+                {active.span.compoundParts && active.span.compoundParts.length > 0 && (
+                  <>
+                    <div className="border-t border-zinc-100 my-2" />
+                    <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-1">
+                      {t.parts}
+                    </p>
+                    <ul className="space-y-1">
+                      {active.span.compoundParts.map((part, index) => {
+                        const partVocab = paragraph?.vocabulary[part];
+                        const groups = groupMeanings(partVocab?.meanings);
+                        const meaning =
+                          groups[0]?.texts.join(", ") ?? partVocab?.gloss ?? null;
+                        const label = posLabel(
+                          groups[0]?.pos ??
+                            groups[0]?.termPos ??
+                            partVocab?.glossPos ??
+                            partVocab?.glossTermPos ??
+                            null,
+                        );
+                        // German compounds are head-final: the last element is the base word and
+                        // it is what fixes the gender and the plural.
+                        const isHead = index === active.span.compoundParts!.length - 1;
+                        return (
+                          <li key={part} className="flex items-baseline gap-2">
+                            <span className="w-8 shrink-0 font-mono text-[10px] text-zinc-400">
+                              {label ?? ""}
+                            </span>
+                            <span className="text-sm text-zinc-700">
+                              {partVocab?.article ? `${partVocab.article} ` : ""}
+                              {partVocab?.lemma ?? part}
+                              {meaning && <span className="text-zinc-500"> — {meaning}</span>}
+                              {isHead && (
+                                <span className="ml-1 text-[10px] text-zinc-400">
+                                  ({t.headWord})
+                                </span>
+                              )}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <p className="text-[10px] text-zinc-400 mt-1">{t.partsNote}</p>
+                  </>
+                )}
 
                 {(() => {
                   const vocab = activeVocab;

@@ -22,6 +22,15 @@ export interface IWord extends Document {
   lemma: string;
   /** Part of speech, "" when the source does not say. Part of the uniqueness key. */
   pos: string;
+  /**
+   * Where this entry came from: a dataset, or a learner marking a word it had never seen.
+   *
+   * The distinction matters because marking creates an entry on the spot, and those entries used
+   * to feed the tokenizer's lexicon — so marking a compound made it look like a known word, which
+   * switched off compound splitting for exactly the word the learner was asking about. Only
+   * dataset entries may inform tokenization.
+   */
+  origin: "import" | "learner";
   /** Inflected forms, so running text can be matched back to this headword. */
   surfaceForms: string[];
   // NOTE: translations are NOT stored here. See models/Gloss.ts — share-alike and copyleft
@@ -60,6 +69,7 @@ const WordSchema = new Schema<IWord>(
     lemmaKey: { type: String, required: true },
     lemma: { type: String, required: true },
     pos: { type: String, default: "" },
+    origin: { type: String, enum: ["import", "learner"], default: "learner" },
     surfaceForms: { type: [String], default: [] },
 
     level: { type: String, enum: ["A1", "A2", "B1", "B2", "C1", "C2", null], default: null },
@@ -87,5 +97,7 @@ WordSchema.index({ targetLang: 1, lemmaKey: 1, pos: 1 }, { unique: true });
 WordSchema.index({ targetLang: 1, lemmaKey: 1 });
 // Serving queries walk the difficulty ladder within one language.
 WordSchema.index({ targetLang: 1, difficulty: 1 });
+// The tokenizer's lexicon query is (targetLang, lemmaKey in [...], origin: "import").
+WordSchema.index({ targetLang: 1, origin: 1, lemmaKey: 1 });
 
 export const Word = models.Word || model<IWord>("Word", WordSchema);

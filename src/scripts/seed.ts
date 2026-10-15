@@ -77,6 +77,7 @@ async function seed() {
       { targetLang: word.targetLang, lemmaKey: lemmaKeyOf(word.lemma), pos: word.pos },
       {
         $setOnInsert: {
+          origin: "import" as const,
           targetLang: word.targetLang,
           lemmaKey: lemmaKeyOf(word.lemma),
           lemma: word.lemma,

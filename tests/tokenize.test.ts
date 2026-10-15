@@ -163,3 +163,27 @@ test("Numbers are their own kind, never lemmatised into nonsense", () => {
   assert.equal(numbers.length, 2);
   assert.equal(numbers[0].surface, "2026");
 });
+
+test("German: a word the lexicon already knows is never decomposed", () => {
+  // The false split that shipped: "kurzen" (an inflected adjective) split into "kur" + "zen",
+  // because both are real entries in a 281k-lemma database. Requiring both parts to exist is not a
+  // strong enough guard on its own — the decisive test is whether the whole word resolved.
+  const lookup = lexicon("kurz", "kurze", "kur", "zen");
+  const spans = tokenize("einen kurzen Text", "de", { lookup });
+
+  const kurzen = spans.find((s) => s.surface === "kurzen");
+  assert.ok(kurzen);
+  assert.equal(kurzen!.lemmaKey, "kurze", "the inflected form resolves as itself");
+  assert.equal(kurzen!.compoundParts, undefined, "a resolved word must not be split");
+});
+
+test("German: a genuine compound still decomposes once parts are known", () => {
+  // The reason the guard is 'unresolved' rather than 'disable splitting': the compound itself is
+  // not in the lexicon, so there is nothing to resolve and its parts are the only way in.
+  const lookup = lexicon("wortschatz", "aufbau");
+  const spans = tokenize("Der Wortschatzaufbau", "de", { lookup });
+  const compound = spans.find((s) => s.surface === "Wortschatzaufbau")!;
+
+  assert.equal(compound.matched, false);
+  assert.deepEqual(compound.compoundParts, ["wortschatz", "aufbau"]);
+});
