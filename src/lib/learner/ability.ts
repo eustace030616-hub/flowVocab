@@ -248,10 +248,7 @@ export interface WordEvidence {
  *
  * Returns null when the evidence is too thin to say anything — silence is better than a guess.
  */
-export function observationFor(
-  evidence: WordEvidence,
-  difficulty: number,
-): Observation | null {
+export function evidenceBalance(evidence: WordEvidence): { positive: number; negative: number } {
   const positive =
     evidence.confirmed * EVIDENCE_WEIGHT.confirmed +
     evidence.notSure * EVIDENCE_WEIGHT.notSure +
@@ -264,6 +261,14 @@ export function observationFor(
   const negative =
     evidence.lookups * EVIDENCE_WEIGHT.lookup + evidence.marks * EVIDENCE_WEIGHT.mark;
 
+  return { positive, negative };
+}
+
+export function observationFor(
+  evidence: WordEvidence,
+  difficulty: number,
+): Observation | null {
+  const { positive, negative } = evidenceBalance(evidence);
   const net = positive - negative;
   if (Math.abs(net) < 0.1) return null;
 

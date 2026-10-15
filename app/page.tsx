@@ -20,6 +20,8 @@ interface VocabularyEntry {
   level: string | null;
   levelEstimated: boolean;
   difficulty: number;
+  /** Probability this learner knows the word now, from the ability model. */
+  pKnown: number | null;
   article: string | null;
   plural: string | null;
   status: string;
@@ -53,6 +55,13 @@ interface Paragraph {
   spans: Span[];
   marked: Record<string, string>;
   vocabulary: Record<string, VocabularyEntry>;
+  /** Lexical coverage from the learner model, measured server-side from per-word probabilities. */
+  coverage: {
+    coverage: number;
+    tokens: number;
+    unknownIn: number;
+    verdict: "too_hard" | "supported" | "comfortable";
+  };
 }
 
 /** The state the API recomputes from the event log and returns after a mark or unmark. */
@@ -100,6 +109,10 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     levelRange: "somewhere in",
     estimated: "estimated",
     coverage: "coverage",
+    verdictTooHard: "hard",
+    verdictSupported: "supported",
+    verdictComfortable: "comfortable",
+    perKnown: "likely known",
     compound: "compound",
     parts: "Parts",
     headWord: "base word",
@@ -127,6 +140,10 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     levelRange: "大致范围",
     estimated: "估算",
     coverage: "覆盖率",
+    verdictTooHard: "偏难",
+    verdictSupported: "有支持",
+    verdictComfortable: "轻松",
+    perKnown: "可能已掌握",
     compound: "复合词",
     parts: "构词成分",
     headWord: "核心词",
@@ -489,13 +506,40 @@ export default function Home() {
     }
   }, [paragraph, me, marked, liveState]);
 
+  /**
+   * Lexical coverage of the paragraph.
+   *
+   * Previously this was computed from marked words alone — "unknown" meant "the learner clicked
+   * it" — which ignored everything the event log knows and counted the word they were reading at
+   * the moment. It now starts from the model's per-word probability and applies only this session's
+   * marks on top, so it is a measurement rather than a tally of clicks.
+   *
+   * The verdict is the server's: it describes the text against the model as loaded, and pretending
+   * it updates per click would be a second, weaker rule living in the client.
+   */
   const coverage = useMemo(() => {
-    if (!paragraph) return null;
-    const units = paragraph.spans.filter((s) => s.kind === "word" || s.kind === "number");
+    const server = paragraph?.coverage;
+    if (!paragraph || !server) return null;
+
+    const units = paragraph.spans.filter((s) => s.kind === "word");
     if (units.length === 0) return null;
-    let unknown = 0;
-    for (const s of units) if (marked.has(ownerOf(s))) unknown += 1;
-    return { total: units.length, unknown, value: (units.length - unknown) / units.length };
+
+    let total = 0;
+    for (const s of units) {
+      const base = paragraph.vocabulary[s.lemmaKey]?.pKnown ?? 0;
+      // Marking a word is the learner stating they do not know it; the model should hear that
+      // immediately rather than at the next page load.
+      total += marked.has(ownerOf(s)) ? Math.min(base, 0.05) : base;
+    }
+
+    const value = total / units.length;
+    const unknown = Math.max(0, 1 - value);
+    return {
+      total: units.length,
+      value,
+      unknown: unknown <= 0 ? Number.POSITIVE_INFINITY : Math.max(1, Math.round(1 / unknown)),
+      verdict: server.verdict,
+    };
   }, [paragraph, marked, ownerOf]);
 
   /** Server vocabulary, with this session's post-mark overlay applied. */
@@ -611,9 +655,24 @@ export default function Home() {
                 </span>
               )}
               {coverage && (
-                <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600">
-                  {t.coverage} {(coverage.value * 100).toFixed(0)}% · {coverage.unknown}/
-                  {coverage.total}
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full ${
+                    coverage.verdict === "too_hard"
+                      ? "bg-amber-50 text-amber-700"
+                      : coverage.verdict === "supported"
+                        ? "bg-sky-50 text-sky-700"
+                        : "bg-emerald-50 text-emerald-700"
+                  }`}
+                  title={`${coverage.total} word tokens`}
+                >
+                  {t.coverage} {(coverage.value * 100).toFixed(0)}%
+                  {Number.isFinite(coverage.unknown) && ` · ${t.perKnown} 1:${coverage.unknown}`}
+                  {" · "}
+                  {coverage.verdict === "too_hard"
+                    ? t.verdictTooHard
+                    : coverage.verdict === "supported"
+                      ? t.verdictSupported
+                      : t.verdictComfortable}
                 </span>
               )}
             </div>

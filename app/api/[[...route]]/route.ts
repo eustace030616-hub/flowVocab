@@ -32,6 +32,8 @@ import { tokenizeWithLexicon, wordsForSpans } from "@/src/lib/learner/lexicon";
 import { pickExistingWord } from "@/src/lib/learner/resolve";
 import { allGlossesFor, glossesByLemma, pickGloss } from "@/src/lib/learner/glosses";
 import { abilitiesFor, recomputeAllAbilities } from "@/src/lib/learner/profile";
+import { knownProbabilities } from "@/src/lib/learner/reading";
+import { coverageOf } from "@/src/lib/learner/coverage";
 import { wordSpans, TOKENIZER_VERSION } from "@/src/lib/tokenize";
 
 type Variables = { user: ResolvedUser };
@@ -151,6 +153,19 @@ app.get("/paragraphs", async (c) => {
     // readings are returned, labelled, and the interface shows them together.
     const glosses = await glossesByLemma(targetLang, glossLang, keys);
 
+    // Per-word knowledge probability, and the coverage it implies. Derived from the event log and
+    // the ability estimate; nothing is written.
+    //
+    // Compound parts are supplied so a word that is not itself an entry is scored by what it is
+    // made of; the parts are already in `keys`, so this costs no extra query.
+    const compoundParts = new Map<string, string[]>();
+    for (const span of spans) {
+      if (span.compoundParts?.length) compoundParts.set(span.lemmaKey, span.compoundParts);
+    }
+    const probabilities = await knownProbabilities(user.userId, targetLang, keys, {
+      parts: compoundParts,
+    });
+
     const vocabulary: Record<string, unknown> = {};
     for (const word of words) {
       if (vocabulary[word.lemmaKey]) continue;
@@ -188,14 +203,25 @@ app.get("/paragraphs", async (c) => {
         unfamiliarity: state?.unfamiliarity ?? 0,
         lookupCount: state?.lookupCount ?? 0,
         exposureCount: state?.exposureCount ?? 0,
+        // Probability this learner knows this word right now. The status above is a label derived
+        // from counters; this is the quantity the reading verdict is actually computed from.
+        pKnown: probabilities.get(word.lemmaKey) ?? null,
       };
     }
+
+    // i+1 as a measurement rather than a level index: "you know 96% of this" is checkable, and it
+    // means the same thing in every language.
+    const coverage = coverageOf(
+      spans.map((span) => ({ lemmaKey: span.lemmaKey, kind: span.kind })),
+      (lemmaKey) => probabilities.get(lemmaKey) ?? 0,
+    );
 
     out.push({
       ...paragraph,
       spans,
       marked,
       vocabulary,
+      coverage,
       tokenizerVersion: TOKENIZER_VERSION,
     });
   }
