@@ -104,6 +104,18 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     exposures: "seen",
     noGloss: "No translation yet.",
     level: "Level",
+    placement: "Placement test",
+    placementWarn:
+      "Answer yes only if you are sure you know the word. Some of these are not real words, and claiming them lowers your result.",
+    placementKnown: "I know it",
+    placementUnknown: "Don't know",
+    placementSubmit: "Score my level",
+    placementCancel: "Cancel",
+    placementAnswered: "answered",
+    placementHits: "real words claimed",
+    placementFalseAlarms: "fake words claimed",
+    placementCorrected: "corrected score",
+    placementClose: "Done",
     levelUnknown: "not measured yet",
     levelFromOther: "seeded from your other language",
     levelRange: "somewhere in",
@@ -135,6 +147,17 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     exposures: "扫过",
     noGloss: "暂无译文。",
     level: "水平",
+    placement: "定级测试",
+    placementWarn: "只有在确定认识这个词时才选「认识」。其中一部分不是真词，选了会拉低结果。",
+    placementKnown: "认识",
+    placementUnknown: "不认识",
+    placementSubmit: "计算我的水平",
+    placementCancel: "取消",
+    placementAnswered: "已作答",
+    placementHits: "认识的真词",
+    placementFalseAlarms: "误选的非词",
+    placementCorrected: "校正后得分",
+    placementClose: "完成",
     levelUnknown: "尚未测量",
     levelFromOther: "来自另一语言的水平",
     levelRange: "大致范围",
@@ -257,6 +280,28 @@ export default function Home() {
       ? crypto.randomUUID()
       : `s-${Date.now()}`,
   );
+
+  // Placement test session, held client-side while it is being taken. The item set carries no
+  // signal about which entries are pseudowords — that is decided server-side.
+  const [placement, setPlacement] = useState<{
+    sessionId: string;
+    items: Array<{ id: string; text: string }>;
+  } | null>(null);
+  const [placementAnswers, setPlacementAnswers] = useState<Record<string, boolean>>({});
+  const [placementResult, setPlacementResult] = useState<{
+    hits: number;
+    falseAlarms: number;
+    falseAlarmRate: number;
+    corrected: number;
+    dPrime: number;
+    theta: number;
+    se: number;
+    level: string | null;
+    levelLow: string;
+    levelHigh: string;
+    total: number;
+  } | null>(null);
+  const [placementBusy, setPlacementBusy] = useState(false);
 
   const paragraph = paragraphs[paraIndex] ?? null;
   const t = UI[me?.uiLocale ?? "en"];
@@ -389,6 +434,50 @@ export default function Home() {
     },
     [paragraph],
   );
+
+  const startPlacement = useCallback(async () => {
+    setPlacementBusy(true);
+    setPlacementResult(null);
+    setPlacementAnswers({});
+    try {
+      const res = await fetch("/api/placement", { method: "POST" });
+      if (!res.ok) return;
+      const session = (await res.json()) as {
+        sessionId: string;
+        items: Array<{ id: string; text: string }>;
+      };
+      setPlacement({ sessionId: session.sessionId, items: session.items });
+    } finally {
+      setPlacementBusy(false);
+    }
+  }, []);
+
+  const submitPlacement = useCallback(async () => {
+    if (!placement) return;
+    setPlacementBusy(true);
+    try {
+      const res = await fetch("/api/placement/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: placement.sessionId,
+          responses: placement.items.map((item) => ({
+            id: item.id,
+            yes: placementAnswers[item.id] === true,
+          })),
+        }),
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as { result: NonNullable<typeof placementResult> };
+      setPlacementResult(data.result);
+      setPlacement(null);
+      // The placement is now evidence, so the header's estimate is stale until it is re-read.
+      const meRes = await fetch("/api/me");
+      if (meRes.ok) setMe((await meRes.json()) as Me);
+    } finally {
+      setPlacementBusy(false);
+    }
+  }, [placement, placementAnswers]);
 
   /** A span's item identity: a detached particle belongs to the verb that absorbed it. */
   const ownerOf = useCallback((span: Span) => span.absorbedInto ?? span.start, []);
@@ -979,6 +1068,13 @@ export default function Home() {
               <span className="text-xs text-zinc-400">→</span>
               <span className="text-xs text-zinc-400">{me?.glossLang ?? "…"}</span>
             </div>
+            <button
+              onClick={() => void startPlacement()}
+              disabled={placementBusy || !me}
+              className="mt-3 h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+            >
+              {t.placement}
+            </button>
           </div>
 
           <div className="h-1/2 flex flex-col items-center justify-center p-4 gap-2">
@@ -989,6 +1085,134 @@ export default function Home() {
           </div>
         </aside>
       </div>
+
+      {/*
+        The placement test. A grid rather than one word at a time: 100 items on one screen is
+        answered in a couple of minutes, and the yes/no decision is meant to be fast and instinctive
+        — the protocol warns against over-claiming, and deliberating invites it.
+      */}
+      {(placement || placementResult) && (
+        <div className="fixed inset-0 z-50 bg-white/98 backdrop-blur-sm flex flex-col">
+          <div className="w-full max-w-5xl mx-auto flex flex-col flex-1 overflow-hidden px-8 py-6">
+            <div className="flex items-baseline justify-between">
+              <h2 className="text-lg font-semibold text-zinc-800">{t.placement}</h2>
+              {placement && (
+                <span className="text-xs text-zinc-400">
+                  {Object.keys(placementAnswers).length}/{placement.items.length} {t.placementAnswered}
+                </span>
+              )}
+            </div>
+
+            {placement && (
+              <>
+                <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mt-3">
+                  {t.placementWarn}
+                </p>
+                <div className="flex-1 overflow-auto mt-4 -mx-1 px-1">
+                  <div className="grid grid-cols-4 gap-2">
+                    {placement.items.map((item) => {
+                      const answer = placementAnswers[item.id];
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex items-center justify-between gap-2 border border-zinc-200 rounded-lg px-3 py-2"
+                        >
+                          <span className="text-sm text-zinc-700 truncate">{item.text}</span>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <button
+                              onClick={() =>
+                                setPlacementAnswers((prev) => ({ ...prev, [item.id]: true }))
+                              }
+                              className={`text-[10px] px-2 py-1 rounded ${
+                                answer === true
+                                  ? "bg-emerald-600 text-white"
+                                  : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"
+                              }`}
+                            >
+                              {t.placementKnown}
+                            </button>
+                            <button
+                              onClick={() =>
+                                setPlacementAnswers((prev) => ({ ...prev, [item.id]: false }))
+                              }
+                              className={`text-[10px] px-2 py-1 rounded ${
+                                answer === false
+                                  ? "bg-zinc-700 text-white"
+                                  : "bg-zinc-100 text-zinc-500 hover:bg-zinc-200"
+                              }`}
+                            >
+                              {t.placementUnknown}
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="flex items-center justify-end gap-2 pt-4">
+                  <button
+                    onClick={() => setPlacement(null)}
+                    className="h-9 px-4 text-sm text-zinc-500 hover:text-zinc-700"
+                  >
+                    {t.placementCancel}
+                  </button>
+                  <button
+                    onClick={() => void submitPlacement()}
+                    disabled={placementBusy}
+                    className="h-9 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50"
+                  >
+                    {t.placementSubmit}
+                  </button>
+                </div>
+              </>
+            )}
+
+            {placementResult && (
+              <div className="flex-1 flex flex-col justify-center">
+                <div className="max-w-md">
+                  {/* The level is only named when the interval supports it; otherwise the range,
+                      which is the same honesty rule the header follows. */}
+                  <p className="text-3xl font-semibold text-zinc-800">
+                    {placementResult.level ?? `${placementResult.levelLow}–${placementResult.levelHigh}`}
+                  </p>
+                  <p className="text-xs text-zinc-400 mt-1">
+                    θ={placementResult.theta.toFixed(2)} ± {placementResult.se.toFixed(2)}
+                    {placementResult.level ? "" : ` · ${t.levelRange}`}
+                  </p>
+                  <dl className="mt-6 space-y-1.5 text-sm">
+                    <div className="flex justify-between">
+                      <dt className="text-zinc-500">{t.placementHits}</dt>
+                      <dd className="text-zinc-700">
+                        {placementResult.hits}/{placementResult.total}
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-zinc-500">{t.placementFalseAlarms}</dt>
+                      <dd className="text-zinc-700">
+                        {placementResult.falseAlarms} ({(placementResult.falseAlarmRate * 100).toFixed(0)}%)
+                      </dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-zinc-500">{t.placementCorrected}</dt>
+                      <dd className="text-zinc-700">{placementResult.corrected}</dd>
+                    </div>
+                    <div className="flex justify-between">
+                      <dt className="text-zinc-500">d′</dt>
+                      <dd className="text-zinc-700">{placementResult.dPrime.toFixed(2)}</dd>
+                    </div>
+                  </dl>
+                  <button
+                    onClick={() => setPlacementResult(null)}
+                    className="mt-6 h-9 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800"
+                  >
+                    {t.placementClose}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
