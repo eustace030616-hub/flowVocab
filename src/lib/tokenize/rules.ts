@@ -59,11 +59,21 @@ const EN_NO_STRIP = new Set([
 export function englishCandidates(surface: string): string[] {
   const key = lemmaKeyOf(surface);
   const out: string[] = [];
-  const push = (c: string) => {
-    if (c.length >= 2 && !out.includes(c)) out.push(c);
+  /**
+   * Add a candidate, with a minimum length that applies to *derived* forms only.
+   *
+   * Suffix stripping can produce a one-letter fragment ("ies" → "y" → nothing useful), which should
+   * not be looked up. The word itself is different: English has one-letter words — "a" and "I" — and
+   * the guard was rejecting them, so both were permanently unresolved despite being in the
+   * vocabulary with glosses. "a" is in almost every English sentence, and the reader was treating it
+   * as an unknown word and showing no translation for it.
+   */
+  const push = (c: string, minLength = 2) => {
+    if (c.length >= minLength && !out.includes(c)) out.push(c);
   };
 
-  push(key);
+  // The word itself, however short: identity is always a candidate.
+  push(key, 1);
 
   const irregular = EN_IRREGULAR[key];
   if (irregular) push(irregular);

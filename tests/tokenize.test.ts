@@ -187,3 +187,18 @@ test("German: a genuine compound still decomposes once parts are known", () => {
   assert.equal(compound.matched, false);
   assert.deepEqual(compound.compoundParts, ["wortschatz", "aufbau"]);
 });
+
+test("English: one-letter words resolve to themselves", () => {
+  // "a" is in almost every English sentence and "I" is not rare either. Both were permanently
+  // unresolved while being present in the vocabulary with glosses, because the candidate builder
+  // rejected anything shorter than two characters — a guard that belongs on derived fragments, not
+  // on the word itself.
+  assert.ok(englishCandidates("A").includes("a"));
+  assert.ok(englishCandidates("I").includes("i"));
+  assert.ok(englishCandidates("a").includes("a"));
+
+  // Derived fragments are still filtered: stripping "ies" must not offer a one-letter lookup.
+  for (const candidate of englishCandidates("babies")) {
+    assert.ok(candidate.length >= 2, `derived candidate ${candidate} is too short to look up`);
+  }
+});
