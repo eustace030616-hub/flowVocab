@@ -1,8 +1,6 @@
 import mongoose, { Schema, Document, models, model } from "mongoose";
 import type { CefrLevel, GlossLang, TargetLang } from "../lib/lang";
 
-export type WordStatus = "unfamiliar" | "learning" | "known";
-
 /**
  * A translation, in a specific gloss language, from a specific source with a specific licence.
  *
@@ -65,14 +63,10 @@ export interface IWord extends Document {
   cognateWithEn?: boolean;
   falseFriend?: boolean;
 
-  // ── Derived learner state ──────────────────────────────────────────────────
-  // A materialised cache folded from the append-only Event log. Never authoritative:
-  // every field here can be recomputed from events. See src/lib/learner/state.ts.
-  status: WordStatus;
-  timesMet: number;
-  unfamiliarity: number;
-  lookupCount: number;
-  exposureCount: number;
+  // NOTE: learner state (status, timesMet, unfamiliarity, …) is NOT stored here.
+  // A Word is shared reference data; how well a given learner knows it lives in WordState,
+  // keyed by (userId, targetLang, lemmaKey). Keeping it here would make two learners
+  // overwrite each other's history.
 
   createdAt: Date;
   updatedAt: Date;
@@ -114,12 +108,6 @@ const WordSchema = new Schema<IWord>(
     plural: { type: String },
     cognateWithEn: { type: Boolean },
     falseFriend: { type: Boolean },
-
-    status: { type: String, enum: ["unfamiliar", "learning", "known"], default: "unfamiliar" },
-    timesMet: { type: Number, default: 0 },
-    unfamiliarity: { type: Number, default: 0 },
-    lookupCount: { type: Number, default: 0 },
-    exposureCount: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

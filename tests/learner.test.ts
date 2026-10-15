@@ -19,7 +19,15 @@ import {
   statusFor,
 } from "../src/lib/learner/state";
 import { appendOnlyGuard } from "../src/models/Event";
+import { Event } from "../src/models/Event";
+import { Mark } from "../src/models/Mark";
+import { User } from "../src/models/User";
+import { WordState } from "../src/models/WordState";
+import { Word } from "../src/models/Word";
 import { tokenize, wordSpans, coverage } from "../src/lib/tokenize/index";
+import { tokenizeAgainst } from "../src/lib/learner/lexicon";
+import { resolveLemma } from "../src/lib/tokenize/rules";
+import { pickExistingWord } from "../src/lib/learner/resolve";
 import type { Span } from "../src/lib/tokenize/index";
 import {
   SEED_PARAGRAPHS,
@@ -91,6 +99,38 @@ test("the event log is append-only, with an explicit migration escape hatch", ()
   assert.throws(() => appendOnlyGuard({}), /append-only/);
   // A migration may opt out, and only a migration.
   assert.doesNotThrow(() => appendOnlyGuard({ bypassAppendOnly: true }));
+});
+
+test("learner state is per learner: it lives on WordState, never on the shared Word", () => {
+  // Regression guard for a real bug. Learner state was originally stored on `Word`, which is
+  // shared reference data — so two learners overwrote each other's history, and /api/words
+  // reported one learner's counters to another. `Word` must stay free of it.
+  const shared = ["status", "timesMet", "unfamiliarity", "lookupCount", "exposureCount"];
+  for (const path of shared) {
+    assert.equal(
+      Word.schema.path(path),
+      undefined,
+      `Word must not carry "${path}" — that is per-learner data and belongs on WordState`,
+    );
+    assert.ok(WordState.schema.path(path), `WordState should own "${path}"`);
+  }
+  assert.ok(WordState.schema.path("wordId"), "WordState points at the shared vocabulary entry");
+});
+
+test("learner-state collections share User.userId's type", () => {
+  // User.userId is a server-issued uuid *string*, but Mark and Event originally declared their
+  // userId as an ObjectId. Mongoose then tried to cast a uuid on every learner query and threw,
+  // which surfaced as a 500 on /api/me and /api/paragraphs — the whole app rendered empty.
+  const userType = User.schema.path("userId")?.instance;
+  assert.equal(userType, "String", "User.userId is an opaque uuid string");
+
+  for (const model of [Mark, Event, WordState]) {
+    assert.equal(
+      model.schema.path("userId")?.instance,
+      userType,
+      `${model.modelName}.userId must match User.userId — an ObjectId here breaks every query`,
+    );
+  }
 });
 
 // ── Seed content, tokenized against the seeded vocabulary ─────────────────────
@@ -183,4 +223,80 @@ test("the German seed exercises every case the old model could not represent", (
   assert.ok(all.some((s) => s.lemmaKey === "verstehen"), "at least one inseparable verb");
   assert.ok(all.some((s) => s.lemmaKey === "gift"), "the false friend");
   assert.ok(all.some((s) => s.surface === "warm"), "the cognate");
+});
+
+// ── Two-pass lexing against a lexicon that only answers what it is asked ──────
+
+/** A stand-in for the database: it knows a fixed vocabulary and nothing else. */
+function memoryLexicon(...lemmas: string[]) {
+  const known = new Set(lemmas.map((l) => l.toLowerCase()));
+  let queries = 0;
+  let maxQuery = 0;
+  return {
+    query: async (candidates: string[]) => {
+      queries += 1;
+      maxQuery = Math.max(maxQuery, candidates.length);
+      return new Set(candidates.filter((c) => known.has(c)));
+    },
+    stats: () => ({ queries, maxQuery }),
+  };
+}
+
+test("a compound resolves even though its parts are not candidates of the compound", async () => {
+  // This is the bug the two-pass design exists to prevent. "Wortschatzaufbau" never generates
+  // "wortschatz" as a candidate, so a single up-front query can never confirm the split.
+  const { query } = memoryLexicon("wortschatz", "aufbau", "der");
+  const spans = await tokenizeAgainst("Der Wortschatzaufbau", "de", query);
+
+  const compound = spans.find((s) => s.surface === "Wortschatzaufbau");
+  assert.ok(compound);
+  assert.deepEqual(compound!.compoundParts, ["wortschatz", "aufbau"]);
+});
+
+test("a separable verb resolves even though its infinitive is not a candidate of the finite form", async () => {
+  // "steht" generates "stehen", never "aufstehen".
+  const { query } = memoryLexicon("aufstehen");
+  const spans = await tokenizeAgainst("sie steht morgen auf", "de", query);
+
+  const verb = spans.find((s) => s.surface === "steht");
+  assert.equal(verb!.lemmaKey, "aufstehen");
+  assert.equal(verb!.detached?.length, 1);
+});
+
+test("the lexicon query asks only about candidates the tokenizer actually wanted", async () => {
+  const { query, stats } = memoryLexicon("aufstehen", "wortschatz", "aufbau");
+  await tokenizeAgainst("Der Wortschatzaufbau steht auf.", "de", query);
+
+  const { queries, maxQuery } = stats();
+  assert.ok(queries <= 3, `should converge in a few passes, took ${queries}`);
+  // Not the ~6,000 keys that enumerating every compound split and particle combination would need.
+  assert.ok(maxQuery < 120, `candidate set should stay small, was ${maxQuery}`);
+});
+
+test("German finite verb forms prefer the infinitive over a homographic noun", () => {
+  // "braucht" must not resolve to "Brauch" (custom) merely because that noun exists.
+  const withBoth = (candidate: string) => ["brauch", "brauchen"].includes(candidate);
+  const resolved = resolveLemma("braucht", "de", withBoth);
+  assert.equal(resolved.lemmaKey, "brauchen");
+  assert.equal(resolved.matched, true);
+});
+
+test("a mark attaches to the existing vocabulary entry instead of creating a duplicate", () => {
+  // "aufstehen" is seeded as pos "verb". A caller that sends no part of speech must reuse it —
+  // otherwise the vocabulary fragments and the learner's history splits across two documents.
+  const seeded = [{ pos: "verb", lemma: "aufstehen" }];
+
+  assert.deepEqual(pickExistingWord(seeded, ""), seeded[0], "no pos: reuse the classified entry");
+  assert.deepEqual(pickExistingWord(seeded, "verb"), seeded[0], "exact pos: reuse");
+  assert.deepEqual(pickExistingWord(seeded, "noun"), seeded[0], "wrong pos: still reuse, never fork");
+
+  // Several readings of one lemma: honour the caller's part of speech when it matches.
+  const both = [{ pos: "noun", lemma: "Bank" }, { pos: "verb", lemma: "banken" }];
+  assert.equal(pickExistingWord(both, "verb")?.pos, "verb");
+  assert.equal(pickExistingWord(both, "noun")?.pos, "noun");
+  // An unclassified row must never win over a classified one.
+  const mixed = [{ pos: "", lemma: "steht" }, { pos: "verb", lemma: "aufstehen" }];
+  assert.equal(pickExistingWord(mixed, "")?.pos, "verb");
+
+  assert.equal(pickExistingWord([], "verb"), null, "nothing to reuse means create");
 });

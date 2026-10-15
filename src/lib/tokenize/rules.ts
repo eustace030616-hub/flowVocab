@@ -106,16 +106,19 @@ export function englishCandidates(surface: string): string[] {
   return out;
 }
 
-/** German endings worth stripping, in the order that yields the best candidate first. */
-const DE_SUFFIXES: Array<[string, string]> = [
-  // verbs: participles and finite forms
-  ["test", ""], ["tet", ""], ["ten", ""], ["te", ""],
-  ["est", ""], ["et", ""], ["st", ""], ["en", ""], ["e", ""], ["t", ""],
-  // nouns: plural and case endings
-  ["n", ""], ["s", ""], ["es", ""], ["er", ""], ["e", ""],
-  // adjectives
-  ["ste", ""], ["ster", ""], ["sten", ""],
-];
+/**
+ * German endings worth stripping.
+ *
+ * Split into two groups because the *preferred* lemma differs. For a finite verb form the
+ * infinitive is the better guess — "braucht" should resolve to "brauchen", not to "Brauch" (a
+ * noun meaning custom, which happens to exist). For a noun or adjective the bare stem is the
+ * better guess — "Wortes" should resolve to "Wort", not to "worten".
+ *
+ * This is a heuristic standing in for part-of-speech information. A lexicon that returned POS
+ * would resolve these exactly; until then the ambiguity is documented rather than hidden.
+ */
+const DE_VERB_SUFFIXES = ["test", "tet", "ten", "te", "est", "et", "st", "en", "e", "t"];
+const DE_NOUN_SUFFIXES = ["ste", "ster", "sten", "es", "s", "n", "er", "e"];
 
 export function germanCandidates(surface: string): string[] {
   const key = lemmaKeyOf(surface);
@@ -138,16 +141,25 @@ export function germanCandidates(surface: string): string[] {
   }
 
   const base = key.startsWith("ge") && key.length > 4 ? key.slice(2) : key;
-  for (const [suffix] of DE_SUFFIXES) {
+  const consider = (stem: string, preferInfinitive: boolean) => {
+    const forms = preferInfinitive
+      ? [stem + "en", stem + "e", stem]
+      : [stem, stem + "en", stem + "e"];
+    for (const form of forms) push(form);
+    for (const variant of umlautVariants(stem)) {
+      push(variant);
+      push(variant + "en");
+    }
+  };
+
+  for (const suffix of DE_VERB_SUFFIXES) {
     if (base.endsWith(suffix) && base.length - suffix.length >= 3) {
-      const stem = base.slice(0, base.length - suffix.length);
-      push(stem);
-      push(stem + "en"); // verbs are listed as infinitives
-      push(stem + "e");
-      for (const v of umlautVariants(stem)) {
-        push(v);
-        push(v + "en");
-      }
+      consider(base.slice(0, base.length - suffix.length), true);
+    }
+  }
+  for (const suffix of DE_NOUN_SUFFIXES) {
+    if (base.endsWith(suffix) && base.length - suffix.length >= 3) {
+      consider(base.slice(0, base.length - suffix.length), false);
     }
   }
 

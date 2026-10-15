@@ -39,7 +39,7 @@ export async function resolveUser(cookieUserId?: string): Promise<{
 }
 
 export async function setTrack(userId: string, track: TrackId): Promise<ResolvedUser> {
-  const doc = await User.findOneAndUpdate({ userId }, { track }, { new: true }).lean();
+  const doc = await User.findOneAndUpdate({ userId }, { track }, { returnDocument: "after" }).lean();
   if (!doc) throw new Error(`unknown user ${userId}`);
   return { userId: doc.userId, track: doc.track };
 }

@@ -85,12 +85,6 @@ async function main() {
           surfaceForms: [],
           glosses: [],
           frequency: {},
-          // Derived learner state starts empty; it is computed from the event log.
-          status: "unfamiliar" as const,
-          timesMet: 0,
-          unfamiliarity: 0,
-          lookupCount: 0,
-          exposureCount: 0,
         },
       },
       upsert: true,

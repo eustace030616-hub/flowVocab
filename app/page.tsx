@@ -34,8 +34,16 @@ interface Paragraph {
   vocabulary: Record<string, VocabularyEntry>;
 }
 
-interface Me {
-  userId: string;
+/** The state the API recomputes from the event log and returns after a mark or unmark. */
+interface DerivedState {
+  timesMet: number;
+  unfamiliarity: number;
+  lookupCount: number;
+  exposureCount: number;
+  status: string;
+}
+
+interface Me {  userId: string;
   track: "zh-en" | "en-de";
   targetLang: "en" | "de";
   glossLang: "en" | "zh";
@@ -104,6 +112,27 @@ function amberIntensity(count: number): string {
   return "bg-amber-400";
 }
 
+/**
+ * Read JSON defensively.
+ *
+ * An API that throws still returns *something*: a 500 with an HTML error page, or Hono's JSON
+ * error object. Calling `res.json()` on the former throws a parse error inside the component and
+ * blanks the page, which tells the reader nothing. Failing softly lets the UI explain itself.
+ */
+async function readJson<T>(res: Response): Promise<T | null> {
+  const type = res.headers.get("content-type") ?? "";
+  if (!res.ok || !type.includes("application/json")) return null;
+  try {
+    return (await res.json()) as T;
+  } catch {
+    return null;
+  }
+}
+
+function describeFailure(path: string, res: Response): string {
+  return `${path} returned ${res.status} ${res.statusText}. The API could not reach the database, or a query failed. Check that MongoDB is running.`;
+}
+
 export default function Home() {
   const [me, setMe] = useState<Me | null>(null);
   const [paragraphs, setParagraphs] = useState<Paragraph[]>([]);
@@ -114,6 +143,7 @@ export default function Home() {
   const [active, setActive] = useState<ActiveItem | null>(null);
   const [winHeight, setWinHeight] = useState(0);
   const [lastEvent, setLastEvent] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -130,25 +160,39 @@ export default function Home() {
   const t = UI[me?.uiLocale ?? "en"];
 
   const load = useCallback(async (track?: string) => {
+    setError(null);
+
     const meRes = await fetch("/api/me");
-    const meData: Me = await meRes.json();
-    const wanted = track ?? meData.track;
+    let meData = await readJson<Me>(meRes);
+    if (!meData || !Array.isArray(meData.tracks)) {
+      setMe(null);
+      setParagraphs([]);
+      setError(describeFailure("/api/me", meRes));
+      setReady(true);
+      return;
+    }
+
     if (track && track !== meData.track) {
-      const patched: Me = await (
+      const patched = await readJson<Me>(
         await fetch("/api/me/track", {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ track }),
-        })
-      ).json();
-      setMe(patched);
-      const res = await fetch(`/api/paragraphs?targetLang=${patched.targetLang}`);
-      setParagraphs(await res.json());
-    } else {
-      setMe(meData);
-      const res = await fetch(`/api/paragraphs?targetLang=${meData.targetLang}`);
-      setParagraphs(await res.json());
+        }),
+      );
+      if (patched && Array.isArray(patched.tracks)) meData = patched;
     }
+    setMe(meData);
+
+    const res = await fetch(`/api/paragraphs?targetLang=${meData.targetLang}`);
+    const data = await readJson<Paragraph[]>(res);
+    if (!data) {
+      setParagraphs([]);
+      setError(describeFailure("/api/paragraphs", res));
+    } else {
+      setParagraphs(data);
+    }
+
     setParaIndex(0);
     setReady(true);
   }, []);
@@ -255,10 +299,14 @@ export default function Home() {
     if (!active || !paragraph || !me) return;
     const span = active.span;
     const isMarked = marked.has(span.start);
+    const vocab = paragraph.vocabulary[span.lemmaKey];
     const body = {
       targetLang: paragraph.targetLang,
       lemmaKey: span.lemmaKey,
       lemma: span.lemma,
+      // Sending the part of speech lets the server attach to the existing vocabulary entry
+      // rather than creating a second row for the same word.
+      pos: vocab?.pos ?? "",
       surface: span.surface,
       paragraphId: paragraph._id,
       charStart: span.start,
@@ -278,8 +326,12 @@ export default function Home() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    const data = await res.json();
-    const state = data?.state;
+    const data = await readJson<{ state?: DerivedState }>(res);
+    if (!data) {
+      setError(describeFailure(url, res));
+      return;
+    }
+    const state = data.state;
     if (state) {
       setLastEvent(
         `${isMarked ? "unmark" : "mark"} → met ${state.timesMet}, unfamiliar ${state.unfamiliarity}, ${state.status}`,
@@ -340,7 +392,7 @@ export default function Home() {
           )}
         </div>
         <div className="flex items-center gap-1">
-          {me?.tracks.map((track) => (
+          {me?.tracks?.map((track) => (
             <button
               key={track.id}
               onClick={() => void load(track.id)}
@@ -433,7 +485,20 @@ export default function Home() {
                 })}
               </p>
             ) : (
-              <p className="text-lg text-zinc-400 italic">{ready ? t.empty : t.loading}</p>
+              <div className="text-lg text-zinc-400 italic">
+                {error ? (
+                  <div className="not-italic">
+                    <p className="text-rose-600 text-sm font-medium mb-1">
+                      Could not load the app
+                    </p>
+                    <p className="text-xs text-zinc-500">{error}</p>
+                  </div>
+                ) : ready ? (
+                  t.empty
+                ) : (
+                  t.loading
+                )}
+              </div>
             )}
 
             {active && (

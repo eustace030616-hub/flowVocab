@@ -19,8 +19,11 @@ import {
   appendEvent,
   appendExposureBatch,
   recomputeWordState,
+  statesFor,
 } from "@/src/lib/learner/state";
+import { WordState } from "@/src/models/WordState";
 import { tokenizeWithLexicon, wordsForSpans } from "@/src/lib/learner/lexicon";
+import { pickExistingWord } from "@/src/lib/learner/resolve";
 import { wordSpans, TOKENIZER_VERSION } from "@/src/lib/tokenize";
 
 type Variables = { user: ResolvedUser };
@@ -131,9 +134,12 @@ app.get("/paragraphs", async (c) => {
     const keys = [...lexicon.keys()];
     const words = keys.length
       ? await Word.find({ targetLang, lemmaKey: { $in: keys } })
-          .select("lemmaKey lemma pos glosses level levelEstimated difficulty frequency article plural status timesMet unfamiliarity lookupCount exposureCount")
+          .select("lemmaKey lemma pos glosses level levelEstimated difficulty frequency article plural cognateWithEn falseFriend")
           .lean()
       : [];
+
+    // This learner's own state, which lives in WordState rather than on the shared Word.
+    const states = await statesFor(user.userId, targetLang, keys);
 
     const vocabulary: Record<string, unknown> = {};
     for (const word of words) {
@@ -142,6 +148,7 @@ app.get("/paragraphs", async (c) => {
         (word.glosses as StoredGloss[]).find((g) => g.lang === glossLang) ??
         (word.glosses as StoredGloss[])[0] ??
         null;
+      const state = states.get(word.lemmaKey);
       vocabulary[word.lemmaKey] = {
         lemma: word.lemma,
         pos: word.pos,
@@ -154,11 +161,13 @@ app.get("/paragraphs", async (c) => {
         frequency: word.frequency,
         article: word.article ?? null,
         plural: word.plural ?? null,
-        status: word.status,
-        timesMet: word.timesMet,
-        unfamiliarity: word.unfamiliarity,
-        lookupCount: word.lookupCount,
-        exposureCount: word.exposureCount,
+        cognateWithEn: word.cognateWithEn ?? false,
+        falseFriend: word.falseFriend ?? false,
+        status: state?.status ?? "unfamiliar",
+        timesMet: state?.timesMet ?? 0,
+        unfamiliarity: state?.unfamiliarity ?? 0,
+        lookupCount: state?.lookupCount ?? 0,
+        exposureCount: state?.exposureCount ?? 0,
       };
     }
 
@@ -182,21 +191,44 @@ app.get("/paragraphs/:id", async (c) => {
 
 // ── Words ─────────────────────────────────────────────────────────────────────
 
+/** This learner's words in a given state — driven by WordState, never by a field on Word. */
 app.get("/words", async (c) => {
+  const user = c.get("user");
   const targetLang = targetLangFor(c);
   const status = c.req.query("status") || "unfamiliar";
-  const words = await Word.find({ targetLang, status }).limit(500).lean();
-  return c.json(words);
+
+  const states = await WordState.find({ userId: user.userId, targetLang, status })
+    .sort({ unfamiliarity: -1 })
+    .limit(500)
+    .lean();
+  if (states.length === 0) return c.json([]);
+
+  const words = await Word.find({
+    targetLang,
+    lemmaKey: { $in: states.map((s) => s.lemmaKey) },
+  }).lean();
+  const byKey = new Map(words.map((w) => [w.lemmaKey, w]));
+
+  return c.json(
+    states
+      .map((state) => {
+        const word = byKey.get(state.lemmaKey);
+        return word ? { ...word, state } : null;
+      })
+      .filter(Boolean),
+  );
 });
 
 app.get("/words/:lemmaKey", async (c) => {
+  const user = c.get("user");
   const targetLang = targetLangFor(c);
-  const word = await Word.findOne({
-    targetLang,
-    lemmaKey: c.req.param("lemmaKey").toLowerCase(),
-  }).lean();
+  const lemmaKey = c.req.param("lemmaKey").toLowerCase();
+
+  const word = await Word.findOne({ targetLang, lemmaKey }).lean();
   if (!word) return c.json({ error: "Not found" }, 404);
-  return c.json(word);
+
+  const states = await statesFor(user.userId, targetLang, [lemmaKey]);
+  return c.json({ ...word, state: states.get(lemmaKey) ?? null });
 });
 
 /**
@@ -229,31 +261,44 @@ app.post("/words/mark", async (c) => {
   }
 
   const pos = body.pos ?? "";
-  const word = await Word.findOneAndUpdate(
-    { targetLang, lemmaKey, pos },
-    {
-      $setOnInsert: {
+
+  // Resolve to an existing entry rather than upserting blindly. Identity is
+  // (targetLang, lemma, pos), so a caller that does not know the part of speech would otherwise
+  // create a *second* row for a word that is already in the vocabulary — fragmenting the entry,
+  // losing its level and gloss, and splitting the learner's history across two documents.
+  //
+  // Preference order: the exact (lemma, pos) if the caller supplied one, otherwise any entry for
+  // this lemma that already carries a part of speech, otherwise whatever exists.
+  const candidates = await Word.find({ targetLang, lemmaKey }).limit(5);
+  let word = pickExistingWord(candidates, pos);
+
+  if (!word) {
+    try {
+      word = await Word.create({
         targetLang,
         lemmaKey,
         pos,
         lemma: body.lemma || body.surface || lemmaKey,
-        surfaceForms: body.surface ? [body.surface] : [],
         glosses: [],
         frequency: {},
         level: null,
         levelEstimated: false,
         levelSource: null,
         difficulty: -1,
-        status: "unfamiliar",
-        timesMet: 0,
-        unfamiliarity: 0,
-        lookupCount: 0,
-        exposureCount: 0,
-      },
-      $addToSet: body.surface ? { surfaceForms: body.surface } : {},
-    },
-    { new: true, upsert: true },
-  );
+      });
+    } catch (err) {
+      // Lost a race with a concurrent mark for the same item; reuse the winner.
+      const existing = await Word.findOne({ targetLang, lemmaKey, pos });
+      if (!existing) throw err;
+      word = existing;
+    }
+  }
+
+  // `surfaceForms` is written by $addToSet alone — naming it in $setOnInsert too makes Mongo
+  // reject the update with ConflictingUpdateOperators.
+  if (body.surface) {
+    await Word.updateOne({ _id: word._id }, { $addToSet: { surfaceForms: body.surface } });
+  }
 
   await Mark.findOneAndUpdate(
     {
@@ -275,7 +320,7 @@ app.post("/words/mark", async (c) => {
       status: "marked",
       markedAt: new Date(),
     },
-    { upsert: true, new: true },
+    { upsert: true, returnDocument: "after" },
   );
 
   await appendEvent({

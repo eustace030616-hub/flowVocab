@@ -1,27 +1,34 @@
 /**
  * Derived learner state, folded from the append-only Event log.
  *
- * `Word.status/timesMet/unfamiliarity` are a *cache*. The log is the truth. Two rules follow
- * from that, and they are the whole point of this module:
+ * `WordState` is a *cache*. The log is the truth. Three rules follow, and they are the whole
+ * point of this module:
  *
  *   1. Derivation is a pure fold over events. Recompute it any time and you get the same
  *      answer — so a counter that drifts (a double-click bug, a partial write, a bad
  *      migration) is repairable rather than permanent.
  *
- *   2. Un-marking still floors the counter at zero, exactly as before, but it no longer
- *      *destroys evidence*: the `mark` event stays in the log, so the history survives and
- *      the ability model can see that the learner marked this word and then changed their
- *      mind. Previously that was unrecoverable.
+ *   2. Un-marking still floors the counter at zero, but it no longer *destroys evidence*: the
+ *      `mark` event stays in the log, so the history survives and the ability model can see
+ *      that the learner marked this word and then changed their mind.
+ *
+ *   3. State is per *(learner, language, item)* and lives in `WordState`, never on the shared
+ *      `Word` document. A vocabulary entry is reference data every learner shares; mixing one
+ *      learner's history into it makes two learners overwrite each other.
  *
  * What is genuinely new in Phase 0 is the two signals that were never recorded at all:
  * `exposure` (the word was on screen and the learner did not click it — the cheapest and
  * strongest evidence of knowing a word) and `lookup` (checked, but not marked).
  */
 
+import type { Types } from "mongoose";
+
 import { Event, type EventSource, type EventType, type EventItem } from "../../models/Event";
-import { Word, type WordStatus } from "../../models/Word";
+import { Word } from "../../models/Word";
+import { WordState, type WordStatus } from "../../models/WordState";
 import type { TargetLang } from "../lang";
-import mongoose from "mongoose";
+
+export type { WordStatus } from "../../models/WordState";
 
 export interface SignalCounts {
   marks: number;
@@ -32,13 +39,19 @@ export interface SignalCounts {
   notSure: number;
 }
 
-export interface DerivedState extends SignalCounts {
+/** The part of the state that is persisted per learner. Deliberately excludes the raw signal
+ *  counts (marks/unmarks/…): WordState is a summary, and reporting `marks: 0` from it would be
+ *  a lie — those counts only exist in the event log. */
+export interface WordStateSummary {
   timesMet: number;
   unfamiliarity: number;
   lookupCount: number;
   exposureCount: number;
   status: WordStatus;
 }
+
+/** The full fold result, including the signal counts it was derived from. */
+export interface DerivedState extends SignalCounts, WordStateSummary {}
 
 export const EMPTY_COUNTS: SignalCounts = {
   marks: 0,
@@ -109,54 +122,83 @@ export function countsFromEvents(
 }
 
 /**
- * Recompute one word's cached state from the log and persist it.
+ * Recompute one learner's state for one item from the log, and persist the cache.
  *
  * Single-item events carry `lemmaKey` directly. Batched `exposure` events carry an `items`
- * array, so exposures are counted with a `$elemMatch`-style query rather than being unfolded.
+ * array, so exposures are counted with a query rather than being unfolded.
  */
 export async function recomputeWordState(
-  userId: mongoose.Types.ObjectId | string,
+  userId: string,
   targetLang: TargetLang,
   lemmaKey: string,
-  wordId?: mongoose.Types.ObjectId | string,
+  wordId?: Types.ObjectId | string,
 ): Promise<DerivedState> {
   const single = await Event.find({ userId, targetLang, lemmaKey }).select("type").lean();
   const counts = countsFromEvents(single);
 
-  const exposureEvents = await Event.countDocuments({
+  counts.exposures += await Event.countDocuments({
     userId,
     targetLang,
     type: "exposure",
     "items.lemmaKey": lemmaKey,
   });
-  counts.exposures += exposureEvents;
 
   const state = deriveState(counts);
 
-  await Word.updateOne(
-    wordId ? { _id: wordId } : { targetLang, lemmaKey },
-    {
-      $set: {
-        timesMet: state.timesMet,
-        unfamiliarity: state.unfamiliarity,
-        lookupCount: state.lookupCount,
-        exposureCount: state.exposureCount,
-        status: state.status,
+  // Attach to the shared vocabulary entry, so a state row can be joined to a gloss.
+  const resolvedWordId =
+    wordId ?? (await Word.findOne({ targetLang, lemmaKey }).select("_id").lean())?._id;
+
+  if (resolvedWordId) {
+    await WordState.findOneAndUpdate(
+      { userId, targetLang, lemmaKey },
+      {
+        $set: {
+          wordId: resolvedWordId,
+          status: state.status,
+          timesMet: state.timesMet,
+          unfamiliarity: state.unfamiliarity,
+          lookupCount: state.lookupCount,
+          exposureCount: state.exposureCount,
+        },
       },
-    },
-  );
+      { upsert: true, returnDocument: "after" },
+    );
+  }
 
   return state;
 }
 
+/** One learner's state for a set of items, keyed by lemmaKey. Absent means "never met". */
+export async function statesFor(
+  userId: string,
+  targetLang: TargetLang,
+  lemmaKeys: string[],
+): Promise<Map<string, WordStateSummary>> {
+  const map = new Map<string, WordStateSummary>();
+  if (lemmaKeys.length === 0) return map;
+
+  const rows = await WordState.find({ userId, targetLang, lemmaKey: { $in: lemmaKeys } }).lean();
+  for (const row of rows) {
+    map.set(row.lemmaKey, {
+      timesMet: row.timesMet,
+      unfamiliarity: row.unfamiliarity,
+      lookupCount: row.lookupCount,
+      exposureCount: row.exposureCount,
+      status: row.status,
+    });
+  }
+  return map;
+}
+
 export interface AppendEventArgs {
-  userId: mongoose.Types.ObjectId | string;
+  userId: string;
   targetLang: TargetLang;
   type: EventType;
   source?: EventSource;
   sessionId?: string;
-  paragraphId?: mongoose.Types.ObjectId | string;
-  wordId?: mongoose.Types.ObjectId | string;
+  paragraphId?: Types.ObjectId | string;
+  wordId?: Types.ObjectId | string;
   surface?: string;
   lemmaKey?: string;
   charStart?: number;
@@ -177,9 +219,9 @@ export async function appendEvent(args: AppendEventArgs) {
  * signal by far.
  */
 export async function appendExposureBatch(args: {
-  userId: mongoose.Types.ObjectId | string;
+  userId: string;
   targetLang: TargetLang;
-  paragraphId: mongoose.Types.ObjectId | string;
+  paragraphId: Types.ObjectId | string;
   sessionId?: string;
   items: EventItem[];
   source?: EventSource;

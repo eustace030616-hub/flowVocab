@@ -37,7 +37,8 @@ export interface EventItem {
 }
 
 export interface IEvent extends Document {
-  userId: mongoose.Types.ObjectId;
+  /** Opaque id from User.userId — a String, deliberately not an ObjectId. */
+  userId: string;
   targetLang: TargetLang;
   type: EventType;
   source: EventSource;
@@ -76,7 +77,9 @@ const EventItemSchema = new Schema<EventItem>(
 
 const EventSchema = new Schema<IEvent>(
   {
-    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    // String, matching User.userId — an ObjectId here would make every query cast a uuid and
+    // throw. Asserted in tests/learner.test.ts.
+    userId: { type: String, required: true },
     targetLang: { type: String, enum: ["en", "de"], required: true },
     type: {
       type: String,

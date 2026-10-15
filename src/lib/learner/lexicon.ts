@@ -8,6 +8,20 @@
  * That is a correctness decision, not just a performance one: if the client lemmatised
  * independently, the span it rendered and the lemma the server recorded could disagree, and a
  * learner's mark would attach to a word they did not click.
+ *
+ * ## Why this is a loop rather than one query
+ *
+ * The obvious implementation — collect `candidatesFor(surface)` for every word in the text, ask
+ * the database about those, then tokenize — is wrong, and wrong in exactly the place that
+ * matters. A compound's *parts* are not candidates of the compound ("Wortschatzaufbau" never
+ * generates "wortschatz"), and a separable verb's infinitive is not a candidate of the finite
+ * form ("steht" generates "stehen", never "aufstehen"). So the two features that justify the
+ * whole span-based model silently stopped working server-side, while unit tests that were handed
+ * a ready-made lexicon passed.
+ *
+ * Instead we let the tokenizer tell us what it needs: run it with a recording lookup, ask the
+ * database about precisely the candidates it asked for, and repeat until it stops asking for
+ * anything new. The candidate set is then exact — no guessing, no combinatorial blow-up.
  */
 
 import type { Types } from "mongoose";
@@ -15,33 +29,55 @@ import type { Types } from "mongoose";
 import { Word } from "../../models/Word";
 import type { TargetLang } from "../lang";
 import { tokenize, wordSpans, type LemmaLookup, type Span } from "../tokenize";
-import { candidatesFor } from "../tokenize/rules";
+
+/** Answers which of the given lemma keys exist. Backed by the database, or by a Map in tests. */
+export type LexiconQuery = (candidates: string[]) => Promise<Set<string>>;
 
 /**
- * Build a lookup over the lemmas a specific text can plausibly resolve to.
+ * Tokenize against an arbitrary lexicon query.
  *
- * Generates every candidate form for every surface in the text, then asks the database once
- * which of them exist. One query per paragraph, regardless of token count.
+ * Pure with respect to storage, so the convergence behaviour can be tested with an in-memory
+ * lexicon instead of a database. Passes are bounded; in practice two suffice.
  */
-export async function buildLexicon(
+export async function tokenizeAgainst(
+  text: string,
   targetLang: TargetLang,
-  surfaces: string[],
-): Promise<LemmaLookup> {
-  const candidates = new Set<string>();
-  for (const surface of surfaces) {
-    for (const candidate of candidatesFor(surface, targetLang)) candidates.add(candidate);
+  query: LexiconQuery,
+  maxPasses = 3,
+): Promise<Span[]> {
+  const known = new Set<string>();
+  let spans: Span[] = [];
+
+  for (let pass = 0; pass < maxPasses; pass += 1) {
+    const missed = new Set<string>();
+    spans = tokenize(text, targetLang, {
+      lookup: (candidate: string) => {
+        if (known.has(candidate)) return true;
+        missed.add(candidate);
+        return false;
+      },
+    });
+
+    // Nothing new was requested, so another pass would produce identical spans.
+    if (missed.size === 0) return spans;
+
+    const found = await query([...missed]);
+    for (const key of found) known.add(key);
   }
-  if (candidates.size === 0) return () => false;
 
-  const found = await Word.find({
-    targetLang,
-    lemmaKey: { $in: [...candidates] },
-  })
-    .select("lemmaKey")
-    .lean();
+  // Final pass so the returned spans reflect everything learned.
+  return tokenize(text, targetLang, { lookup: (candidate) => known.has(candidate) });
+}
 
-  const known = new Set(found.map((w) => w.lemmaKey));
-  return (candidate: string) => known.has(candidate);
+/** The database-backed query: one `$in` per pass over exactly the candidates that were asked for. */
+export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
+  return async (candidates) => {
+    if (candidates.length === 0) return new Set();
+    const found = await Word.find({ targetLang, lemmaKey: { $in: candidates } })
+      .select("lemmaKey")
+      .lean();
+    return new Set(found.map((w) => w.lemmaKey));
+  };
 }
 
 /**
@@ -54,10 +90,7 @@ export async function tokenizeWithLexicon(
   text: string,
   targetLang: TargetLang,
 ): Promise<Span[]> {
-  const scratch = tokenize(text, targetLang);
-  const surfaces = wordSpans(scratch).map((s) => s.surface);
-  const lookup = await buildLexicon(targetLang, surfaces);
-  return tokenize(text, targetLang, { lookup });
+  return tokenizeAgainst(text, targetLang, datastoreQuery(targetLang));
 }
 
 export interface LexiconEntry {

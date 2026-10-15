@@ -18,7 +18,8 @@ export type MarkStatus = "marked" | "ignored" | "known";
  * recomputed rather than silently mis-attributed.
  */
 export interface IMark extends Document {
-  userId: mongoose.Types.ObjectId;
+  /** Opaque id from User.userId — a String, deliberately not an ObjectId. See the note below. */
+  userId: string;
   targetLang: TargetLang;
   paragraphId: mongoose.Types.ObjectId;
   wordId: mongoose.Types.ObjectId;
@@ -39,7 +40,14 @@ export interface IMark extends Document {
 
 const MarkSchema = new Schema<IMark>(
   {
-    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    /**
+     * String, matching User.userId.
+     *
+     * This must not be an ObjectId: `User.userId` is a server-issued uuid string, so declaring
+     * the reference as an ObjectId makes every query cast a uuid and throw. The type is asserted
+     * in tests/learner.test.ts so it cannot silently diverge again.
+     */
+    userId: { type: String, required: true },
     targetLang: { type: String, enum: ["en", "de"], required: true },
     paragraphId: { type: Schema.Types.ObjectId, ref: "Paragraph", required: true },
     wordId: { type: Schema.Types.ObjectId, ref: "Word", required: true },

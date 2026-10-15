@@ -61,7 +61,8 @@ src/
 │       └── index.ts               LICENSES/ manifest generation
 ├── models/
 │   ├── Paragraph.ts               content, language, difficulty, coverage
-│   ├── Word.ts                    (targetLang, lemma, pos) + glosses, level, frequency
+│   ├── Word.ts                    shared reference data: (targetLang, lemma, pos), glosses
+│   ├── WordState.ts               PER LEARNER: status, timesMet, unfamiliarity, …
 │   ├── Mark.ts                    one learner's mark on one character span
 │   ├── Event.ts                   append-only log: the source of truth
 │   ├── User.ts                    learner + current track
@@ -74,13 +75,17 @@ src/
 ## Data model
 
 ```
-Word ────────── Mark ────────── Paragraph
-(targetLang,    (userId,        (targetLang,
- lemma, pos)     paragraphId,     title, content,
-   │             charStart,       difficulty, level)
-   │             charEnd)
-   │
-   └── Event (append-only) ── derives ──▶ Word.status/timesMet/unfamiliarity/…
+Word (shared reference)          WordState (per learner)          Paragraph
+ targetLang                       userId                           targetLang
+ lemma, pos                       targetLang, lemmaKey             title, content
+ glosses[], level, frequency      wordId ──▶ Word                  difficulty, level
+ article, plural                  status, timesMet,
+ cognateWithEn, falseFriend       unfamiliarity, lookupCount,
+        ▲                         exposureCount
+        │                                 ▲
+        └────────── Mark ─────────────────┤      Event (append-only)
+                    (userId, paragraphId, │       userId, targetLang, type
+                     charStart, charEnd)  └────── derives ──▶ WordState
 ```
 
 Three things changed from the original model, and each was a blocker for the second language:
@@ -89,12 +94,17 @@ Three things changed from the original model, and each was a blocker for the sec
    globally unique, so German *Gift* and English *gift* would have merged into one record.
 2. **An occurrence is a character span**, not an array index from `content.split(" ")`. Spaces do
    not delimit words in German compounds or separable verbs, and not at all in Chinese.
-3. **Learner state is derived from an append-only event log.** `unfamiliarity` used to be the only
-   copy of the history, and un-clicking decremented it destructively.
+3. **Learner state is derived from an append-only event log, and is per learner.** `unfamiliarity`
+   used to be the only copy of the history, and un-clicking decremented it destructively. It also
+   lived on `Word` — shared reference data — so two learners overwrote each other. It now lives in
+   `WordState`, keyed by `(userId, targetLang, lemmaKey)`.
 
-`Word.status` / `timesMet` / `unfamiliarity` remain, but they are a *cache*: recompute them from
-events at any time. `learning` is now reachable (met 3+ times, still unfamiliar) instead of being a
-dead enum value.
+`WordState` is a *cache*: recompute it from events at any time. `learning` is now reachable (met
+3+ times, still unfamiliar) instead of being a dead enum value.
+
+A mark resolves to an existing vocabulary entry rather than upserting on `(lemma, pos)` blindly —
+otherwise a caller that does not send a part of speech creates a second row for a word already in
+the vocabulary, splitting the learner's history across two documents (see `src/lib/learner/resolve.ts`).
 
 ## Difficulty and levels
 
