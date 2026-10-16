@@ -122,11 +122,14 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     lookups: "looked up",
     exposures: "seen",
     noGloss: "No translation yet.",
+    dontKnow: "Don't know this",
+    iKnowThis: "I know this",
     level: "Level",
     generate: "Generate a paragraph",
     generating: "Writing…",
     generateFailed: "Could not write one that measures up",
     placement: "Placement test",
+    test: "Test",
     placementWarn:
       "Answer yes only if you are sure you know the word. Some of these are not real words, and claiming them lowers your result.",
     placementKnown: "I know it",
@@ -180,11 +183,14 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     lookups: "查询",
     exposures: "扫过",
     noGloss: "暂无译文。",
+    dontKnow: "不认识",
+    iKnowThis: "我认识",
     level: "水平",
     generate: "生成新段落",
     generating: "生成中…",
     generateFailed: "暂时写不出合格的段落",
     placement: "定级测试",
+    test: "测试",
     placementWarn: "只有在确定认识这个词时才选「认识」。其中一部分不是真词，选了会拉低结果。",
     placementKnown: "认识",
     placementUnknown: "不认识",
@@ -529,6 +535,87 @@ export default function Home() {
     if (!Array.isArray(ability) || ability.length === 0) return;
     setMe((prev) => (prev ? { ...prev, ability } : prev));
   }, []);
+
+  /**
+   * Whether this device can hover.
+   *
+   * The reader was built for a pointer: dwelling on a word opens its meaning, and clicking marks it.
+   * A phone has no hover, so a tap did both — you tapped a word to read its meaning and the app
+   * recorded that you do not know it. A mark is the strongest negative signal in the model, so
+   * inspecting words quietly taught the app that the passage was too hard for you.
+   *
+   * On a touch device a tap only opens; marking is a button in the popover, which is a deliberate act
+   * on any device. On a pointer device the old behaviour stays.
+   */
+  const [canHover, setCanHover] = useState(true);
+  useEffect(() => {
+    const query = window.matchMedia("(hover: hover) and (pointer: fine)");
+    const apply = () => setCanHover(query.matches);
+    apply();
+    query.addEventListener("change", apply);
+    return () => query.removeEventListener("change", apply);
+  }, []);
+
+  /**
+   * The strongest positive signal there is: the reader says they know this word.
+   *
+   * Also retracts a mark, because "I know this" contradicts "I do not know this" and leaving both in
+   * the log would cancel out (a mark is −2.0, a confirmation +1.5) rather than mean either thing.
+   */
+  const recordConfirmed = useCallback(
+    async (span: Span) => {
+      if (!paragraph || !me) return;
+      const body = {
+        targetLang: paragraph.targetLang,
+        lemmaKey: span.lemmaKey,
+        lemma: span.lemma,
+        pos: paragraph.vocabulary[span.lemmaKey]?.pos ?? "",
+        surface: span.surface,
+        paragraphId: paragraph._id,
+        charStart: span.start,
+        charEnd: span.end,
+        sessionId: sessionId.current,
+      };
+
+      const confirmed = await readJson<{ ability?: AbilityView[] }>(
+        await fetch("/api/events", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...body, type: "confirmed" }),
+        }),
+      );
+      adoptAbility(confirmed?.ability);
+
+      if (marked.has(span.start)) {
+        const retracted = await readJson<{ ability?: AbilityView[] }>(
+          await fetch("/api/words/ignore", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+          }),
+        );
+        adoptAbility(retracted?.ability);
+        setMarked((prev) => {
+          const next = new Set(prev);
+          next.delete(span.start);
+          return next;
+        });
+        setParagraph((prev) =>
+          prev && prev._id === paragraph._id
+            ? { ...prev, marked: { ...prev.marked, [String(span.start)]: "ignored" } }
+            : prev,
+        );
+        setHistory((prev) =>
+          prev.map((item) =>
+            item._id === paragraph._id
+              ? { ...item, markedCount: Math.max(0, item.markedCount - 1) }
+              : item,
+          ),
+        );
+      }
+    },
+    [paragraph, me, marked, adoptAbility],
+  );
 
   const recordLookup = useCallback(
     (span: Span) => {
@@ -900,6 +987,7 @@ export default function Home() {
   };
 
   const activeVocab = active ? vocabOf(active.span) : undefined;
+  const isActiveMarked = active ? marked.has(active.ownerStart) : false;
 
   /**
    * The popover is positioned by an explicit top-left corner, computed from the word's own rect.
@@ -941,8 +1029,8 @@ export default function Home() {
   const isHoveredOwner = (span: Span) => hoveredOwner === ownerOf(span);
 
   return (
-    <div className="min-h-screen flex flex-col bg-zinc-50">
-      <header className="w-full h-14 bg-white border-b border-zinc-200 flex items-center justify-between px-6 shrink-0">
+    <div className="fv-safe-bottom min-h-screen flex flex-col bg-zinc-50">
+      <header className="w-full min-h-14 bg-white border-b border-zinc-200 flex items-center justify-between gap-2 px-3 sm:px-6 py-2 shrink-0">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold text-zinc-800">{t.appName}</h1>
           {me && (
@@ -982,6 +1070,22 @@ export default function Home() {
           )}
         </div>
         <div className="flex items-center gap-1">
+          {/* On a phone the sidebar is hidden, so its two actions live here instead. */}
+          <button
+            onClick={() => setHistoryOpen(true)}
+            disabled={!me}
+            className="md:hidden h-8 px-2.5 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+          >
+            {t.history}
+            {history.length > 0 && <span className="ml-1 text-zinc-400">{history.length}</span>}
+          </button>
+          <button
+            onClick={() => void startPlacement()}
+            disabled={placementBusy || generating || !me}
+            className="md:hidden h-8 px-2.5 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+          >
+            {t.test}
+          </button>
           {me?.tracks?.map((track) => (
             <button
               key={track.id}
@@ -998,15 +1102,15 @@ export default function Home() {
         </div>
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        <div className="w-4/5 flex flex-col p-6 overflow-auto">
+      <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
+        <div className="w-full md:w-4/5 flex flex-col p-3 sm:p-4 md:p-6 overflow-auto">
           <div className="flex items-center justify-between h-10 mb-3">
             <div className="flex items-center gap-3">
               <span className="text-sm text-zinc-500 font-medium">
                 {paragraph ? `${paragraph.title} · ${paragraph.topic}` : t.empty}
               </span>
               {paragraph && (
-                <span className="text-xs text-zinc-400">
+                <span className="hidden sm:inline text-xs text-zinc-400">
                   {paragraph.wordCount} words
                   {paragraph.level ? ` · ${paragraph.level}` : ""}
                 </span>
@@ -1082,9 +1186,9 @@ export default function Home() {
           </div>
 
           <div
-            className="flex-1 bg-white border border-zinc-200 rounded-xl p-6 overflow-auto"
-            onMouseMove={handleMouseMove}
-            onMouseLeave={handleBoxLeave}
+            className="fv-reader flex-1 bg-white border border-zinc-200 rounded-xl p-4 sm:p-6 overflow-auto"
+            onMouseMove={canHover ? handleMouseMove : undefined}
+            onMouseLeave={canHover ? handleBoxLeave : undefined}
             onClick={(e) => {
               // Resolve the word from the click itself. Previously the handler used the hover
               // popover's state, so a plain click before the 350 ms hover delay did nothing.
@@ -1099,7 +1203,10 @@ export default function Home() {
                 setActive({ ownerStart, span: clicked, rect: el.getBoundingClientRect() });
                 recordLookup(clicked);
               }
-              void toggleMark(ownerStart);
+              // On a touch device a tap only opens the word. Marking is a button in the popover,
+              // because a tap that both reveals a meaning and declares ignorance turns every glance
+              // into evidence that the passage was too hard.
+              if (canHover) void toggleMark(ownerStart);
             }}
           >
             {paragraph ? (
@@ -1149,6 +1256,17 @@ export default function Home() {
                   t.loading
                 )}
               </div>
+            )}
+
+            {/* On a touch device nothing closes the popover by itself — there is no pointer to leave
+                with — so a tap anywhere else does it, which is what a phone user expects. It sits under
+                the popover and above the page, and only exists where hovering is impossible. */}
+            {active && !canHover && (
+              <div
+                className="fixed inset-0 z-40"
+                onPointerDown={() => setActive(null)}
+                aria-hidden="true"
+              />
             )}
 
             {active && (
@@ -1346,12 +1464,41 @@ export default function Home() {
                     </p>
                   );
                 })()}
+
+                {/* The deliberate act, and the only way to mark on a phone — where a tap opens the
+                    word and nothing else. On a pointer device the click still marks, so this is the
+                    explicit alternative rather than the only route. */}
+                <div className="flex items-center gap-2 mt-3 pt-3 border-t border-zinc-100">
+                  {isActiveMarked ? (
+                    <button
+                      onClick={() => void recordConfirmed(active.span)}
+                      className="h-8 px-3 text-xs font-medium rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                    >
+                      {t.iKnowThis}
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => void toggleMark(active.ownerStart)}
+                        className="h-8 px-3 text-xs font-medium rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
+                      >
+                        {t.dontKnow}
+                      </button>
+                      <button
+                        onClick={() => void recordConfirmed(active.span)}
+                        className="h-8 px-3 text-xs font-medium rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-100 transition-colors"
+                      >
+                        {t.iKnowThis}
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
             )}
           </div>
         </div>
 
-        <aside className="w-1/5 bg-white border-l border-zinc-200 flex flex-col shrink-0">
+        <aside className="hidden md:flex md:w-1/5 bg-white border-l border-zinc-200 flex-col shrink-0">
           <div className="h-1/2 flex flex-col items-center justify-center gap-3 p-4 border-b border-zinc-200">
             <div className="w-16 h-16 rounded-full bg-zinc-200 flex items-center justify-center text-zinc-400 text-2xl">
               ?

@@ -24,3 +24,55 @@
     animation: none !important;
   }
 }
+
+/*
+ * ── Phone ─────────────────────────────────────────────────────────────────────
+ *
+ * Added for reading on an iPhone over a tailnet, where the differences that matter are touch, the
+ * notch, and the browser's own reflexes rather than the layout alone.
+ */
+
+/*
+ * iOS inflates body text when a page is rotated to landscape unless this is set, which reflows the
+ * passage mid-sentence and loses the reader's place.
+ */
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+/*
+ * A tap on a word must open its meaning, not zoom.
+ *
+ * `manipulation` drops the double-tap-to-zoom gesture but keeps panning and pinch-zoom, so the reader
+ * can still zoom deliberately and the first tap on a word is never swallowed waiting to see whether a
+ * second one is coming.
+ */
+.fv-reader {
+  touch-action: manipulation;
+}
+
+/*
+ * Keep content clear of the home indicator and the notch. Only the bottom inset is applied to the
+ * page: the top is a fixed header that already sits below the status bar.
+ */
+.fv-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/*
+ * The popover is measured from the word it belongs to, so on a narrow screen it can only be kept
+ * inside the viewport by clamping its width. `!important` because the inline position is computed.
+ */
+@media (max-width: 767px) {
+  .fv-popover {
+    max-width: calc(100vw - 1.5rem) !important;
+    min-width: 0 !important;
+  }
+}
+
+/* Touch devices have no hover, so any affordance that only appears on hover is invisible. */
+@media (hover: none) {
+  .fv-hover-only {
+    display: none;
+  }
+}
