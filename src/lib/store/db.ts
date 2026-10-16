@@ -1,0 +1,117 @@
+/**
+ * The SQLite connection and the small amount of glue every query needs.
+ *
+ * `node:sqlite` is built into Node 24, so this is the whole data-layer dependency: no native build,
+ * no server, no Docker. The database is one file next to the code.
+ *
+ * Rows are converted to the *domain* shape here — camelCase, parsed JSON, real booleans — so the rest
+ * of the app never sees a database row. That is what makes the store swappable: the SQLite and Mongo
+ * shapes differ, the domain shape does not.
+ */
+
+import { DatabaseSync } from "node:sqlite";
+import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync } from "node:fs";
+import path from "node:path";
+
+import { SCHEMA_SQL } from "./schema";
+
+/** Where the database lives. Gitignored, like the source data it is built from. */
+export const DATABASE_PATH =
+  process.env.FLOWWING_DB ?? path.join(process.cwd(), "data", "flowwing.sqlite3");
+
+/**
+ * Identifiers stay 24-character hex, the shape the documents used.
+ *
+ * Not vanity: existing rows keep their ids through the migration, and the client, the API paths and
+ * the marks all reference paragraphs and words by that string. Renumbering would have made the move
+ * a rewrite of everything that points at a row.
+ */
+export function newId(): string {
+  return randomBytes(12).toString("hex");
+}
+
+export function nowMs(): number {
+  return Date.now();
+}
+
+let database: DatabaseSync | null = null;
+
+/** Open the database, applying the schema. Idempotent, so every caller can just ask for it. */
+export function openDatabase(file: string = DATABASE_PATH): DatabaseSync {
+  if (database) return database;
+
+  const directory = path.dirname(file);
+  if (!existsSync(directory)) mkdirSync(directory, { recursive: true });
+
+  database = new DatabaseSync(file);
+  database.exec(SCHEMA_SQL);
+  return database;
+}
+
+/** The open handle. Opens on first use, so callers never have to sequence it. */
+export function db(): DatabaseSync {
+  return openDatabase();
+}
+
+/** For tests and scripts that need a fresh file. */
+export function closeDatabase(): void {
+  database?.close();
+  database = null;
+}
+
+export type Row = Record<string, unknown>;
+
+export function all<T = Row>(sql: string, ...params: unknown[]): T[] {
+  return db().prepare(sql).all(...(params as never[])) as T[];
+}
+
+export function get<T = Row>(sql: string, ...params: unknown[]): T | undefined {
+  return db().prepare(sql).get(...(params as never[])) as T | undefined;
+}
+
+export function run(sql: string, ...params: unknown[]): void {
+  db().prepare(sql).run(...(params as never[]));
+}
+
+/** `IN (?, ?, ?)` for a list, with the params to match. Empty lists are the caller's problem. */
+export function placeholders(count: number): string {
+  return Array.from({ length: count }, () => "?").join(", ");
+}
+
+export function json<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+export function bool(value: unknown): boolean {
+  return value === 1 || value === true || value === "1";
+}
+
+/** Booleans are integers in SQLite; this keeps the conversion in one place. */
+export function flag(value: boolean | undefined | null): number {
+  return value ? 1 : 0;
+}
+
+/**
+ * Run a batch inside one transaction.
+ *
+ * The importers write hundreds of thousands of rows; without this each statement is its own commit,
+ * which is the difference between seconds and minutes.
+ */
+export function transaction<T>(work: () => T): T {
+  const handle = db();
+  handle.exec("BEGIN");
+  try {
+    const result = work();
+    handle.exec("COMMIT");
+    return result;
+  } catch (error) {
+    handle.exec("ROLLBACK");
+    throw error;
+  }
+}

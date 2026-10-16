@@ -1,0 +1,216 @@
+/**
+ * The content side: passages, and the two questions asked of them — what to read, and what to write
+ * pregenerated.
+ */
+
+import { all, bool, flag, get, newId, nowMs, run } from "./db";
+
+export interface ParagraphRecord {
+  _id: string;
+  targetLang: "en" | "de";
+  title: string;
+  content: string;
+  topic: string | null;
+  wordCount: number;
+  level: string | null;
+  difficulty: number;
+  difficultySource: string | null;
+  coverage: number;
+  tokenizerVersion: number;
+  source: "seed" | "agent" | "import";
+  briefId: string | null;
+  buffered: boolean;
+  promptSnapshot?: string | null;
+  createdAt: number;
+}
+
+export interface ParagraphSummary {
+  _id: string;
+  title: string;
+  level: string | null;
+  wordCount: number;
+  source: string;
+  createdAt: number;
+  briefId: string | null;
+  markedCount: number;
+}
+
+interface ParagraphRow {
+  id: string;
+  targetLang: string;
+  title: string;
+  content: string;
+  topic: string | null;
+  wordCount: number;
+  level: string | null;
+  difficulty: number;
+  difficultySource: string | null;
+  coverage: number;
+  tokenizerVersion: number;
+  source: string;
+  briefId: string | null;
+  buffered: number;
+  promptSnapshot: string | null;
+  createdAt: number;
+}
+
+export function toParagraph(row: ParagraphRow): ParagraphRecord {
+  return {
+    _id: row.id,
+    targetLang: row.targetLang as "en" | "de",
+    title: row.title,
+    content: row.content,
+    topic: row.topic,
+    wordCount: row.wordCount,
+    level: row.level,
+    difficulty: row.difficulty,
+    difficultySource: row.difficultySource,
+    coverage: row.coverage,
+    tokenizerVersion: row.tokenizerVersion,
+    source: row.source as ParagraphRecord["source"],
+    briefId: row.briefId,
+    buffered: bool(row.buffered),
+    promptSnapshot: row.promptSnapshot,
+    createdAt: row.createdAt,
+  };
+}
+
+/**
+ * The reading order: easiest first, then oldest.
+ *
+ * A learner new to the language should meet the simplest text available, not whatever was written
+ * most recently — recency matters for the history list, not for what to read next.
+ */
+export function paragraphsFor(targetLang: string): ParagraphRecord[] {
+  return all<ParagraphRow>(
+    "SELECT * FROM paragraphs WHERE targetLang = ? ORDER BY difficulty ASC, createdAt ASC",
+    targetLang,
+  ).map(toParagraph);
+}
+
+export function paragraphById(id: string): ParagraphRecord | null {
+  const row = get<ParagraphRow>("SELECT * FROM paragraphs WHERE id = ?", id);
+  return row ? toParagraph(row) : null;
+}
+
+/**
+ * The history list: newest first, with each passage's mark count.
+ *
+ * Kept light on purpose — no content, no spans — because the list grows without limit as the reader
+ * generates, and the list needs none of it.
+ */
+export function paragraphSummaries(targetLang: string, userId: string): ParagraphSummary[] {
+  return all<{
+    id: string;
+    title: string;
+    level: string | null;
+    wordCount: number;
+    source: string;
+    createdAt: number;
+    briefId: string | null;
+    markedCount: number;
+  }>(
+    `SELECT p.id, p.title, p.level, p.wordCount, p.source, p.createdAt, p.briefId,
+            COALESCE(m.n, 0) AS markedCount
+     FROM paragraphs p
+     LEFT JOIN (
+       SELECT paragraphId, COUNT(*) AS n FROM marks
+       WHERE userId = ? AND status = 'marked' GROUP BY paragraphId
+     ) m ON m.paragraphId = p.id
+     WHERE p.targetLang = ?
+     ORDER BY p.createdAt DESC`,
+    userId,
+    targetLang,
+  ).map((row) => ({
+    _id: row.id,
+    title: row.title,
+    level: row.level,
+    wordCount: row.wordCount,
+    source: row.source,
+    createdAt: row.createdAt,
+    briefId: row.briefId,
+    markedCount: row.markedCount,
+  }));
+}
+
+/**
+ * Insert or replace a generated passage, keyed by the brief it fulfils.
+ *
+ * The brief is the identity, not the title: titles are written by the model and change between runs,
+ * which is how five briefs once became nine paragraphs.
+ */
+export function upsertParagraphByBrief(
+  paragraph: Omit<ParagraphRecord, "_id" | "createdAt"> & { _id?: string },
+): string {
+  const existing = paragraph.briefId
+    ? get<{ id: string }>(
+        "SELECT id FROM paragraphs WHERE targetLang = ? AND briefId = ?",
+        paragraph.targetLang,
+        paragraph.briefId,
+      )
+    : undefined;
+  const id = existing?.id ?? paragraph._id ?? newId();
+
+  run(
+    `INSERT INTO paragraphs (id, targetLang, title, content, topic, wordCount, level, difficulty,
+                             difficultySource, coverage, tokenizerVersion, source, briefId, buffered,
+                             promptSnapshot, createdAt, updatedAt)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(id) DO UPDATE SET
+       title = excluded.title, content = excluded.content, topic = excluded.topic,
+       wordCount = excluded.wordCount, level = excluded.level, difficulty = excluded.difficulty,
+       difficultySource = excluded.difficultySource, coverage = excluded.coverage,
+       tokenizerVersion = excluded.tokenizerVersion, source = excluded.source,
+       briefId = excluded.briefId, buffered = excluded.buffered,
+       promptSnapshot = excluded.promptSnapshot, updatedAt = excluded.updatedAt`,
+    id,
+    paragraph.targetLang,
+    paragraph.title,
+    paragraph.content,
+    paragraph.topic ?? null,
+    paragraph.wordCount,
+    paragraph.level ?? null,
+    paragraph.difficulty,
+    paragraph.difficultySource ?? null,
+    paragraph.coverage,
+    paragraph.tokenizerVersion,
+    paragraph.source,
+    paragraph.briefId ?? null,
+    flag(paragraph.buffered),
+    paragraph.promptSnapshot ?? null,
+    nowMs(),
+    nowMs(),
+  );
+  return id;
+}
+
+export function insertParagraph(paragraph: Omit<ParagraphRecord, "_id" | "createdAt">): string {
+  return upsertParagraphByBrief(paragraph);
+}
+
+// ── The pregenerated stock ────────────────────────────────────────────────────
+
+/** Oldest first, so the stock is served in the order it was written. */
+export function nextBufferedParagraph(targetLang: string): ParagraphRecord | null {
+  const row = get<ParagraphRow>(
+    "SELECT * FROM paragraphs WHERE targetLang = ? AND buffered = 1 ORDER BY createdAt ASC LIMIT 1",
+    targetLang,
+  );
+  return row ? toParagraph(row) : null;
+}
+
+export function clearBuffered(id: string): void {
+  run("UPDATE paragraphs SET buffered = 0 WHERE id = ?", id);
+}
+
+export function markBuffered(id: string): void {
+  run("UPDATE paragraphs SET buffered = 1 WHERE id = ?", id);
+}
+
+export function countBuffered(targetLang: string): number {
+  return Number(get<{ n: number }>("SELECT COUNT(*) AS n FROM paragraphs WHERE targetLang = ? AND buffered = 1", targetLang)?.n ?? 0);
+}
+
+export function countParagraphs(targetLang: string): number {
+  return Number(get<{ n: number }>("SELECT COUNT(*) AS n FROM paragraphs WHERE targetLang = ?", targetLang)?.n ?? 0);
+}

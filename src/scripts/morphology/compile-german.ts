@@ -41,6 +41,7 @@ import { Gloss } from "../../models/Gloss";
 import { Inflection } from "../../models/Inflection";
 import { Separation } from "../../models/Separation";
 import { Compound } from "../../models/Compound";
+import { Paragraph } from "../../models/Paragraph";
 import { lemmaKeyOf } from "../../lib/tokenize/normalize";
 import { runIfEntry } from "../run";
 
@@ -175,6 +176,27 @@ async function main() {
     const parts = lexiconSplit(lemma, vocabulary);
     if (parts) compounds.set(lemma, parts);
   }
+
+  // …and the forms that actually appear in the passages, which is the set that matters. A compound
+  // like *Wortschatzaufbau* is not itself a dictionary headword — it is built in the text — so
+  // iterating the vocabulary alone leaves exactly the words a reader meets unsplit. The headless
+  // check caught this: the table held `kurztext` but not `wortschatzaufbau`.
+  const corpusForms = new Set<string>();
+  for (const paragraph of await Paragraph.find({ targetLang: "de" }).select("content").lean()) {
+    for (const word of String(paragraph.content).toLowerCase().split(/[^\p{L}]+/u)) {
+      if (word.length >= MIN_PART_LENGTH * 2) corpusForms.add(word);
+    }
+  }
+  let fromCorpus = 0;
+  for (const form of corpusForms) {
+    if (compounds.has(form) || vocabulary.has(form)) continue;
+    const parts = lexiconSplit(form, vocabulary);
+    if (parts) {
+      compounds.set(form, parts);
+      fromCorpus += 1;
+    }
+  }
+  console.log(`  corpus       ${corpusForms.size.toLocaleString()} distinct forms · ${fromCorpus.toLocaleString()} compounds recovered from passages`);
   console.log(`  compounds    ${compounds.size.toLocaleString()} forms with a lexicon-valid split`);
 
   await Separation.deleteMany({ targetLang: "de" });

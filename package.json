@@ -25,7 +25,8 @@
     "import:english-inflections": "tsx src/scripts/import/import-english-inflections.ts",
     "pregenerate": "tsx src/scripts/generate/pregenerate.ts",
     "qa:paragraphs": "tsx src/scripts/qa/paragraphs.ts",
-    "compile:german": "tsx src/scripts/morphology/compile-german.ts"
+    "compile:german": "tsx src/scripts/morphology/compile-german.ts",
+    "migrate:mongo-to-sqlite": "tsx src/scripts/migrate/mongo-to-sqlite.ts"
   },
   "dependencies": {
     "hono": "^4.11.1",
