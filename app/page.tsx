@@ -196,6 +196,9 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     exposures: "扫过",
     noGloss: "暂无译文。",
     current: "当前",
+    history: "历史",
+    historyEmpty: "还没有内容 — 先生成一段。",
+    historyMarked: "已标记",
     words: "词",
     partOfSpeech: "词性",
     form: "形式",
@@ -1234,7 +1237,7 @@ export default function Home() {
             on the right, with room to be tapped on a phone. The level is gone from both, and the space
             it and the test button used is what this format is made of.
           */}
-          <div className="flex flex-col gap-2 mb-2 shrink-0">
+          <div className="flex flex-col gap-1 mb-2 shrink-0">
             <div className="flex items-center justify-between gap-4 min-w-0">
               <span
                 className="text-sm font-medium text-zinc-700 truncate"
@@ -1253,7 +1256,7 @@ export default function Home() {
               )}
             </div>
 
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-end justify-between gap-2">
               {/* The count and the band sit together on the action row, so the whole line reads
                   left to right as one statement: how long it is, how hard it is, what you can do. */}
               <div className="flex items-center gap-2 min-w-0">
