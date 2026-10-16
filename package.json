@@ -22,7 +22,9 @@
     "import:kaikki": "tsx src/scripts/import/import-kaikki.ts",
     "generate:paragraphs": "tsx src/scripts/generate/generate.ts",
     "import:function-words": "tsx src/scripts/import/import-function-words.ts",
-    "import:english-inflections": "tsx src/scripts/import/import-english-inflections.ts"
+    "import:english-inflections": "tsx src/scripts/import/import-english-inflections.ts",
+    "pregenerate": "tsx src/scripts/generate/pregenerate.ts",
+    "qa:paragraphs": "tsx src/scripts/qa/paragraphs.ts"
   },
   "dependencies": {
     "hono": "^4.11.1",

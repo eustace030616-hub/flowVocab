@@ -8,12 +8,18 @@
  * are account-specific — this account offers `deepseek-flash` and `deepseek-v4-pro`, and neither is
  * the `deepseek-chat` this would otherwise have assumed.
  *
- * `reasoning_effort` is the knob the API accepts for "think less", and it is measurable: on a
- * one-sentence task this model spends ~209 reasoning tokens unset against ~109 at `low`. What it is
- * not is *low in absolute terms* — on the paragraph task it reasoned for the entire token budget and
- * returned no text at all, because reasoning tokens are counted against `max_tokens`. So the budget
- * has to cover thinking *and* writing, and an empty reply has to be reported as what it is rather
- * than as a formatting problem.
+ * ## Thinking is off, and that is a documented setting, not a guess
+ *
+ * The API accepts `reasoning_effort` of `none | low | high | max`, where **`none` disables thinking**
+ * and the others enable it, `high` by default. An earlier version of this file set `low`, intending
+ * "think a little" — which enabled thinking, and every call generated thousands of reasoning tokens
+ * against a `max_tokens` of 8000. That was the whole of an 80-second latency, and it sometimes spent
+ * the entire budget thinking and returned no text at all.
+ *
+ * Writing a hundred-word passage is composition, not reasoning. The output is checked by the rubric
+ * and the coherence judge, which is a better use of the tokens than asking the model to deliberate.
+ * `max_tokens` is bounded to match: in thinking mode the API defaults to 64K, which is exactly what
+ * lets one call run for minutes.
  */
 
 import { describeSecret, loadEnv } from "../env";
@@ -30,6 +36,11 @@ export interface CompletionRequest {
    * paragraph that had been accepted was rejected on re-judging.
    */
   temperature?: number;
+  /**
+   * Override the thinking budget for this call. `"none"` measurably produces zero reasoning tokens on
+   * this model, which for a hundred-word passage is the difference between seconds and minutes.
+   */
+  reasoningEffort?: string;
 }
 
 export interface Completion {
@@ -72,7 +83,7 @@ export function deepseekProvider(env: Record<string, string> = loadEnv()): Provi
   }
 
   const model = env.DEEPSEEK_MODEL || "deepseek-flash";
-  const reasoningEffort = env.DEEPSEEK_REASONING || "low";
+  const reasoningEffort = env.DEEPSEEK_REASONING || "none";
   const baseUrl = env.DEEPSEEK_BASE_URL || "https://api.deepseek.com";
 
   return {
@@ -86,10 +97,11 @@ export function deepseekProvider(env: Record<string, string> = loadEnv()): Provi
           { role: "system", content: request.system },
           { role: "user", content: request.user },
         ],
-        max_tokens: request.maxTokens ?? 8000,
+        max_tokens: request.maxTokens ?? Number(env.DEEPSEEK_MAX_TOKENS || 1200),
         temperature: request.temperature ?? 1,
       };
-      if (reasoningEffort) body.reasoning_effort = reasoningEffort;
+      const effort = request.reasoningEffort ?? reasoningEffort;
+      if (effort && effort !== "default") body.reasoning_effort = effort;
       if (request.json) body.response_format = { type: "json_object" };
 
       const res = await fetch(`${baseUrl}/chat/completions`, {

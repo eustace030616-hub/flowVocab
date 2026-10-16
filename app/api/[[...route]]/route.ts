@@ -28,9 +28,13 @@ import { allGlossesFor, glossesByLemma, pickGloss } from "@/src/lib/learner/glos
 import { abilitiesFor, recomputeAllAbilities } from "@/src/lib/learner/profile";
 import { knownProbabilities } from "@/src/lib/learner/reading";
 import { coverageOf } from "@/src/lib/learner/coverage";
+import { candidatesFor } from "@/src/lib/tokenize/rules";
+import { Inflection } from "@/src/models/Inflection";
+import { Gloss } from "@/src/models/Gloss";
 import { createPlacementSession, submitPlacement } from "@/src/lib/learner/placement-service";
 import { generateOne, importParagraph } from "@/src/scripts/generate/generate";
 import { onDemandBrief } from "@/src/scripts/generate/briefs";
+import { refillBuffer } from "@/src/scripts/generate/pregenerate";
 import { deepseekProvider } from "@/src/scripts/generate/provider";
 import { loadEnv } from "@/src/scripts/env";
 import { levelFromDifficulty } from "@/src/lib/difficulty";
@@ -264,6 +268,62 @@ async function readerPayload(
         // from counters; this is the quantity the reading verdict is actually computed from.
         pKnown: probabilities.get(word.lemmaKey) ?? null,
       };
+    }
+
+    // An inflected surface can be an entry in its own right and still have no translation — DWDS lists
+    // `eine`, `neue` and `gelebt` as headwords, and the English list holds `recycled` while CC-CEDICT
+    // glosses only `recycle`. No dictionary glosses every form, so a form without a translation looks
+    // for one in this order:
+    //
+    //   1. the stated base form, from the morphological data
+    //   2. the rule-derived candidates the lemmatiser would produce, in its own order
+    //
+    // The headless check found this on twelve of the most common words in German, all of which showed
+    // "No translation yet" while their base sat glossed in the database.
+    const withoutGloss = Object.entries(vocabulary)
+      .filter(([, entry]) => !(entry as { gloss?: string | null }).gloss)
+      .map(([key]) => key);
+
+    if (withoutGloss.length > 0) {
+      const stated = await Inflection.find({ targetLang, form: { $in: withoutGloss } })
+        .select("form baseLemmaKey")
+        .lean();
+      const baseOf = new Map(stated.map((row) => [row.form, row.baseLemmaKey]));
+
+      // Preference order per key: stated base first, then the lemmatiser's candidates.
+      const preference = new Map<string, string[]>();
+      const wanted = new Set<string>();
+      for (const key of withoutGloss) {
+        const options = [
+          baseOf.get(key),
+          ...candidatesFor(key, targetLang),
+        ].filter((c): c is string => typeof c === "string" && c.length > 0 && c !== key);
+        preference.set(key, options);
+        for (const option of options) wanted.add(option);
+      }
+
+      if (wanted.size > 0) {
+        const borrowed = await Gloss.find({
+          targetLang,
+          lang: glossLang,
+          lemmaKey: { $in: [...wanted] },
+        })
+          .sort({ rank: 1, source: 1, text: 1 })
+          .select("lemmaKey text source termPos generated")
+          .lean();
+        const best = new Map<string, (typeof borrowed)[number]>();
+        for (const row of borrowed) if (!best.has(row.lemmaKey)) best.set(row.lemmaKey, row);
+
+        for (const [key, options] of preference) {
+          const found = options.map((o) => best.get(o)).find((g) => g !== undefined);
+          if (!found) continue;
+          const entry = vocabulary[key] as Record<string, unknown>;
+          entry.gloss = found.text;
+          entry.glossSource = found.source;
+          entry.glossTermPos = found.termPos ?? null;
+          entry.glossVia = "inflection";
+        }
+      }
     }
 
     // i+1 as a measurement rather than a level index: "you know 96% of this" is checkable, and it
@@ -657,8 +717,38 @@ app.post("/paragraphs/generate", async (c) => {
     briefId: `on-demand:${targetLang}:${Date.now().toString(36)}`,
   };
 
+  // A pregenerated passage is served immediately, and the stock is topped up afterwards without the
+  // caller waiting for it. Generation is seconds rather than minutes now, but a request should still
+  // never be the thing that waits.
+  const buffered = await Paragraph.findOne({ targetLang, buffered: true }).sort({ createdAt: 1 });
+  if (buffered) {
+    await Paragraph.updateOne({ _id: buffered._id }, { $set: { buffered: false } });
+    void refillBuffer(user.userId, targetLang).catch(() => {
+      // A failed top-up is not worth failing the request over; the next press will try again.
+    });
+    return c.json(
+      {
+        ok: true,
+        paragraphId: String(buffered._id),
+        title: buffered.title,
+        level: buffered.level,
+        topic: buffered.topic,
+        words: buffered.wordCount,
+        coverage: buffered.coverage,
+        fromBuffer: true,
+      },
+      201,
+    );
+  }
+
   try {
-    const outcome = await generateOne(deepseekProvider(), spec);
+    const outcome = await generateOne(deepseekProvider(), spec, {
+      // The user's own bound: a request that cannot be answered inside this is not worth holding
+      // open. With thinking disabled a full generation takes a few seconds, so this is a backstop
+      // rather than a routine outcome.
+      deadlineMs: 30_000,
+      skipTopicWords: false,
+    });
     if (!outcome.passed) {
       return c.json(
         {

@@ -119,7 +119,7 @@ async function proposeTopicWords(
   options: { onAttempt?: (line: string) => void } = {},
 ): Promise<VocabularyItem[]> {
   const { system, user } = buildTopicVocabularyPrompt(spec.targetLang, spec.level, spec.topic);
-  const completion = await provider.complete({ system, user, maxTokens: 2000, json: true });
+  const completion = await provider.complete({ system, user, maxTokens: 800, json: true });
   const proposed = parseTopicVocabulary(completion.text);
   if (proposed.length === 0) return [];
 
@@ -156,6 +156,24 @@ async function proposeTopicWords(
   return kept;
 }
 
+export interface GenerateOptions {
+  dryRun?: boolean;
+  onAttempt?: (line: string) => void;
+  /**
+   * Skip the topic-vocabulary proposal.
+   *
+   * It is advisory — the sampled list is used when it yields nothing, which is what happened for A2 —
+   * and it costs a whole model call before writing even begins.
+   */
+  skipTopicWords?: boolean;
+  /** Coherence samples. Three is the reliable default; one is the fast one. */
+  judgeSamples?: number;
+  /** Thinking budget for the writing call. */
+  reasoningEffort?: string;
+  /** Milliseconds allowed for the whole attempt sequence. */
+  deadlineMs?: number;
+}
+
 export interface GenerationOutcome {
   spec: BriefSpec;
   attempts: number;
@@ -181,7 +199,7 @@ export interface GenerationOutcome {
 export async function generateOne(
   provider: Provider,
   spec: BriefSpec,
-  options: { dryRun?: boolean; onAttempt?: (line: string) => void } = {},
+  options: GenerateOptions = {},
 ): Promise<GenerationOutcome> {
   let attempts = 0;
   let providerCalls = 0;
@@ -200,8 +218,14 @@ export async function generateOne(
     target: vocabulary.target,
   };
 
-  const topicWords = await proposeTopicWords(provider, spec, options);
-  providerCalls += 1;
+  const startedAt = Date.now();
+  const exceeded = () => {
+    if (!options.deadlineMs) return false;
+    return Date.now() - startedAt > options.deadlineMs;
+  };
+
+  const topicWords = options.skipTopicWords ? [] : await proposeTopicWords(provider, spec, options);
+  if (!options.skipTopicWords) providerCalls += 1;
   if (topicWords.length) {
     const seen = new Set(brief.core.map((item) => item.word.toLowerCase()));
     const merged = [...topicWords.filter((item) => !seen.has(item.word.toLowerCase())), ...brief.core];
@@ -213,15 +237,26 @@ export async function generateOne(
   let lastIssues: string[] = [];
   let lastMetrics: { coverage: number; measuredLevel: CefrLevel | null } = { coverage: 0, measuredLevel: null };
 
-  // The writing budget, which reasoning also draws on. Raised when a reply comes back empty, because
-  // the cause is almost always that the model thought until the budget ran out and never wrote.
-  let budget = 8000;
+  // Bounded output. A 90-130 word passage is roughly 200 tokens plus the JSON envelope, and thinking
+  // is disabled, so there is no reason to allow more — the API's own default in thinking mode is 64K,
+  // which is what previously let a single call run for minutes.
+  const budget = Number(process.env.DEEPSEEK_MAX_TOKENS || 1200);
 
   let unusableReplies = 0;
   while (attempts < MAX_ATTEMPTS && unusableReplies < MAX_UNUSABLE_REPLIES) {
+    if (exceeded()) {
+      options.onAttempt?.(`    deadline reached after ${attempts} attempt(s)`);
+      break;
+    }
     attempts += 1;
     const user = buildUserPrompt(brief, feedback);
-    const completion = await provider.complete({ system, user, maxTokens: budget, json: true });
+    const completion = await provider.complete({
+      system,
+      user,
+      maxTokens: budget,
+      json: true,
+      reasoningEffort: options.reasoningEffort,
+    });
     providerCalls += 1;
     reasoningTokens += completion.reasoningTokens;
 
@@ -230,10 +265,8 @@ export async function generateOne(
       // on reasoning. Retrying with the same limit would fail identically, so the limit changes.
       unusableReplies += 1;
       options.onAttempt?.(
-        `    reply ${attempts}: empty — ${completion.reasoningTokens} reasoning tokens of ${budget}; ` +
-          `raising the budget, attempt not counted`,
+        `    reply ${attempts}: empty (${completion.reasoningTokens} reasoning tokens), attempt not counted`,
       );
-      budget = Math.min(budget * 2, 32000);
       feedback = undefined;
       continue;
     }
@@ -298,25 +331,27 @@ export async function generateOne(
       // accepted was rejected on a later single-sample re-judging. Majority costs two extra cheap
       // calls and removes that coin flip, while a genuinely incoherent passage is rejected by all
       // three (the one about the crime novel, genetic research and theology was).
+      const samples = Math.max(1, options.judgeSamples ?? JUDGE_SAMPLES);
       const judgements = [];
-      for (let sample = 0; sample < JUDGE_SAMPLES; sample += 1) {
+      for (let sample = 0; sample < samples; sample += 1) {
         const judgeCall = await provider.complete({
           system: buildJudgeSystemPrompt(spec.targetLang),
           user: buildJudgeUserPrompt(parsed.content),
-          maxTokens: 3000,
+          maxTokens: 600,
           json: true,
           temperature: 0,
+          reasoningEffort: "none",
         });
         providerCalls += 1;
         reasoningTokens += judgeCall.reasoningTokens;
         judgements.push(parseJudge(judgeCall.text));
       }
       const accepts = judgements.filter((j) => j.coherent).length;
-      const coherent = accepts * 2 > JUDGE_SAMPLES;
+      const coherent = accepts * 2 > samples;
       const problems = [...new Set(judgements.flatMap((j) => j.problems))];
 
       options.onAttempt?.(
-        `    attempt ${attempts}: measures up · judge ${accepts}/${JUDGE_SAMPLES} accept` +
+        `    attempt ${attempts}: measures up · judge ${accepts}/${samples} accept` +
           // The text itself, because a rejection is not diagnosable from a list of complaints.
           (coherent ? "" : ` · "${parsed.content.slice(0, 80)}…"`),
       );

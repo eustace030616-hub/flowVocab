@@ -21,6 +21,11 @@
 
 /** Inflected form → base verb. Keys are lowercased surface forms. */
 export const ENGLISH_IRREGULAR_FORMS: Record<string, string> = {
+  // Fused forms and contractions, which no suffix rule reaches.
+  cannot: "can", "won't": "will", "can't": "can", "don't": "do", "doesn't": "do", "didn't": "do",
+  "isn't": "be", "aren't": "be", "wasn't": "be", "weren't": "be", "haven't": "have",
+  "hasn't": "have", "hadn't": "have", "it's": "it", "that's": "that", "there's": "there",
+  "let's": "let",
   // be
   am: "be", is: "be", are: "be", was: "be", were: "be", been: "be", being: "be",
   // have / do

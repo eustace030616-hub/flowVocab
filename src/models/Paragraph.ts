@@ -41,6 +41,13 @@ export interface IParagraph extends Document {
    * topic under different names, all of them shown to the reader.
    */
   briefId?: string | null;
+  /**
+   * Written ahead of time and not yet shown.
+   *
+   * Generation is fast now, but a request should never be the thing that waits: pregenerated
+   * passages sit ready, the button serves one immediately, and the stock is topped up afterwards.
+   */
+  buffered?: boolean;
   /** Prompt snapshot for generated text, as specified in FLOWWING.md. */
   promptSnapshot?: string;
   createdAt: Date;
@@ -67,6 +74,7 @@ const ParagraphSchema = new Schema<IParagraph>(
 
     source: { type: String, enum: ["seed", "agent", "import"], default: "seed" },
     briefId: { type: String, default: null },
+    buffered: { type: Boolean, default: false },
     promptSnapshot: { type: String },
   },
   { timestamps: true },

@@ -14,7 +14,7 @@ import { Gloss } from "../../models/Gloss";
 import { Provenance } from "../../models/Provenance";
 import { provenanceDocs } from "../../lib/licence";
 import { assertShippable } from "../../lib/licence/datasets";
-import { ENGLISH_FUNCTION_GLOSSES } from "./function-words";
+import { ENGLISH_FUNCTION_GLOSSES, GERMAN_FUNCTION_GLOSSES } from "./function-words";
 import { runIfEntry } from "../run";
 
 const SOURCE = "flowwing-function-words";
@@ -26,14 +26,24 @@ async function main() {
   console.log(`  licence      ${spec.license}`);
 
   await connectDB();
-  const keys = Object.keys(ENGLISH_FUNCTION_GLOSSES);
-  const words = await Word.find({ targetLang: "en", lemmaKey: { $in: keys }, origin: "import" })
+
+  // Cleared once, before either language: the source name is shared, so clearing per language threw
+  // away the rows the previous pass had just written.
+  const cleared = await Gloss.deleteMany({ source: SOURCE });
+  if (cleared.deletedCount) console.log(`  cleared      ${cleared.deletedCount} previous rows`);
+
+  const plans = [
+    { targetLang: "en" as const, lang: "zh" as const, glosses: ENGLISH_FUNCTION_GLOSSES },
+    { targetLang: "de" as const, lang: "en" as const, glosses: GERMAN_FUNCTION_GLOSSES },
+  ];
+
+  for (const plan of plans) {
+  const keys = Object.keys(plan.glosses);
+  const words = await Word.find({ targetLang: plan.targetLang, lemmaKey: { $in: keys }, origin: "import" })
     .select("lemmaKey pos")
     .lean();
   const byKey = new Map(words.map((w) => [w.lemmaKey, w]));
-
-  const cleared = await Gloss.deleteMany({ source: SOURCE });
-  if (cleared.deletedCount) console.log(`  cleared      ${cleared.deletedCount} previous rows`);
+  console.log(`  ${plan.targetLang} → ${plan.lang}: ${keys.length} curated`);
 
   let written = 0;
   const missing: string[] = [];
@@ -48,7 +58,7 @@ async function main() {
     written += 1;
     ops.push({
       updateOne: {
-        filter: { targetLang: "en", lemmaKey: key, pos: word.pos ?? "", lang: "zh", source: SOURCE, text: ENGLISH_FUNCTION_GLOSSES[key] },
+        filter: { targetLang: plan.targetLang, lemmaKey: key, pos: word.pos ?? "", lang: plan.lang, source: SOURCE, text: plan.glosses[key] },
         update: { $set: { license: spec.license, generated: false, rank: 0, termPos: null } },
         upsert: true,
       },
@@ -56,13 +66,15 @@ async function main() {
   }
   if (ops.length) await Gloss.bulkWrite(ops, { ordered: false });
 
-  console.log(`  curated      ${keys.length} entries`);
-  console.log(`  matched      ${written} vocabulary entries`);
-  if (missing.length) console.log(`  not held     ${missing.length}: ${missing.slice(0, 12).join(", ")}${missing.length > 12 ? "…" : ""}`);
+  console.log(`               matched ${written} vocabulary entries`);
+  if (missing.length) console.log(`               not held: ${missing.slice(0, 10).join(", ")}${missing.length > 10 ? "…" : ""}`);
+  }
 
   const glossed = await Gloss.distinct("lemmaKey", { targetLang: "en", lang: "zh" });
-  const total = await Word.countDocuments({ targetLang: "en", origin: "import" });
-  console.log(`  coverage     ${glossed.length} of ${total} English words now have a gloss`);
+  const totalE = await Word.countDocuments({ targetLang: "en", origin: "import" });
+  const glossedDe = await Gloss.distinct("lemmaKey", { targetLang: "de", lang: "en" });
+  const totalD = await Word.countDocuments({ targetLang: "de", origin: "import" });
+  console.log(`  coverage     en ${glossed.length}/${totalE} · de ${glossedDe.length}/${totalD}`);
 
   await Provenance.deleteMany({ dataset: SOURCE });
   await Provenance.insertMany(provenanceDocs().filter((d) => d.dataset === SOURCE));
