@@ -39,6 +39,7 @@
  * about vocabulary load; coverage already accounts for repetition, because it sums over tokens.
  */
 
+import { CEFR_LEVELS, type CefrLevel } from "../lang";
 import type { Span } from "../tokenize";
 
 /**
@@ -111,4 +112,37 @@ export function unknownWords(
   }
 
   return { count: lemmas.length, lemmas, markedCount };
+}
+
+/**
+ * Which brief level to write for, given an ability estimate.
+ *
+ * **One band above the estimate.** This is a selection rule, not a difficulty rule, and it exists
+ * because of a bootstrapping deadlock measured on a real learner: reading a word "known" only proves
+ * knowledge *up to that word's difficulty*, so an estimate can never rise above the hardest word it
+ * has been shown — and generating at the estimate means it never is shown anything harder. A fresh
+ * learner reading five passages unmarked went 0.500 → 0.532 → 0.555 → 0.555 and stopped.
+ *
+ * One band above gives the estimate the information it was missing: read it unmarked and the estimate
+ * rises, mark words in it and the estimate holds. It is what i+1 means for *choosing* text rather
+ * than only for writing it.
+ *
+ * Clamped to the range briefs cover. Below A2 the vocabulary is too thin to build a scene; above B2 a
+ * generated text is not what this reader is for.
+ *
+ * Both the generate route and the pregenerator call this, so the stock cannot be written at one level
+ * while the button asks for another — which is exactly what happened when the route moved to θ+1 and
+ * the pregenerator did not.
+ */
+export function targetBriefLevel(theta: number): CefrLevel {
+  const point = levelFromTheta(theta + 1 / CEFR_LEVELS.length);
+  if (point === "A1") return "A2";
+  if (point === "C1" || point === "C2") return "B2";
+  return point;
+}
+
+/** The band an ability estimate falls in, without going through a label. */
+function levelFromTheta(theta: number): CefrLevel {
+  const index = Math.min(CEFR_LEVELS.length - 1, Math.max(0, Math.floor(theta * CEFR_LEVELS.length)));
+  return CEFR_LEVELS[index] as CefrLevel;
 }

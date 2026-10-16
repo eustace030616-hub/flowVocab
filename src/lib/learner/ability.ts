@@ -354,22 +354,41 @@ export function isLevelClaimable(
 
 /** Evidence weights. Named, because the relative sizes are the model's real content. */
 export const EVIDENCE_WEIGHT = {
-  /** An explicit "I know this" after review. The strongest and rarest signal. */
+  /** An explicit "I know this" after review. Strong: a deliberate answer. */
   confirmed: 1.5,
   /** "Not sure" but answered — modelled as evidence, not as a plain wrong answer. */
   notSure: 1,
   /**
    * The learner marked the word as unknown — a deliberate statement about themselves.
    *
-   * Deliberately heavier than any amount of passive exposure can reach: an unmarked word is assumed
-   * known, so if simply reading a paragraph twice could outweigh an explicit "I do not know this",
-   * the marking would be meaningless.
+   * Heavier than *any* amount of passive reading: exposure credit caps at 2 sessions (1.8 below), so
+   * a mark at 2.0 can never be overturned by re-reading alone — only by unmarking, or by an explicit
+   * confirmation. It is not so heavy that it cannot be recovered deliberately.
    */
-  mark: 1,
-  /** The learner opened the word. Weak and biased, but real. */
-  lookup: 0.5,
-  /** One exposure, once the word has been met enough times for it to count. */
-  exposure: 0.25,
+  mark: 2,
+  /**
+   * The learner opened the word. Deliberately weak.
+   *
+   * Weakness lives here rather than in the prior strength, which is what it used to rely on. A hover
+   * is ambiguous — curiosity, a mis-tap, checking a spelling — so it must not be able to declare
+   * ignorance of a word the learner's ability says they know. At 0.15 it cannot: a looked-up word
+   * the model places at 0.8 lands at 0.53, still on the known side.
+   */
+  lookup: 0.15,
+  /**
+   * One reading session in which the word was on screen and the learner did not mark it.
+   *
+   * This is the app's central premise — *no mark means known* — so it is worth most of a mark rather
+   * than a quarter of one. At a quarter, a word the model placed at difficulty 0.3 could not reach the
+   * known threshold from reading alone however often it was met, so a passage a learner had read and
+   * understood still came back as "24 new words".
+   *
+   * 0.9 is set by two measured requirements at once. One unmarked reading must clear the unknown
+   * threshold for a word the model puts at 0.3 — `(0.3×0.3 + 0.9) / (0.3 + 0.9) = 0.825` — and the
+   * capped total (2 × 0.9 = 1.8) must stay under the weight of a mark (2.0), so that re-reading can
+   * never overrule a learner who said they do not know the word.
+   */
+  exposure: 0.9,
 } as const;
 
 /**

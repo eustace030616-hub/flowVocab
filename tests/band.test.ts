@@ -9,7 +9,13 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { BAND_EDGES, UNKNOWN_THRESHOLD, passageBand, unknownWords } from "../src/lib/learner/band";
+import {
+  BAND_EDGES,
+  UNKNOWN_THRESHOLD,
+  passageBand,
+  targetBriefLevel,
+  unknownWords,
+} from "../src/lib/learner/band";
 import type { Span } from "../src/lib/tokenize";
 
 const word = (surface: string, lemmaKey: string, start = 0): Span =>
@@ -69,4 +75,24 @@ test("nothing marked and nothing predicted reads as easy", () => {
   const result = unknownWords(spans, { pKnownOf: () => 0.99 });
   assert.equal(result.count, 0);
   assert.equal(passageBand(result.count), "easy");
+});
+
+test("the target writes one band above the estimate, so reading can raise it", () => {
+  // The bootstrapping deadlock: an estimate cannot rise above the hardest word it has been shown, so
+  // text chosen *at* the estimate can never test whether the estimate is too low. Measured on a real
+  // learner reading five passages unmarked: 0.500 → 0.532 → 0.555 → 0.555, then it stopped.
+  assert.equal(targetBriefLevel(0.25), "B1", "an A2 estimate is served B1 text");
+  assert.equal(targetBriefLevel(0.42), "B2");
+  assert.equal(targetBriefLevel(0.75), "B2", "clamped at the top of the brief range");
+  assert.equal(targetBriefLevel(0.02), "A2", "and at the bottom — below A2 there is no scene to build");
+  assert.equal(targetBriefLevel(0.9), "B2");
+});
+
+test("the route and the pregenerator cannot disagree about the target", () => {
+  // They did: the route moved to θ+1 while the stock was still written at θ, so a stocked passage
+  // could under-serve the level the button was asking for. One function, called by both.
+  for (const theta of [0.1, 0.25, 0.4, 0.5, 0.6, 0.8, 0.95]) {
+    const level = targetBriefLevel(theta);
+    assert.ok(["A2", "B1", "B2"].includes(level), `${theta} → ${level}`);
+  }
 });

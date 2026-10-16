@@ -27,7 +27,7 @@ import { allGlossesFor, glossesByLemma, pickGloss } from "@/src/lib/learner/glos
 import { abilitiesFor, recomputeAllAbilities } from "@/src/lib/learner/profile";
 import { knownProbabilities } from "@/src/lib/learner/reading";
 import { coverageOf } from "@/src/lib/learner/coverage";
-import { passageBand, unknownWords } from "@/src/lib/learner/band";
+import { passageBand, targetBriefLevel, unknownWords } from "@/src/lib/learner/band";
 import { candidatesFor } from "@/src/lib/tokenize/rules";
 import {
   addSurfaceForm,
@@ -67,7 +67,6 @@ import { onDemandBrief } from "@/src/scripts/generate/briefs";
 import { refillBuffer } from "@/src/scripts/generate/pregenerate";
 import { deepseekProvider } from "@/src/scripts/generate/provider";
 import { loadEnv } from "@/src/scripts/env";
-import { levelFromDifficulty } from "@/src/lib/difficulty";
 import { AbilityState } from "@/src/models/AbilityState";
 import type { CefrLevel } from "@/src/lib/lang";
 
@@ -684,8 +683,8 @@ app.post("/paragraphs/generate", async (c) => {
   // the range the briefs cover: below A2 the vocabulary is too thin to build a scene, and above B2 a
   // generated text is not what this reader is for.
   const ability = abilityFor(user.userId, targetLang);
-  const point = levelFromDifficulty(ability?.theta ?? 0.25);
-  const level: CefrLevel = point === "B1" || point === "B2" ? point : "A2";
+  // One band above the estimate — see `targetBriefLevel` for why, and the measurement behind it.
+  const level = targetBriefLevel(ability?.theta ?? 0.25);
   const spec = {
     ...onDemandBrief(targetLang, level, typeof body.topic === "string" ? body.topic : undefined),
     // Unique, so every press adds a paragraph rather than replacing one. A drawn topic that happened

@@ -1,3 +1,4 @@
+import { EVIDENCE_WEIGHT } from "../src/lib/learner/ability";
 /**
  * Coverage and pKnown tests.
  *
@@ -17,7 +18,6 @@ import {
 import {
   EVIDENCE_WINDOW_HALF_LIVES,
   EVIDENCE_WINDOW_MS,
-  MODEL_PRIOR_STRENGTH,
   decayFactor,
   foldWordEvidence,
   modelPrediction,
@@ -93,10 +93,22 @@ test("word-specific evidence moves pKnown away from the model, and can move it d
 
 test("the model's prediction cannot be overturned by a single weak signal", () => {
   // Otherwise one stray hover would flip a word the learner's ability says they know.
+  //
+  // This guarantee used to live in the prior strength — the prediction weighed as much as a mark, so
+  // a 0.5 lookup could not overwhelm it. That made the prediction impossible to overturn by *reading*
+  // too, which is how a passage a learner understood came back as "24 new words". The prior is now
+  // light (0.3) and the guarantee lives in the lookup weight instead: a hover is worth 0.15.
   const pModel = modelPrediction(0.8, 0.2); // very likely known
-  const oneLookup = pKnownFor({ positive: 0, negative: 0.5 }, pModel);
+  const oneLookup = pKnownFor({ positive: 0, negative: EVIDENCE_WEIGHT.lookup }, pModel);
   assert.ok(oneLookup > 0.5, `one lookup must not declare ignorance (got ${oneLookup})`);
-  assert.ok(MODEL_PRIOR_STRENGTH >= 1);
+
+  // And the mirror guarantee, which is the one the reader actually notices: having read the word
+  // once without marking it has to be able to make it known.
+  const oneReading = pKnownFor({ positive: EVIDENCE_WEIGHT.exposure, negative: 0 }, modelPrediction(0.3, 0.2));
+  assert.ok(
+    oneReading > 0.8,
+    `one unmarked reading must be able to clear the unknown threshold (got ${oneReading})`,
+  );
 });
 
 test("evidence decays, so pKnown can fall without anything being deleted", () => {

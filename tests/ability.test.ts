@@ -144,14 +144,25 @@ test("reading past a word is evidence of knowing it", () => {
   assert.ok(many.weight < oneRead!.weight * 3);
 });
 
-test("looking a word up outweighs having read past it", () => {
-  // Otherwise a learner who consults every word would look like a learner who knows them: exposure
-  // alone is now positive evidence, so the negative signals have to be able to beat it.
+test("looking a word up lowers confidence in having read past it", () => {
+  // Consulting a word is not a sign of knowing it — but it is weaker evidence than reading past it,
+  // because the app's premise is that reading past a word *is* the statement that you know it, while
+  // a hover is ambiguous (curiosity, a mis-tap, checking a spelling). So a lookup shifts the balance
+  // without overturning a reading; a learner who really does not know the word has a mark to make,
+  // and that is what the next test guards.
+  const read = observationFor(
+    { exposures: 3, lookups: 0, marks: 0, unmarks: 0, confirmed: 0, notSure: 0 },
+    0.5,
+  );
   const consulted = observationFor(
     { exposures: 3, lookups: 2, marks: 0, unmarks: 0, confirmed: 0, notSure: 0 },
     0.5,
   );
-  assert.equal(consulted?.known, false, "consulting a word is not a sign of knowing it");
+  assert.ok(read && consulted, "both produce an observation");
+  assert.ok(
+    consulted.weight < read.weight,
+    `consulting must count for less than not consulting (${consulted.weight} vs ${read.weight})`,
+  );
 });
 
 test("an explicit mark outlasts any amount of reading past the word", () => {
@@ -173,12 +184,13 @@ test("a confirmed answer outranks an earlier lookup", () => {
 });
 
 test("a word with no net evidence produces no observation", () => {
-  // A lookup and three exposures cancel out; saying nothing is better than guessing a direction.
+  // Balanced evidence cancels out; saying nothing is better than guessing a direction.
+  // One reading (0.9) against six lookups (6 × 0.15) is the balance point at these weights.
   const balanced = observationFor(
-    { exposures: 3, lookups: 1, marks: 0, unmarks: 0, confirmed: 0, notSure: 0 },
+    { exposures: 1, lookups: 6, marks: 0, unmarks: 0, confirmed: 0, notSure: 0 },
     0.5,
   );
-  assert.ok(balanced === null || balanced.weight < 0.4);
+  assert.ok(balanced === null || balanced.weight < 0.4, `expected no signal, got ${balanced?.weight}`);
 });
 
 test("the scale is stated once and used by both directions", () => {

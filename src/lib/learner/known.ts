@@ -66,7 +66,7 @@ export const MAX_EVENTS_FOLDED = 20_000;
  * declare a learner ignorant of a word their ability says they know, and one exposure should not
  * declare them fluent in a word it says they do not.
  */
-export const MODEL_PRIOR_STRENGTH = 1;
+export const MODEL_PRIOR_STRENGTH = 0.3;
 
 /** Most exposure credit one word can earn from repetition, in evidence units. */
 const EXPOSURE_CREDIT_MAX = 2;

@@ -13,7 +13,7 @@
 import { connectDB } from "../../lib/db";
 import { abilityFor, anyAbilityUser } from "../../lib/store/learner";
 import { countBuffered, markBufferedByBrief, paragraphByBrief } from "../../lib/store/content";
-import { levelFromDifficulty } from "../../lib/difficulty";
+import { targetBriefLevel } from "../../lib/learner/band";
 import { briefIdOf, onDemandBrief } from "./briefs";
 import { deepseekProvider, describeProvider } from "./provider";
 import { generateOne, importParagraph } from "./generate";
@@ -29,11 +29,10 @@ function argOf(flag: string): string | undefined {
   return index >= 0 ? process.argv[index + 1] : undefined;
 }
 
-/** The level to write for: the learner's own if known, clamped to the range briefs cover. */
+/** The level to write for: one band above the learner's estimate, the same rule the button uses. */
 export async function levelFor(userId: string, targetLang: TargetLang): Promise<CefrLevel> {
   const ability = abilityFor(userId, targetLang);
-  const point = levelFromDifficulty(ability?.theta ?? 0.25);
-  return point === "B1" || point === "B2" ? point : "A2";
+  return targetBriefLevel(ability?.theta ?? 0.25);
 }
 
 /**
