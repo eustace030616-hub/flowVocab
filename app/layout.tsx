@@ -27,7 +27,18 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
-      <body className="min-h-full flex flex-col font-sans">{children}</body>
+      <body className="min-h-full flex flex-col font-sans">
+        {/* If the client never runs, the reader shows an empty shell and looks broken — which is
+            exactly how a blocked JavaScript bundle presents on a phone. Say so instead of leaving a
+            blank page to interpret. */}
+        <noscript>
+          <div className="p-6 text-sm text-zinc-600">
+            Flowwing needs JavaScript to show a passage. If you are seeing this, the page loaded but
+            its scripts did not — check that the server allows this address.
+          </div>
+        </noscript>
+        {children}
+      </body>
     </html>
   );
 }
