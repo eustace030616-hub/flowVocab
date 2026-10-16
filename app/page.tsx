@@ -47,6 +47,17 @@ interface AbilityView {
   fromTransfer: boolean;
 }
 
+/** One entry in the history list: enough to show it, not enough to render it. */
+interface ParagraphSummary {
+  _id: string;
+  title: string;
+  level: string | null;
+  wordCount: number;
+  source: string;
+  createdAt: string;
+  markedCount: number;
+}
+
 interface Paragraph {
   _id: string;
   targetLang: "en" | "de";
@@ -101,9 +112,10 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
   en: {
     appName: "Flowwing",
     loading: "Loading…",
-    empty: "No paragraphs for this track yet. Run the seed script.",
-    rollback: "Rollback",
-    next: "Next paragraph",
+    empty: "Nothing here yet — press Generate to write the first passage.",
+    history: "History",
+    historyEmpty: "Nothing yet — generate a paragraph to start.",
+    historyMarked: "marked",
     met: "met",
     unfamiliar: "unfamiliar",
     lookups: "looked up",
@@ -158,8 +170,6 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     appName: "Flowwing",
     loading: "加载中…",
     empty: "该学习方向暂无段落，请先运行 seed 脚本。",
-    rollback: "上一段",
-    next: "下一段",
     met: "遇见",
     unfamiliar: "生词",
     lookups: "查询",
@@ -275,9 +285,18 @@ function describeFailure(path: string, res: Response): string {
 
 export default function Home() {
   const [me, setMe] = useState<Me | null>(null);
-  const [paragraphs, setParagraphs] = useState<Paragraph[]>([]);
+  /**
+   * The short list, and the one passage open.
+   *
+   * Previously the client loaded every paragraph in full and paged through them by index, which is
+   * what the rollback button was for. Now the reader only ever moves forward: the list is a light
+   * summary (no spans, no vocabulary) and opening an entry fetches that passage alone. A history that
+   * grows without limit cannot be shipped to the client in full.
+   */
+  const [history, setHistory] = useState<ParagraphSummary[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [ready, setReady] = useState(false);
-  const [paraIndex, setParaIndex] = useState(0);
+  const [paragraph, setParagraph] = useState<Paragraph | null>(null);
   const [marked, setMarked] = useState<Set<number>>(new Set());
   const [hoveredOwner, setHoveredOwner] = useState<number | null>(null);
   const [active, setActive] = useState<ActiveItem | null>(null);
@@ -341,11 +360,31 @@ export default function Home() {
   /** True while the generator is writing; it makes one to four model calls, so it is not instant. */
   const [generating, setGenerating] = useState(false);
 
-  const paragraph = paragraphs[paraIndex] ?? null;
   const t = UI[me?.uiLocale ?? "en"];
   // Ability is per target language, so show the one for the content on screen.
   const activeAbility =
     me?.ability?.find((a) => a.targetLang === (paragraph?.targetLang ?? me?.targetLang)) ?? null;
+
+  /**
+   * Open one passage by id.
+   *
+   * One passage at a time, fetched in the shape the reader renders. `null` clears the view — a track
+   * with nothing in it yet.
+   */
+  const openParagraph = useCallback(async (id: string | null): Promise<Paragraph | null> => {
+    if (!id) {
+      setParagraph(null);
+      return null;
+    }
+    const res = await fetch(`/api/paragraphs/${id}`);
+    const data = await readJson<Paragraph>(res);
+    if (!data) {
+      setError(describeFailure(`/api/paragraphs/${id}`, res));
+      return null;
+    }
+    setParagraph(data);
+    return data;
+  }, []);
 
   const load = useCallback(async (track?: string) => {
     setError(null);
@@ -354,7 +393,8 @@ export default function Home() {
     let meData = await readJson<Me>(meRes);
     if (!meData || !Array.isArray(meData.tracks)) {
       setMe(null);
-      setParagraphs([]);
+      setHistory([]);
+      setParagraph(null);
       setError(describeFailure("/api/me", meRes));
       setReady(true);
       return;
@@ -374,19 +414,23 @@ export default function Home() {
     }
     setMe(meData);
 
-    const res = await fetch(`/api/paragraphs?targetLang=${meData.targetLang}`);
-    const data = await readJson<Paragraph[]>(res);
-    if (!data) {
-      setParagraphs([]);
+    const res = await fetch(`/api/paragraphs?targetLang=${meData.targetLang}&summary=1`);
+    const summaries = await readJson<ParagraphSummary[]>(res);
+    if (!summaries) {
+      setHistory([]);
       setError(describeFailure("/api/paragraphs", res));
-    } else {
-      setParagraphs(data);
+      setReady(true);
+      return null;
     }
 
-    setParaIndex(0);
+    setHistory(summaries);
+
+    // Open the newest passage — the one just generated, or the last one read. The list is newest
+    // first, so index 0 is the most recent.
+    const open = await openParagraph(summaries[0]?._id ?? null);
     setReady(true);
-    return data ?? [];
-  }, []);
+    return open;
+  }, [openParagraph]);
 
   useEffect(() => {
     void load();
@@ -536,16 +580,19 @@ export default function Home() {
         return;
       }
 
-      // Reload, then land on the new text rather than leaving the reader where they were.
-      const loaded = (await load(me.track)) ?? [];
-      const index = loaded.findIndex((p) => p._id === data.paragraphId);
-      if (index >= 0) setParaIndex(index);
+      // Refresh the list and open what was just written. Forward is the only direction now, so this
+      // is the reader's way onward.
+      const summaries = await readJson<ParagraphSummary[]>(
+        await fetch(`/api/paragraphs?targetLang=${paragraph?.targetLang ?? me.targetLang}&summary=1`),
+      );
+      if (summaries) setHistory(summaries);
+      await openParagraph(data.paragraphId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "generation failed");
     } finally {
       setGenerating(false);
     }
-  }, [me, paragraph, load, t.generateFailed]);
+  }, [me, paragraph, openParagraph, t.generateFailed]);
 
   const startPlacement = useCallback(async () => {
     setPlacementBusy(true);
@@ -735,16 +782,21 @@ export default function Home() {
     // Persist the mark into the paragraph list as well as the live overlay. The overlay tints the
     // current view; the list is what a later visit to this paragraph reads. Updating it no longer
     // resets anything, because the reset is keyed on the paragraph's identity string.
-    setParagraphs((prev) =>
+    // Record it on the open passage as well as in the live overlay: the overlay tints what is on
+    // screen now, the passage's own `marked` map is what a later visit reads.
+    setParagraph((prev) =>
+      prev && prev._id === paragraph._id
+        ? {
+            ...prev,
+            marked: { ...prev.marked, [String(span.start)]: isMarked ? "ignored" : "marked" },
+          }
+        : prev,
+    );
+    // And keep the history list's mark count honest without refetching it.
+    setHistory((prev) =>
       prev.map((item) =>
         item._id === paragraph._id
-          ? {
-              ...item,
-              marked: {
-                ...item.marked,
-                [String(span.start)]: isMarked ? "ignored" : "marked",
-              },
-            }
+          ? { ...item, markedCount: Math.max(0, item.markedCount + (isMarked ? -1 : 1)) }
           : item,
       ),
     );
@@ -931,7 +983,7 @@ export default function Home() {
               </span>
               {paragraph && (
                 <span className="text-xs text-zinc-400">
-                  {paragraph.wordCount} words ({paraIndex + 1}/{paragraphs.length})
+                  {paragraph.wordCount} words
                   {paragraph.level ? ` · ${paragraph.level}` : ""}
                 </span>
               )}
@@ -985,19 +1037,14 @@ export default function Home() {
               )}
             </div>
             <div className="flex items-center gap-2">
+              {/* Forward is the only direction: the reader moves on by generating something new.
+                  Paging backwards was a development shortcut and is gone. */}
               <button
-                onClick={() => setParaIndex((i) => (i === 0 ? paragraphs.length - 1 : i - 1))}
-                disabled={paragraphs.length === 0}
-                className="h-8 px-4 text-sm font-medium border border-zinc-200 text-zinc-500 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
-              >
-                {t.rollback}
-              </button>
-              <button
-                onClick={() => setParaIndex((i) => (i + 1) % Math.max(paragraphs.length, 1))}
-                disabled={paragraphs.length === 0}
+                onClick={() => void generateParagraph()}
+                disabled={generating || !me}
                 className="h-8 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition-colors"
               >
-                {t.next}
+                {generating ? t.generating : t.generate}
               </button>
             </div>
           </div>
@@ -1287,12 +1334,14 @@ export default function Home() {
               <span className="text-xs text-zinc-400">→</span>
               <span className="text-xs text-zinc-400">{me?.glossLang ?? "…"}</span>
             </div>
+            {/* History, not generation: the way onward is the button in the header now, and this
+                is how you get back to something you read before. */}
             <button
-              onClick={() => void generateParagraph()}
-              disabled={generating || !me}
-              className="mt-3 h-9 px-4 text-xs font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition-colors"
+              onClick={() => setHistoryOpen(true)}
+              disabled={!me}
+              className="mt-3 h-9 px-4 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
             >
-              {generating ? t.generating : t.generate}
+              {t.history} {history.length > 0 && <span className="text-zinc-400">{history.length}</span>}
             </button>
             <button
               onClick={() => void startPlacement()}
@@ -1311,6 +1360,65 @@ export default function Home() {
           </div>
         </aside>
       </div>
+
+      {/*
+        History: every passage for this track, newest first, as a short list. Choosing one opens it in
+        the reader — with its marks already tinted, because the passage's own `marked` map comes back
+        with it and the tint reads from that.
+      */}
+      {historyOpen && (
+        <div className="fixed inset-0 z-40 bg-white/98 backdrop-blur-sm flex flex-col">
+          <div className="w-full max-w-3xl mx-auto flex flex-col flex-1 overflow-hidden px-8 py-6">
+            <div className="flex items-baseline justify-between">
+              <h2 className="text-lg font-semibold text-zinc-800">
+                {t.history} <span className="text-zinc-400 text-sm">{history.length}</span>
+              </h2>
+              <button
+                onClick={() => setHistoryOpen(false)}
+                className="h-8 px-3 text-sm text-zinc-500 hover:text-zinc-700"
+              >
+                {t.placementClose}
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-auto mt-4">
+              {history.length === 0 ? (
+                <p className="text-sm text-zinc-400">{t.historyEmpty}</p>
+              ) : (
+                <ul className="space-y-1">
+                  {history.map((item) => (
+                    <li key={item._id}>
+                      <button
+                        onClick={() => {
+                          void openParagraph(item._id);
+                          setHistoryOpen(false);
+                        }}
+                        className="w-full text-left flex items-center justify-between gap-4 px-3 py-2 rounded-lg hover:bg-zinc-100 transition-colors"
+                      >
+                        <span className="text-sm text-zinc-700 truncate">{item.title}</span>
+                        <span className="text-xs text-zinc-400 shrink-0 flex items-center gap-2">
+                          {item.level && (
+                            <span className="px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500">
+                              {item.level}
+                            </span>
+                          )}
+                          <span>{item.wordCount}w</span>
+                          {item.markedCount > 0 && (
+                            <span className="text-amber-600">
+                              {item.markedCount} {t.historyMarked}
+                            </span>
+                          )}
+                          {item.source === "agent" && <span title="generated">✦</span>}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/*
         The placement test. A grid rather than one word at a time: 100 items on one screen is

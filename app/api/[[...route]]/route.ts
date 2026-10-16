@@ -7,13 +7,7 @@ import { Paragraph } from "@/src/models/Paragraph";
 import { Word } from "@/src/models/Word";
 import { Mark } from "@/src/models/Mark";
 import { Provenance } from "@/src/models/Provenance";
-import {
-  glossLangFor,
-  isTargetLang,
-  isTrackId,
-  TRACKS,
-  type TargetLang,
-} from "@/src/lib/lang";
+import { glossLangFor, isTargetLang, isTrackId, TRACKS, type TargetLang, type GlossLang } from "@/src/lib/lang";
 import {
   resolveUser,
   setTrack,
@@ -126,8 +120,40 @@ app.patch("/me/track", async (c) => {
 app.get("/paragraphs", async (c) => {
   const user = c.get("user");
   const targetLang = targetLangFor(c);
-  // Follow the content's language, not the learner's stored track.
   const glossLang = glossLangFor(targetLang);
+
+  const wantsSummary = c.req.query("summary") === "1";
+
+  if (wantsSummary) {
+    // The history list. Deliberately light: spans and vocabulary for every passage would grow without
+    // bound as the reader generates more, and the list needs none of it.
+    const rows = await Paragraph.find({ targetLang })
+      .sort({ createdAt: -1 })
+      .select("title level wordCount source createdAt briefId")
+      .lean();
+    const counts = await Mark.aggregate([
+      { $match: { userId: user.userId, targetLang } },
+      { $group: { _id: { paragraphId: "$paragraphId", status: "$status" }, n: { $sum: 1 } } },
+    ]);
+    const markedByParagraph = new Map<string, number>();
+    for (const row of counts) {
+      if (row._id.status !== "marked") continue;
+      const key = String(row._id.paragraphId);
+      markedByParagraph.set(key, (markedByParagraph.get(key) ?? 0) + row.n);
+    }
+
+    return c.json(
+      rows.map((row) => ({
+        _id: String(row._id),
+        title: row.title,
+        level: row.level ?? null,
+        wordCount: row.wordCount ?? 0,
+        source: row.source,
+        createdAt: row.createdAt,
+        markedCount: markedByParagraph.get(String(row._id)) ?? 0,
+      })),
+    );
+  }
 
   const paragraphs = await Paragraph.find({ targetLang })
     .sort({ difficulty: 1, createdAt: 1 })
@@ -135,10 +161,30 @@ app.get("/paragraphs", async (c) => {
 
   const out = [];
   for (const paragraph of paragraphs) {
+    out.push(await readerPayload(user.userId, paragraph, targetLang, glossLang));
+  }
+
+  return c.json(out);
+});
+
+/**
+ * Everything the reader needs for one paragraph: its spans, this learner's marks, the vocabulary
+ * behind the spans, the translations, and the coverage the model implies.
+ *
+ * Shared by the list and the single-paragraph route, because the client now loads one passage at a
+ * time from history — and two builders would eventually disagree about what the reader is given.
+ */
+async function readerPayload(
+  userId: string,
+  paragraph: { _id: unknown; content: string } & Record<string, unknown>,
+  targetLang: TargetLang,
+  glossLang: GlossLang,
+) {
+  {
     const spans = await tokenizeWithLexicon(paragraph.content, targetLang);
 
     // Marks this learner has already made, keyed by where they made them.
-    const marks = await Mark.find({ userId: user.userId, paragraphId: paragraph._id }).lean();
+    const marks = await Mark.find({ userId, paragraphId: paragraph._id }).lean();
     const marked: Record<string, string> = {};
     for (const mark of marks) marked[`${mark.charStart}`] = mark.status;
 
@@ -155,7 +201,7 @@ app.get("/paragraphs", async (c) => {
       : [];
 
     // This learner's own state, which lives in WordState rather than on the shared Word.
-    const states = await statesFor(user.userId, targetLang, keys);
+    const states = await statesFor(userId, targetLang, keys);
     // Translations from their own collection, grouped by lemma so EVERY reading is available.
     //
     // A token in running text carries no part of speech — nothing tells us "well-trained" is a
@@ -172,7 +218,7 @@ app.get("/paragraphs", async (c) => {
     for (const span of spans) {
       if (span.compoundParts?.length) compoundParts.set(span.lemmaKey, span.compoundParts);
     }
-    const known = await knownProbabilities(user.userId, targetLang, keys, {
+    const known = await knownProbabilities(userId, targetLang, keys, {
       parts: compoundParts,
     });
     const probabilities = known.probabilities;
@@ -233,23 +279,30 @@ app.get("/paragraphs", async (c) => {
       basis: known.ability,
     };
 
-    out.push({
+    return {
       ...paragraph,
       spans,
       marked,
       vocabulary,
       coverage,
       tokenizerVersion: TOKENIZER_VERSION,
-    });
+    };
   }
+}
 
-  return c.json(out);
-});
-
+/**
+ * One paragraph, in the shape the reader renders.
+ *
+ * The route used to return the raw document, which has no spans, no marks and no translations — so it
+ * could not be used to open a passage. History needs exactly that, one passage at a time, without
+ * loading every passage ever generated.
+ */
 app.get("/paragraphs/:id", async (c) => {
+  const user = c.get("user");
   const paragraph = await Paragraph.findById(c.req.param("id")).lean();
   if (!paragraph) return c.json({ error: "Not found" }, 404);
-  return c.json(paragraph);
+  const targetLang = (paragraph.targetLang ?? targetLangFor(c)) as TargetLang;
+  return c.json(await readerPayload(user.userId, paragraph, targetLang, glossLangFor(targetLang)));
 });
 
 // ── Words ─────────────────────────────────────────────────────────────────────
