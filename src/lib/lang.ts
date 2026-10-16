@@ -36,14 +36,14 @@ export const TRACKS: Record<TrackId, Track> = {
     targetLang: "en",
     glossLang: "zh",
     uiLocale: "zh",
-    label: "中文 → English",
+    label: "English",
   },
   "en-de": {
     id: "en-de",
     targetLang: "de",
     glossLang: "en",
     uiLocale: "en",
-    label: "English → Deutsch",
+    label: "German",
   },
 };
 

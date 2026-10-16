@@ -178,6 +178,10 @@ function list(items: VocabularyItem[]): string {
 export function buildUserPrompt(brief: Brief, feedback?: string[]): string {
   const parts = [
     `Topic: ${brief.topic}`,
+    // A domain, not a plot. Given "Nature", the model has to decide what happens; given a whole
+    // sentence it would only paraphrase one, and every press would produce the same beat.
+    "The topic is a domain, not a plot. Invent one small, ordinary, concrete scene inside it — " +
+      "something that happens to somebody in particular, not a general statement about the topic.",
     `Length: about ${brief.words} words in total, across ${brief.paragraphs ?? 3} paragraphs — ` +
       `roughly ${Math.round(brief.words / (brief.paragraphs ?? 3))} words each.`,
     "",

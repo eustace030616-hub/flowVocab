@@ -119,34 +119,59 @@ export function briefIdOf(spec: BriefSpec): string {
  * is a small stake, and the words it needs are everyday ones. A topic whose natural vocabulary is
  * above the level is the failure mode the German A2 brief already demonstrated.
  */
+/**
+ * What the button draws from, for either track.
+ *
+ * A single word, because that is what a topic is here: a domain the model invents a small concrete
+ * scene inside. The previous pool held whole plots — "It starts to rain and you have no umbrella" —
+ * which had two problems. It wrote the story for the model, so every press produced a variation of
+ * the same beat, and it put a sentence where the reader only needs a heading. A domain leaves the
+ * scene to the writer and fits on a phone.
+ */
 export const TOPIC_POOL: Record<TargetLang, readonly string[]> = {
   de: [
-    "It starts to rain and you have no umbrella",
-    "A parcel arrives at the wrong door",
-    "The baker has sold out of bread by nine",
-    "You find a wallet on the pavement",
-    "A neighbour's cat waits at your window every morning",
-    "The lift is broken and you live on the fifth floor",
-    "You forget your keys and wait for a friend",
-    "A small boy asks you the way to the station",
-    "The coffee machine at work stops working",
-    "You miss the last bus home",
-    "A friend gives you a plant and it grows too fast",
-    "The market moves to a different square",
+    "Nature",
+    "Animals",
+    "Weather",
+    "City life",
+    "Work",
+    "Family",
+    "Friendship",
+    "Food",
+    "Travel",
+    "Health",
+    "Money",
+    "School",
+    "Technology",
+    "Music",
+    "Sport",
+    "Neighbours",
+    "Shopping",
+    "Time",
+    "Society",
+    "Psychology",
   ],
   en: [
-    "A shop closes and the street feels different",
-    "You find a book with a name written inside",
-    "The bus driver waits for a late passenger",
-    "A cat follows you home twice in one week",
-    "Your phone dies in the middle of the day",
-    "A neighbour returns a tool you lent them",
-    "The last train leaves earlier than the sign says",
-    "You plant seeds and only one of them grows",
-    "An old photograph falls out of a library book",
-    "A small shopkeeper remembers your order",
-    "The road is closed and everyone takes the same detour",
-    "A stranger returns a glove you dropped",
+    "Nature",
+    "Animals",
+    "Weather",
+    "City life",
+    "Work",
+    "Family",
+    "Friendship",
+    "Food",
+    "Travel",
+    "Health",
+    "Money",
+    "School",
+    "Technology",
+    "Music",
+    "Sport",
+    "Neighbours",
+    "Shopping",
+    "Time",
+    "Society",
+    "Psychology",
   ],
 };
 

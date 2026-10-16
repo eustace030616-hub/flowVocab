@@ -125,7 +125,7 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     dontKnow: "Don't know this",
     iKnowThis: "I know this",
     level: "Level",
-    generate: "Generate a paragraph",
+    generate: "Generation",
     generating: "Writing…",
     generateFailed: "Could not write one that measures up",
     placement: "Placement test",
@@ -145,7 +145,7 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     placementRetake: "Take it again",
     placementOneAtATime: "Answer for this word",
     placementPartial: "answered — a shorter test gives a wider interval, not a wrong one",
-    levelUnknown: "not measured yet",
+    levelUnknown: "N/A",
     levelFromOther: "seeded from your other language",
     levelRange: "somewhere in",
     estimated: "estimated",
@@ -186,7 +186,7 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     dontKnow: "不认识",
     iKnowThis: "我认识",
     level: "水平",
-    generate: "生成新段落",
+    generate: "生成",
     generating: "生成中…",
     generateFailed: "暂时写不出合格的段落",
     placement: "定级测试",
@@ -205,7 +205,7 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     placementRetake: "重新测试",
     placementOneAtATime: "请判断这个词",
     placementPartial: "已作答 — 题目越少区间越宽，但不会偏。",
-    levelUnknown: "尚未测量",
+    levelUnknown: "N/A",
     levelFromOther: "来自另一语言的水平",
     levelRange: "大致范围",
     estimated: "估算",
@@ -1033,39 +1033,22 @@ export default function Home() {
       <header className="w-full min-h-14 bg-white border-b border-zinc-200 flex items-center justify-between gap-2 px-3 sm:px-6 py-2 shrink-0">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold text-zinc-800">{t.appName}</h1>
-          {me && (
-            <span className="text-xs text-zinc-400">
-              {me.track} · {t.language}: {me.targetLang}
-            </span>
-          )}
-          {/* The ability estimate, from the event log. A single level is shown only when the
-              interval is narrow enough to justify one; otherwise a range, or not measured at all. */}
+          {/* The level, and nothing else: the track, the language codes and the interval are all
+              still in the tooltip, but the header carries one word so it never wraps on a phone.
+              The estimate is unchanged; only how much of it is on screen. */}
           {activeAbility && (
             <span
-              className="text-xs text-zinc-400"
-              title={`θ=${activeAbility.theta.toFixed(2)} ± ${activeAbility.se.toFixed(2)} · n=${activeAbility.n.toFixed(1)}`}
+              className="text-sm font-medium text-zinc-600"
+              title={
+                `${t.level}: θ=${activeAbility.theta.toFixed(2)} ± ${activeAbility.se.toFixed(2)}` +
+                ` · n=${activeAbility.n.toFixed(1)} (${activeAbility.levelLow}–${activeAbility.levelHigh})` +
+                `${me ? ` · ${me.track} · ${me.targetLang}` : ""}` +
+                `${activeAbility.fromTransfer ? ` · ${t.levelFromOther}` : ""}`
+              }
             >
-              {t.level}:{" "}
-              {activeAbility.n === 0 && activeAbility.fromTransfer ? (
-                <span>{t.levelUnknown}</span>
-              ) : activeAbility.n === 0 ? (
-                <span>{t.levelUnknown}</span>
-              ) : activeAbility.level ? (
-                // Enough evidence to name a level outright.
-                <span className="font-medium text-zinc-600">{activeAbility.level}</span>
-              ) : (
-                // A point estimate with its interval. Marking words moves this on every click; the
-                // interval beside it is what keeps that honest while the evidence is thin.
-                <span className="text-zinc-600">
-                  ≈{activeAbility.levelPoint}{" "}
-                  <span className="text-zinc-400">
-                    ({activeAbility.levelLow}–{activeAbility.levelHigh})
-                  </span>
-                </span>
-              )}
-              {activeAbility.fromTransfer && (
-                <span className="ml-1 text-zinc-300">({t.levelFromOther})</span>
-              )}
+              {activeAbility.n === 0
+                ? t.levelUnknown
+                : (activeAbility.level ?? activeAbility.levelPoint)}
             </span>
           )}
         </div>
@@ -1107,7 +1090,7 @@ export default function Home() {
           <div className="flex items-center justify-between h-10 mb-3">
             <div className="flex items-center gap-3">
               <span className="text-sm text-zinc-500 font-medium">
-                {paragraph ? `${paragraph.title} · ${paragraph.topic}` : t.empty}
+                {paragraph ? (paragraph.topic ?? paragraph.title) : t.empty}
               </span>
               {paragraph && (
                 <span className="hidden sm:inline text-xs text-zinc-400">
@@ -1115,60 +1098,48 @@ export default function Home() {
                   {paragraph.level ? ` · ${paragraph.level}` : ""}
                 </span>
               )}
-              {coverage && (
+{coverage && (
                 <span
-                  className={`text-xs px-2 py-0.5 rounded-full ${
+                  className={`text-xs px-2 py-0.5 rounded-full font-medium ${
                     !coverage.measured
                       ? "bg-zinc-100 text-zinc-500"
-                      : coverage.verdict === "too_hard"
-                        ? "bg-amber-50 text-amber-700"
-                        : coverage.verdict === "supported"
-                          ? "bg-sky-50 text-sky-700"
-                          : "bg-emerald-50 text-emerald-700"
+                      : coverage.unknown.band === "easy"
+                        ? "bg-emerald-50 text-emerald-700"
+                        : coverage.unknown.band === "hard"
+                          ? "bg-amber-50 text-amber-700"
+                          : "bg-rose-50 text-rose-700"
                   }`}
                   title={
+                    // Everything measured is still here, one hover (or long press) away — the share
+                    // of words the reader knows, the ratio, the verdict, the count behind the band,
+                    // and the estimate it came from. The badge carries the one word a reader acts on.
                     `${t.coverageHelp}\n` +
-                    (coverage.measured && coverage.basis
-                      ? `${t.levelBasis} θ=${coverage.basis.theta.toFixed(2)} ± ${coverage.basis.se.toFixed(2)} · n=${coverage.basis.n.toFixed(0)}`
+                    (coverage.measured
+                      ? `${t.coverage} ${coverage.percent}%` +
+                        (coverage.oneIn !== null
+                          ? ` · ${t.oneIn} ${coverage.oneIn} ${t.unfamiliarWords}`
+                          : "") +
+                        ` · ${
+                          coverage.verdict === "too_hard"
+                            ? t.verdictTooHard
+                            : coverage.verdict === "supported"
+                              ? t.verdictSupported
+                              : t.verdictComfortable
+                        }` +
+                        ` · ${coverage.unknown.count} ${t.newWords}` +
+                        (coverage.basis
+                          ? `\n${t.levelBasis} θ=${coverage.basis.theta.toFixed(2)} ± ${coverage.basis.se.toFixed(2)} · n=${coverage.basis.n.toFixed(0)}`
+                          : "")
                       : t.coverageUnmeasured)
                   }
                 >
-                  {coverage.measured ? (
-                    <>
-                      {t.coverage} {coverage.percent}%
-                      {coverage.oneIn !== null && (
-                        <>
-                          {" · "}
-                          {t.oneIn} {coverage.oneIn} {t.unfamiliarWords}
-                        </>
-                      )}
-                      {" · "}
-                      {coverage.verdict === "too_hard"
-                        ? t.verdictTooHard
-                        : coverage.verdict === "supported"
-                          ? t.verdictSupported
-                          : t.verdictComfortable}
-                      {" · "}
-                      {coverage.unknown.count} {t.newWords}
-                      {" → "}
-                      {coverage.unknown.band === "easy"
-                        ? t.bandEasy
-                        : coverage.unknown.band === "hard"
-                          ? t.bandHard
-                          : t.bandVeryHard}
-                    </>
-                  ) : (
-                    <>
-                      {t.coverage} {t.coverageUnmeasured}
-                      {" · "}
-                      <button
-                        onClick={() => void startPlacement()}
-                        className="underline hover:text-zinc-700"
-                      >
-                        {t.coverageUnmeasuredHint}
-                      </button>
-                    </>
-                  )}
+                  {coverage.measured
+                    ? coverage.unknown.band === "easy"
+                      ? t.bandEasy
+                      : coverage.unknown.band === "hard"
+                        ? t.bandHard
+                        : t.bandVeryHard
+                    : t.coverageUnmeasured}
                 </span>
               )}
             </div>
