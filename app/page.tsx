@@ -1902,6 +1902,31 @@ export default function Home() {
               <h2 className="text-lg font-medium tracking-tight text-zinc-900">{t.placement}</h2>
             </div>
 
+            {/* The estimate sits at the top, under the title, where a heading's conclusion belongs —
+                and where it does not compete with the answer buttons for attention. The level is the
+                line; what to do about it is the line under. `N/A` holds the slot before there is
+                anything to say, so the block does not appear and disappear as answers arrive. */}
+            {(placement || placementBusy) && (
+              <div className="mt-2">
+                <p className="text-xs text-zinc-500">
+                  {t.level}{" "}
+                  <span className="font-medium text-zinc-800 tabular-nums">
+                    {placementEstimate && placementEstimate.answered >= 3
+                      ? (placementEstimate.level ??
+                        `${placementEstimate.levelLow}–${placementEstimate.levelHigh}`)
+                      : "N/A"}
+                  </span>
+                </p>
+                <p className="text-xs text-zinc-400 mt-1">
+                  {!placementEstimate || placementEstimate.answered < 3
+                    ? t.placementAnswerMore
+                    : placementEstimate.answered >= 10
+                      ? t.placementKeepGoing
+                      : ""}
+                </p>
+              </div>
+            )}
+
             {placement && (
               <>
                 {/* One word at a time, and the space under it is the reveal: the translation if the
@@ -1958,7 +1983,7 @@ export default function Home() {
                   )}
                 </div>
 
-                <div className="flex items-center justify-between pt-4">
+                <div className="flex items-center pt-4">
                   <button
                     onClick={exitPlacement}
                     disabled={placementBusy}
@@ -1966,29 +1991,6 @@ export default function Home() {
                   >
                     {t.placementFinish}
                   </button>
-
-                  {/* What the test is concluding, as it concludes it — and a nudge once it has
-                      enough to be worth something. There is no end, so the reader needs a reason to
-                      keep going and a way to stop. */}
-                  <div className="flex items-center gap-4 text-xs">
-                    {placementEstimate && placementEstimate.answered >= 3 ? (
-                      <span className="tabular-nums text-zinc-500">
-                        {t.level}{" "}
-                        <span className="font-medium text-zinc-800">
-                          {placementEstimate.level ??
-                            `${placementEstimate.levelLow}–${placementEstimate.levelHigh}`}
-                        </span>
-                      </span>
-                    ) : (
-                      // The slot the level will occupy, saying what fills it. Three answers is the
-                      // point at which a range means anything; before that the honest answer is that
-                      // there is nothing to estimate from yet.
-                      <span className="text-zinc-400">{t.placementAnswerMore}</span>
-                    )}
-                    {placementEstimate && placementEstimate.answered >= 10 && (
-                      <span className="text-zinc-400">{t.placementKeepGoing}</span>
-                    )}
-                  </div>
                 </div>
               </>
             )}
