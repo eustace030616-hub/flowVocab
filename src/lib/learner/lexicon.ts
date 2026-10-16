@@ -107,8 +107,25 @@ export async function tokenizeAgainst(
 
   absorb(await query([], surfaces));
 
-  const options = () => ({
-    lookup: (candidate: string) => pos.has(candidate),
+  /**
+   * The options every pass runs with, including the compiled morphology.
+   *
+   * One builder for all passes. The loop used to construct its own options inline with only
+   * `lookup`, `posOf` and `resolveForm`, so the separation and compound tables — loaded, paid for,
+   * and the whole point of the compile step — never reached the tokenizer. Every particle merge was
+   * therefore still made by the proximity heuristic, which is why "Ich mache das Fenster auf. Sie
+   * kommt an mich." came back as *aufkommen*: `mache` is a DWDS noun headword so the heuristic
+   * rejected it as a verb, the forward scan crossed the full stop, and (auf, kommen) is a real pair.
+   *
+   * The fallback pass at the end of this function did use the full set, but reaching it requires the
+   * loop to exhaust every pass without converging, which in practice never happens.
+   */
+  const options = (track?: Set<string>) => ({
+    lookup: (candidate: string) => {
+      if (pos.has(candidate)) return true;
+      track?.add(candidate);
+      return false;
+    },
     posOf: (candidate: string) => pos.get(candidate) ?? [],
     resolveForm: (form: string) => forms.get(form) ?? null,
     // Stated morphology, when compiled. The tokenizer treats a non-empty table as authoritative and
@@ -116,21 +133,20 @@ export async function tokenizeAgainst(
     separationOf: (particle: string, verb: string) =>
       separations.get(separationKey(particle, verb)) ?? null,
     hasSeparations: separations.size > 0,
+    // The particles the table actually knows, among the words in this text.
+    isParticle: (candidate: string) => {
+      for (const pair of separations.keys()) {
+        if (pair.startsWith(`${candidate}\u0000`)) return true;
+      }
+      return false;
+    },
     compoundPartsOf: (form: string) => compounds.get(form),
     hasCompounds: compounds.size > 0,
   });
 
   for (let pass = 0; pass < maxPasses; pass += 1) {
     const missed = new Set<string>();
-    const spans = tokenize(text, targetLang, {
-      lookup: (candidate: string) => {
-        if (pos.has(candidate)) return true;
-        missed.add(candidate);
-        return false;
-      },
-      posOf: (candidate: string) => pos.get(candidate) ?? [],
-      resolveForm: (form: string) => forms.get(form) ?? null,
-    });
+    const spans = tokenize(text, targetLang, options(missed));
 
     // Nothing new was requested, so another pass would produce identical spans.
     if (missed.size === 0) return spans;

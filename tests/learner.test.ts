@@ -582,3 +582,78 @@ test("a stated compound split replaces the lexicon splitter", async () => {
   const compound = spans.find((s) => s.surface === "Wortschatzaufbau")!;
   assert.deepEqual(compound.compoundParts, ["wortschatz", "aufbau"]);
 });
+
+test("a particle attaches inside its own clause, never across a full stop", async () => {
+  // The reported bug. "Ich mache das Fenster auf. Sie kommt an mich." came back as *aufkommen*:
+  // `auf` is clause-final, the host search ran forwards as well as backwards, and (auf, kommen) is a
+  // real separable verb — so the particle reached past the period into the next sentence.
+  const lex = memoryLexicon(
+    "ich", "das", "fenster:noun", "sie", "mich",
+    "machen:verb", "aufmachen:verb", "kommen:verb", "aufkommen:verb", "auf", "an",
+  );
+  lex.addForm("mache", "machen");
+  lex.addForm("kommt", "kommen");
+  lex.addSeparation("auf", "machen", "aufmachen");
+  lex.addSeparation("auf", "kommen", "aufkommen");
+
+  const spans = await tokenizeAgainst("Ich mache das Fenster auf. Sie kommt an mich.", "de", lex.query);
+  assert.equal(
+    spans.find((s) => s.surface === "mache")?.lemmaKey,
+    "aufmachen",
+    "the particle belongs to the verb in its own clause",
+  );
+  assert.equal(
+    spans.find((s) => s.surface === "kommt")?.lemmaKey,
+    "kommen",
+    "and the next sentence's verb is untouched",
+  );
+  assert.equal(
+    spans.find((s) => s.surface === "an")?.lemmaKey,
+    "an",
+    "`an mich` is a preposition, not a particle",
+  );
+});
+
+test("the host may be a noun homograph, resolved by the particle's own base form", async () => {
+  // `mache` is a DWDS noun headword ("die Mache"), so it keeps its own lemma and the stated
+  // inflection `mache → machen` is the only thing that pairs with the particle. The particle's
+  // presence is the evidence that resolves the homograph.
+  const lex = memoryLexicon("machen:verb", "aufmachen:verb", "fenster:noun", "ich", "das", "auf");
+  lex.addForm("mache", "machen");
+  lex.addSeparation("auf", "machen", "aufmachen");
+
+  const spans = await tokenizeAgainst("Ich mache das Fenster auf.", "de", lex.query);
+  assert.equal(spans.find((s) => s.surface === "mache")?.lemmaKey, "aufmachen");
+});
+
+test("the compiled table decides what a particle is, not the hand-written list", async () => {
+  // "zu" was missing from a hand-maintained set of 78 prefixes, so *zumachen* never merged. With a
+  // compiled table present the list is not consulted at all.
+  const lex = memoryLexicon(
+    "die", "tür:noun", "und", "gehen:verb",
+    "machen:verb", "zumachen:verb", "zu",
+  );
+  lex.addForm("macht", "machen");
+  lex.addSeparation("zu", "machen", "zumachen");
+
+  const spans = await tokenizeAgainst("Er macht die Tür zu und geht.", "de", lex.query);
+  assert.equal(
+    spans.find((s) => s.surface === "macht")?.lemmaKey,
+    "zumachen",
+    "a prefix the table knows is a prefix",
+  );
+});
+
+test("a compiled table reaches every pass, not only the last one", async () => {
+  // The wiring defect behind the reported bug: the tokenizer's pass loop built its options inline
+  // with only lookup/posOf/resolveForm, so the tables never arrived and the heuristic made every
+  // merge. This asserts the table is authoritative on the first pass, by stating a pair the
+  // heuristic could also invent and requiring the table's answer.
+  const lex = memoryLexicon("kommen:verb", "aufkommen:verb", "ankommen:verb", "auf", "an", "sie");
+  lex.addForm("kommt", "kommen");
+  lex.addSeparation("an", "kommen", "ankommen"); // stated
+  lex.addSeparation("auf", "kommen", "aufkommen");
+
+  const spans = await tokenizeAgainst("Sie kommt an.", "de", lex.query);
+  assert.equal(spans.find((s) => s.surface === "kommt")?.lemmaKey, "ankommen");
+});

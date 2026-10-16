@@ -90,6 +90,13 @@ export interface TokenizeOptions {
   separationOf?: (particle: string, verb: string) => string | null;
   /** Whether a separation table has been compiled. Empty means fall back to the heuristic. */
   hasSeparations?: boolean;
+  /**
+   * Whether a word is a separated prefix *according to the compiled table*.
+   *
+   * Used instead of the hand-written prefix list when the table exists, so the list cannot be the
+   * reason a real prefix is missed.
+   */
+  isParticle?: (candidate: string) => boolean;
   /** Stated compound parts for a form, when a compound table has been compiled. */
   compoundPartsOf?: (form: string) => string[] | undefined;
   hasCompounds?: boolean;
@@ -112,8 +119,21 @@ export const SEPARABLE_PARTICLES = new Set([
   "kund", "kurz", "leer", "los", "mit", "nach", "nahe", "nieder", "offen", "preis",
   "schief", "statt", "still", "teil", "tot", "voll", "vor", "voran", "voraus", "vorbei",
   "vorüber", "wahr", "warm", "weg", "weich", "weiter", "wert", "wieder", "zurecht",
-  "zurück", "zusammen", "zuwider", "zwischen", "übrig",
+  "zurück", "zusammen", "zuwider", "zwischen", "übrig", "zu",
 ]);
+
+/**
+ * Whether a word can be a separated prefix.
+ *
+ * The compiled table answers this when it is present: a prefix it has no rows for is not one, and the
+ * hand-written list is only the fallback for a clone that has not run the compile step. The list is
+ * how "zu" came to be missing — a set of 78 prefixes maintained by hand will always be missing one,
+ * and it was missing "zumachen", "zuhören", "zusehen".
+ */
+function isParticleCandidate(lemmaKey: string, options: TokenizeOptions): boolean {
+  if (options.hasSeparations && options.isParticle) return options.isParticle(lemmaKey);
+  return SEPARABLE_PARTICLES.has(lemmaKey);
+}
 
 const INSEPARABLE_PREFIXES = ["be", "emp", "ent", "er", "ge", "miss", "ver", "zer"];
 
@@ -124,6 +144,14 @@ const CLAUSE_BOUNDARY_WORDS = new Set(["und", "aber", "oder", "denn", "sondern",
 
 /** Real punctuation, as opposed to the whitespace the segmenter also reports as non-word-like. */
 const BOUNDARY_PUNCTUATION = /[.,;:!?…)»"”]/;
+
+/**
+ * Punctuation that ends a clause outright.
+ *
+ * Narrower than the boundary set above: a comma separates parts of one clause, and a separated verb
+ * can straddle one, so only these stop the search for a particle's host.
+ */
+const SENTENCE_PUNCTUATION = /[.;:!?…]/;
 
 /**
  * Whether a token ends its clause.
@@ -144,6 +172,24 @@ function isClauseFinal(spans: Span[], index: number): boolean {
     return false;
   }
   return true; // end of text
+}
+
+/**
+ * The forms under which a candidate verb might be listed in a separation table.
+ *
+ * Its own lemma first, because that is what the tokenizer already resolved; then the form a
+ * morphological source states it inflects from; then the rule-derived stems, which are all a verb
+ * with no stated inflection has.
+ */
+function hostCandidates(verb: Span, options: TokenizeOptions): string[] {
+  const out: string[] = [];
+  const push = (candidate: string | null | undefined) => {
+    if (candidate && candidate.length > 1 && !out.includes(candidate)) out.push(candidate);
+  };
+  push(verb.lemmaKey);
+  push(options.resolveForm?.(verb.surface));
+  for (const stem of candidatesFor(verb.surface, "de")) push(stem);
+  return out;
 }
 
 /** Finite-verb endings, used only in the no-lexicon fallback path. */
@@ -206,20 +252,23 @@ function attachSeparableParticles(
   for (let i = 0; i < spans.length; i++) {
     const particle = spans[i];
     if (particle.kind !== "word" || particle.absorbedInto !== undefined) continue;
-    if (!SEPARABLE_PARTICLES.has(particle.lemmaKey)) continue;
+    if (!isParticleCandidate(particle.lemmaKey, options)) continue;
     // A particle sits at the end of its clause. Anything still following it means this token is
     // doing some other job — an article, a preposition, an adjective.
     if (!isClauseFinal(spans, i)) continue;
 
-    const lo = Math.max(0, i - WINDOW);
-    const hi = Math.min(spans.length - 1, i + WINDOW);
+    // Search *backwards*, inside this clause only.
+    //
+    // A particle is clause-final, so its verb is the finite verb earlier in the same clause — never
+    // one in the next sentence. Scanning forwards as well found the wrong host across a full stop:
+    // in "Ich mache das Fenster auf. Sie kommt an mich." the particle `auf` reached past the period
+    // to `kommt`, and (auf, kommen) is a real pair, so the sentence came back as *aufkommen*.
+    const clauseStart = clauseStartBefore(spans, i);
 
-    for (let j = lo; j <= hi; j++) {
-      if (j === i) continue;
+    for (let j = i - 1; j >= clauseStart && i - j <= WINDOW; j--) {
       const verb = spans[j];
       if (verb.kind !== "word") continue;
       if (verb.absorbedInto !== undefined || verb.detached?.length) continue;
-      if (verb.lemmaKey.startsWith("zu") && j === i) continue;
 
       const merged = mergedInfinitive(particle.lemmaKey, verb, lookup, posOf, options);
       if (!merged) continue;
@@ -232,6 +281,20 @@ function attachSeparableParticles(
       break;
     }
   }
+}
+
+/**
+ * Where the current clause begins, so a particle cannot reach into an earlier or later sentence.
+ *
+ * Sentence-ending punctuation is the boundary; a comma is not, because a separated verb can straddle
+ * one without changing clause. Whitespace spans are already excluded from the token stream.
+ */
+function clauseStartBefore(spans: Span[], index: number): number {
+  for (let k = index - 1; k >= 0; k -= 1) {
+    const span = spans[k];
+    if (span.kind === "punct" && SENTENCE_PUNCTUATION.test(span.surface)) return k + 1;
+  }
+  return 0;
 }
 
 /**
@@ -258,9 +321,16 @@ function mergedInfinitive(
   // A compiled table is the answer, not a suggestion: if it has no pair for this particle and verb,
   // they do not belong together, however close they happen to sit on the page.
   if (options.hasSeparations && options.separationOf) {
-    const stated = options.separationOf(particleKey, verb.lemmaKey);
-    if (stated && (!lookup || lookup(stated))) {
-      return { lemma: stated, lemmaKey: stated, matched: true };
+    // The host's own lemma is not always the verb's base form. "Ich mache das Fenster auf" is the
+    // clear case: *Mache* is a DWDS noun headword, so `mache` keeps that lemma, while the stated
+    // inflection `mache → machen` is what pairs with the particle. The particle's presence is exactly
+    // the evidence that resolves the homograph, so its base form is tried as well as its lemma —
+    // and the rule-derived stems after that, for verbs with no stated inflection at all.
+    for (const host of hostCandidates(verb, options)) {
+      const stated = options.separationOf(particleKey, host);
+      if (stated && (!lookup || lookup(stated))) {
+        return { lemma: stated, lemmaKey: stated, matched: true };
+      }
     }
     return null;
   }
