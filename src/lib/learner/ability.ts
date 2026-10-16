@@ -252,7 +252,21 @@ export function fitAbility(
     weighted.reduce((sum, o) => sum + o.difficulty * o.weight, 0) / totalWeight;
   theta = Math.min(THETA_CEILING, Math.max(THETA_FLOOR, theta));
 
-  for (let iteration = 0; iteration < 50; iteration += 1) {
+  const logLikelihood = (at: number): number => {
+    let total = 0;
+    for (const o of weighted) {
+      const floor = o.guessing ?? guessing;
+      const p = probabilityYes(at, o.difficulty, floor);
+      // Clamped away from zero so a perfect fit does not evaluate log(0).
+      total += o.weight * Math.log(o.known ? Math.max(p, 1e-12) : Math.max(1 - p, 1e-12));
+    }
+    return total;
+  };
+
+  let bestTheta = theta;
+  let bestLikelihood = logLikelihood(theta);
+
+  for (let iteration = 0; iteration < 100; iteration += 1) {
     let gradient = 0;
     let curvature = 0;
     for (const o of weighted) {
@@ -267,13 +281,38 @@ export function fitAbility(
     if (curvature < 1e-9) break;
 
     // Newton on the log-likelihood gives a step in log-odds; dividing by the slope converts it to
-    // the difficulty axis. Omitting the scale factor overshoots by 1/0.15 and the fit oscillates.
-    const step = (ABILITY_SCALE * gradient) / curvature;
-    const next = Math.min(THETA_CEILING, Math.max(THETA_FLOOR, theta + step));
-    const converged = Math.abs(next - theta) < 1e-7;
-    theta = next;
-    if (converged) break;
+    // the difficulty axis. Omitting the scale factor overshoots by 1/0.15.
+    let step = (ABILITY_SCALE * gradient) / curvature;
+
+    // …and the scale is not enough on its own. Where the curvature is small Newton overshoots: with
+    // the prior and no observations the iterate hit a clamp, bounced to the opposite one and stopped
+    // there, so a learner who had done nothing was estimated at θ = 0.99 — and every unmeasured
+    // learner's coverage was then computed from that. Halving the step until the likelihood actually
+    // improves makes the ascent monotone and removes the oscillation.
+    const current = logLikelihood(theta);
+    let previous = theta;
+    let moved = false;
+    for (let halving = 0; halving < 40; halving += 1) {
+      const candidate = Math.min(THETA_CEILING, Math.max(THETA_FLOOR, theta + step));
+      const likelihood = logLikelihood(candidate);
+      if (likelihood >= current - 1e-12) {
+        previous = theta;
+        theta = candidate;
+        if (likelihood > bestLikelihood) {
+          bestLikelihood = likelihood;
+          bestTheta = candidate;
+        }
+        moved = Math.abs(theta - previous) > 1e-7;
+        break;
+      }
+      step /= 2;
+    }
+    if (!moved) break;
   }
+
+  // The best point visited, not the last: a step that cannot improve the likelihood leaves the
+  // iterate where it was, and the highest likelihood seen is the answer.
+  theta = bestTheta;
 
   let information = 0;
   for (const o of weighted) {

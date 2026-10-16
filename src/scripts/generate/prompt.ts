@@ -101,6 +101,8 @@ export function buildJudgeSystemPrompt(targetLang: TargetLang): string {
     "- Its sentences are unrelated to each other; the order could be shuffled without loss.",
     "- It changes subject abruptly, or piles up unrelated facts.",
     "- It contains combinations that are absurd or meaningless even if grammatical.",
+    "- The language is stilted or unnatural: a phrase no native speaker would write, a word used with",
+    "  the wrong meaning, or a sentence that only exists to place a word. Simple is fine; odd is not.",
     "- The whole passage is one long quotation, or a list rather than a scene.",
     "",
     "Pass it if a patient reader would accept it as a short, simple, connected text.",

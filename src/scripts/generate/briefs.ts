@@ -18,6 +18,15 @@ export interface BriefSpec {
   /** Target length in words, which the rubric bounds too. */
   words: number;
   /**
+   * Identity for the paragraph this brief produces, when it should not be replaced.
+   *
+   * Curated briefs upsert by `briefIdOf`, so regenerating one replaces it. The button must instead
+   * add a paragraph every time — which is what "no limit" means — so the route supplies a unique id.
+   * Without it, a drawn topic that matched a curated brief silently replaced that paragraph instead
+   * of adding one, and pressing the button appeared to do nothing.
+   */
+  briefId?: string;
+  /**
    * How many known words to offer as a register to aim at.
    *
    * Small on purpose. A large list is an instruction to write a large number of unrelated sentences;
@@ -80,4 +89,64 @@ export function briefIdOf(spec: BriefSpec): string {
     .slice(0, 5)
     .join("-");
   return `${spec.targetLang}:${spec.level}:${slug}`;
+}
+
+/**
+ * Topics for generation on demand.
+ *
+ * The curated BRIEFS are the acceptance set — fixed level, fixed topic, so a change in the generator
+ * can be compared against the same targets. These are for the button: pressing it should produce
+ * something new every time, so the topic is drawn from a pool and each press makes a new brief, and
+ * therefore a new paragraph, with no limit.
+ *
+ * Every entry has to be a scene that can be told in the level's vocabulary: something happens, there
+ * is a small stake, and the words it needs are everyday ones. A topic whose natural vocabulary is
+ * above the level is the failure mode the German A2 brief already demonstrated.
+ */
+export const TOPIC_POOL: Record<TargetLang, readonly string[]> = {
+  de: [
+    "It starts to rain and you have no umbrella",
+    "A parcel arrives at the wrong door",
+    "The baker has sold out of bread by nine",
+    "You find a wallet on the pavement",
+    "A neighbour's cat waits at your window every morning",
+    "The lift is broken and you live on the fifth floor",
+    "You forget your keys and wait for a friend",
+    "A small boy asks you the way to the station",
+    "The coffee machine at work stops working",
+    "You miss the last bus home",
+    "A friend gives you a plant and it grows too fast",
+    "The market moves to a different square",
+  ],
+  en: [
+    "A shop closes and the street feels different",
+    "You find a book with a name written inside",
+    "The bus driver waits for a late passenger",
+    "A cat follows you home twice in one week",
+    "Your phone dies in the middle of the day",
+    "A neighbour returns a tool you lent them",
+    "The last train leaves earlier than the sign says",
+    "You plant seeds and only one of them grows",
+    "An old photograph falls out of a library book",
+    "A small shopkeeper remembers your order",
+    "The road is closed and everyone takes the same detour",
+    "A stranger returns a glove you dropped",
+  ],
+};
+
+/** A brief for the generator's button: this language, the learner's level, a fresh topic. */
+export function onDemandBrief(
+  targetLang: TargetLang,
+  level: CefrLevel,
+  topic?: string,
+): BriefSpec {
+  const pool = TOPIC_POOL[targetLang];
+  const chosen = topic ?? pool[Math.floor(Math.random() * pool.length)];
+  return {
+    targetLang,
+    level,
+    topic: chosen,
+    words: level === "A2" ? 90 : level === "B1" ? 110 : 130,
+    coreSize: 15,
+  };
 }

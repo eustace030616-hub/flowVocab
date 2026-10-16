@@ -39,6 +39,8 @@ interface AbilityView {
   se: number;
   n: number;
   level: string | null;
+  /** The level at θ, always present — shown as an estimate while the interval is wide. */
+  levelPoint: string;
   levelLow: string;
   levelHigh: string;
   /** True when the number came from another language and this one has no evidence yet. */
@@ -108,6 +110,9 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     exposures: "seen",
     noGloss: "No translation yet.",
     level: "Level",
+    generate: "Generate a paragraph",
+    generating: "Writing…",
+    generateFailed: "Could not write one that measures up",
     placement: "Placement test",
     placementWarn:
       "Answer yes only if you are sure you know the word. Some of these are not real words, and claiming them lowers your result.",
@@ -161,6 +166,9 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     exposures: "扫过",
     noGloss: "暂无译文。",
     level: "水平",
+    generate: "生成新段落",
+    generating: "生成中…",
+    generateFailed: "暂时写不出合格的段落",
     placement: "定级测试",
     placementWarn: "只有在确定认识这个词时才选「认识」。其中一部分不是真词，选了会拉低结果。",
     placementKnown: "认识",
@@ -330,6 +338,8 @@ export default function Home() {
     total: number;
   } | null>(null);
   const [placementBusy, setPlacementBusy] = useState(false);
+  /** True while the generator is writing; it makes one to four model calls, so it is not instant. */
+  const [generating, setGenerating] = useState(false);
 
   const paragraph = paragraphs[paraIndex] ?? null;
   const t = UI[me?.uiLocale ?? "en"];
@@ -375,6 +385,7 @@ export default function Home() {
 
     setParaIndex(0);
     setReady(true);
+    return data ?? [];
   }, []);
 
   useEffect(() => {
@@ -491,6 +502,50 @@ export default function Home() {
     },
     [paragraph],
   );
+
+  /**
+   * Ask the server to write a new paragraph, then show it.
+   *
+   * No limit by design: every press draws a fresh topic and therefore a new brief, so a new paragraph
+   * arrives each time. The server only returns one that passed the rubric and the coherence judge —
+   * a failure comes back with its reasons rather than as text.
+   */
+  const generateParagraph = useCallback(async () => {
+    if (!me) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/paragraphs/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetLang: paragraph?.targetLang ?? me.targetLang }),
+      });
+      const data = await readJson<{
+        paragraphId?: string;
+        title?: string;
+        error?: string;
+        issues?: string[];
+      }>(res);
+
+      if (!data?.paragraphId) {
+        setError(
+          data?.error
+            ? `${t.generateFailed}: ${data.error}${data.issues?.length ? ` — ${data.issues[0]}` : ""}`
+            : describeFailure("/api/paragraphs/generate", res),
+        );
+        return;
+      }
+
+      // Reload, then land on the new text rather than leaving the reader where they were.
+      const loaded = (await load(me.track)) ?? [];
+      const index = loaded.findIndex((p) => p._id === data.paragraphId);
+      if (index >= 0) setParaIndex(index);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "generation failed");
+    } finally {
+      setGenerating(false);
+    }
+  }, [me, paragraph, load, t.generateFailed]);
 
   const startPlacement = useCallback(async () => {
     setPlacementBusy(true);
@@ -827,13 +882,21 @@ export default function Home() {
               title={`θ=${activeAbility.theta.toFixed(2)} ± ${activeAbility.se.toFixed(2)} · n=${activeAbility.n.toFixed(1)}`}
             >
               {t.level}:{" "}
-              {activeAbility.level ? (
-                <span className="font-medium text-zinc-600">{activeAbility.level}</span>
+              {activeAbility.n === 0 && activeAbility.fromTransfer ? (
+                <span>{t.levelUnknown}</span>
               ) : activeAbility.n === 0 ? (
                 <span>{t.levelUnknown}</span>
+              ) : activeAbility.level ? (
+                // Enough evidence to name a level outright.
+                <span className="font-medium text-zinc-600">{activeAbility.level}</span>
               ) : (
-                <span>
-                  {t.levelRange} {activeAbility.levelLow}–{activeAbility.levelHigh}
+                // A point estimate with its interval. Marking words moves this on every click; the
+                // interval beside it is what keeps that honest while the evidence is thin.
+                <span className="text-zinc-600">
+                  ≈{activeAbility.levelPoint}{" "}
+                  <span className="text-zinc-400">
+                    ({activeAbility.levelLow}–{activeAbility.levelHigh})
+                  </span>
                 </span>
               )}
               {activeAbility.fromTransfer && (
@@ -1225,9 +1288,16 @@ export default function Home() {
               <span className="text-xs text-zinc-400">{me?.glossLang ?? "…"}</span>
             </div>
             <button
+              onClick={() => void generateParagraph()}
+              disabled={generating || !me}
+              className="mt-3 h-9 px-4 text-xs font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition-colors"
+            >
+              {generating ? t.generating : t.generate}
+            </button>
+            <button
               onClick={() => void startPlacement()}
-              disabled={placementBusy || !me}
-              className="mt-3 h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+              disabled={placementBusy || generating || !me}
+              className="mt-2 h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
             >
               {t.placement}
             </button>

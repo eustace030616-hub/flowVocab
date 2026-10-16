@@ -35,6 +35,15 @@ import { abilitiesFor, recomputeAllAbilities } from "@/src/lib/learner/profile";
 import { knownProbabilities } from "@/src/lib/learner/reading";
 import { coverageOf } from "@/src/lib/learner/coverage";
 import { createPlacementSession, submitPlacement } from "@/src/lib/learner/placement-service";
+import { generateOne, importParagraph } from "@/src/scripts/generate/generate";
+import { onDemandBrief } from "@/src/scripts/generate/briefs";
+import { deepseekProvider } from "@/src/scripts/generate/provider";
+import { loadEnv } from "@/src/scripts/env";
+import { levelFromDifficulty } from "@/src/lib/difficulty";
+import { AbilityState } from "@/src/models/AbilityState";
+import type { CefrLevel } from "@/src/lib/lang";
+
+const env = loadEnv();
 import { wordSpans, TOKENIZER_VERSION } from "@/src/lib/tokenize";
 
 type Variables = { user: ResolvedUser };
@@ -555,6 +564,84 @@ app.post("/events", async (c) => {
   // Both languages: an English event can change the prior German is using.
   const ability = await recomputeAllAbilities(user.userId);
   return c.json({ ok: true, event: event._id, state, ability }, 201);
+});
+
+// ── Generation ────────────────────────────────────────────────────────────────
+
+/**
+ * Write a new paragraph for the learner, on demand.
+ *
+ * The generator's acceptance test runs inside this call: the text is tokenized with the reader's own
+ * tokenizer, measured against the reader's own thresholds, and judged for coherence before anything
+ * is stored. A request that cannot produce an acceptable paragraph returns the reasons rather than
+ * serving a bad one — which is the whole point of having a rubric.
+ *
+ * Slow on purpose: one to four model calls, so the client shows a spinner rather than expecting a
+ * round trip.
+ */
+app.post("/paragraphs/generate", async (c) => {
+  const user = c.get("user");
+  const body = (await c.req.json().catch(() => ({}))) as { targetLang?: unknown; level?: unknown; topic?: unknown };
+  const targetLang = targetLangFor(c, body);
+
+  if (!env.DEEPSEEK_API_KEY) {
+    return c.json(
+      { error: "no generation provider configured", detail: "set DEEPSEEK_API_KEY in app/.env.local" },
+      503,
+    );
+  }
+
+  // The level comes from the learner's own estimate, so the text arrives pitched at them. Clamped to
+  // the range the briefs cover: below A2 the vocabulary is too thin to build a scene, and above B2 a
+  // generated text is not what this reader is for.
+  const ability = await AbilityState.findOne({ userId: user.userId, targetLang }).select("theta").lean();
+  const point = levelFromDifficulty(ability?.theta ?? 0.25);
+  const level: CefrLevel = point === "B1" || point === "B2" ? point : "A2";
+  const spec = {
+    ...onDemandBrief(targetLang, level, typeof body.topic === "string" ? body.topic : undefined),
+    // Unique, so every press adds a paragraph rather than replacing one. A drawn topic that happened
+    // to match a curated brief used to overwrite that paragraph, and the button looked broken.
+    briefId: `on-demand:${targetLang}:${Date.now().toString(36)}`,
+  };
+
+  try {
+    const outcome = await generateOne(deepseekProvider(), spec);
+    if (!outcome.passed) {
+      return c.json(
+        {
+          error: "the generator could not produce an acceptable paragraph",
+          topic: spec.topic,
+          level,
+          attempts: outcome.attempts,
+          issues: outcome.issues,
+        },
+        502,
+      );
+    }
+
+    const paragraphId = await importParagraph(outcome);
+    return c.json(
+      {
+        ok: true,
+        paragraphId,
+        title: outcome.title,
+        level,
+        topic: spec.topic,
+        words: outcome.content?.split(/\s+/).filter(Boolean).length ?? 0,
+        coverage: outcome.coverage,
+        attempts: outcome.attempts,
+        modelCalls: outcome.providerCalls,
+        reasoningTokens: outcome.reasoningTokens,
+      },
+      201,
+    );
+  } catch (error) {
+    // A provider failure is the operator's to see, not a reason to serve something unmeasured.
+    return c.json(
+      { error: "generation failed", detail: error instanceof Error ? error.message.slice(0, 300) : "unknown" },
+      502,
+    );
+  }
 });
 
 // ── Placement test ────────────────────────────────────────────────────────────

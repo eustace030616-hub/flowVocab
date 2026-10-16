@@ -404,8 +404,8 @@ export async function generateOne(
   };
 }
 
-/** Write a passing paragraph, replacing any earlier generated text with the same title. */
-async function importParagraph(outcome: GenerationOutcome): Promise<string> {
+/** Write a passing paragraph, replacing any earlier one for the same brief. */
+export async function importParagraph(outcome: GenerationOutcome): Promise<string> {
   if (!outcome.content || !outcome.title) throw new Error("nothing to import");
   const spec = outcome.spec;
 
@@ -414,12 +414,13 @@ async function importParagraph(outcome: GenerationOutcome): Promise<string> {
 
   // Identity is the brief. The title is model output and changes between runs; using it as the key
   // made every regeneration a new paragraph rather than a replacement.
+  const identity = spec.briefId ?? briefIdOf(spec);
   const result = await Paragraph.findOneAndUpdate(
-    { targetLang: spec.targetLang, briefId: briefIdOf(spec) },
+    { targetLang: spec.targetLang, briefId: identity },
     {
       $set: {
         targetLang: spec.targetLang,
-        briefId: briefIdOf(spec),
+        briefId: identity,
         title: outcome.title,
         content: outcome.content,
         topic: spec.topic,

@@ -285,3 +285,34 @@ test("a level is not withheld when the interval already sits inside one band", (
   assert.equal(wide.level, null);
   assert.equal(isLevelClaimable(wide), false);
 });
+
+test("a learner who has done nothing sits at the prior, not at a clamp", () => {
+  // The bug this pins: with only the prior and no observations, Newton overshot the clamp, bounced to
+  // the opposite clamp and stopped there — so a learner who had done nothing was estimated at
+  // θ = 0.99, and every unmeasured learner's coverage was computed from that. A German paragraph read
+  // 98.9% "comfortable" for someone who had never opened the app.
+  const fresh = fitAbility([], { theta: 0.5, weight: 2 });
+  assert.ok(Math.abs(fresh.theta - 0.5) < 0.05, `θ=${fresh.theta} should stay at the prior`);
+  assert.ok(fresh.theta > 0.2 && fresh.theta < 0.8, "and never at a bound");
+  assert.equal(fresh.n, 0, "with no evidence behind it");
+  assert.ok(fresh.se > 0.15, "and a wide interval");
+
+  // An empty fit with no prior at all also stays in the middle rather than at an edge.
+  assert.equal(fitAbility([]).theta, 0.5);
+});
+
+test("one-sided evidence is reported with an interval that covers it", () => {
+  // Without a prior the likelihood is monotone, so the maximum sits at a boundary. That is the
+  // correct estimate, and the honest thing is for the standard error to say so: a bound must never
+  // look like a measurement.
+  const allKnown = fitAbility(known(0.1, 0.15, 0.2, 0.12, 0.18, 0.14));
+  assert.ok(allKnown.se > 0.5, `se=${allKnown.se} must show the estimate is unbounded above`);
+  assert.equal(allKnown.level, null, "so no level is claimed");
+  assert.equal(allKnown.levelLow, "A1", "and the interval runs the length of the scale");
+  assert.equal(allKnown.levelHigh, "C2");
+
+  // With the regulariser that production always supplies, the same evidence is a finite estimate.
+  const withPrior = fitAbility(known(0.1, 0.15, 0.2, 0.12, 0.18, 0.14), { theta: 0.5, weight: 2 });
+  assert.ok(withPrior.theta > 0.4, `the prior does not veto the evidence (${withPrior.theta})`);
+  assert.ok(withPrior.theta < 0.99, `nor allow it to run to the ceiling (${withPrior.theta})`);
+});

@@ -13,7 +13,7 @@
 
 import { AbilityState } from "../../models/AbilityState";
 import { PlacementSession } from "../../models/PlacementSession";
-import type { TargetLang } from "../lang";
+import type { CefrLevel, TargetLang } from "../lang";
 import {
   fitAbility,
   observationsFor,
@@ -59,13 +59,21 @@ const REGULARISER_WEIGHT = 2;
 const MIDPOINT_THETA = 0.5;
 
 export interface AbilityView extends AbilityEstimate {
+  /**
+   * The level at θ, always. `level` is the *claimable* one and stays null until the interval is
+   * narrow — which is correct and also why the header looked frozen: marking a few words moves θ
+   * every time, but with eight observations the interval is still three bands wide, so no label ever
+   * appeared. The point estimate is what makes the movement visible, and it is shown as an estimate
+   * with its interval beside it rather than as a measurement.
+   */
+  levelPoint: CefrLevel;
   targetLang: TargetLang;
   /** True when the estimate was centred by another language, with no evidence of its own. */
   fromTransfer: boolean;
 }
 
 function toView(targetLang: TargetLang, estimate: AbilityEstimate, fromTransfer: boolean): AbilityView {
-  return { ...estimate, targetLang, fromTransfer };
+  return { ...estimate, targetLang, fromTransfer, levelPoint: levelAtTheta(estimate.theta) };
 }
 
 /**
