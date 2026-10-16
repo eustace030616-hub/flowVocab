@@ -77,15 +77,16 @@ test("nothing marked and nothing predicted reads as easy", () => {
   assert.equal(passageBand(result.count), "easy");
 });
 
-test("the target writes one band above the estimate, so reading can raise it", () => {
-  // The bootstrapping deadlock: an estimate cannot rise above the hardest word it has been shown, so
-  // text chosen *at* the estimate can never test whether the estimate is too low. Measured on a real
-  // learner reading five passages unmarked: 0.500 → 0.532 → 0.555 → 0.555, then it stopped.
-  assert.equal(targetBriefLevel(0.25), "B1", "an A2 estimate is served B1 text");
-  assert.equal(targetBriefLevel(0.42), "B2");
-  assert.equal(targetBriefLevel(0.75), "B2", "clamped at the top of the brief range");
-  assert.equal(targetBriefLevel(0.02), "A2", "and at the bottom — below A2 there is no scene to build");
-  assert.equal(targetBriefLevel(0.9), "B2");
+test("the target is the level the estimate falls in", () => {
+  // Your level determines your text. A one-band-above rule was tried to break a bootstrapping
+  // deadlock and removed once the real cause — the evidence weights — was fixed: with an unmarked
+  // reading worth most of a mark, the estimate rises at its own level (0.500 → 0.829 over six
+  // passages), so a +1 only made the passage disagree with the level on screen.
+  assert.equal(targetBriefLevel(0.2), "A2");
+  assert.equal(targetBriefLevel(0.4), "B1", "a B1 estimate gets B1 text");
+  assert.equal(targetBriefLevel(0.6), "B2");
+  assert.equal(targetBriefLevel(0.02), "A2", "clamped at the bottom — below A2 there is no scene to build");
+  assert.equal(targetBriefLevel(0.95), "B2", "and at the top of the brief range");
 });
 
 test("the route and the pregenerator cannot disagree about the target", () => {

@@ -695,7 +695,8 @@ app.post("/paragraphs/generate", async (c) => {
   // A pregenerated passage is served immediately, and the stock is topped up afterwards without the
   // caller waiting for it. Generation is seconds rather than minutes now, but a request should still
   // never be the thing that waits.
-  const buffered = nextBufferedParagraph(targetLang);
+  // Only stock written for the level this reader is at; anything else is written on demand.
+  const buffered = nextBufferedParagraph(targetLang, level);
   if (buffered) {
     clearBuffered(buffered._id);
     void refillBuffer(user.userId, targetLang).catch(() => {

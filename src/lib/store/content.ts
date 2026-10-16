@@ -190,12 +190,27 @@ export function insertParagraph(paragraph: Omit<ParagraphRecord, "_id" | "create
 
 // ── The pregenerated stock ────────────────────────────────────────────────────
 
-/** Oldest first, so the stock is served in the order it was written. */
-export function nextBufferedParagraph(targetLang: string): ParagraphRecord | null {
-  const row = get<ParagraphRow>(
-    "SELECT * FROM paragraphs WHERE targetLang = ? AND buffered = 1 ORDER BY createdAt ASC LIMIT 1",
-    targetLang,
-  );
+/**
+ * The next stock passage at the level we actually want.
+ *
+ * Oldest first, so the stock is served in the order it was written, and **filtered by level**: a
+ * passage written for A2 must not be served to someone the estimate now places at B2. That mismatch
+ * is the whole reason the level is checked here — the stock outlives the estimate that produced it,
+ * so "there is a passage in the buffer" is not the same as "there is a passage for this reader".
+ * When nothing matches, the caller writes one, which is correct rather than fast.
+ */
+export function nextBufferedParagraph(targetLang: string, level?: string | null): ParagraphRecord | null {
+  const row = level
+    ? get<ParagraphRow>(
+        `SELECT * FROM paragraphs WHERE targetLang = ? AND buffered = 1 AND level = ?
+         ORDER BY createdAt ASC LIMIT 1`,
+        targetLang,
+        level,
+      )
+    : get<ParagraphRow>(
+        "SELECT * FROM paragraphs WHERE targetLang = ? AND buffered = 1 ORDER BY createdAt ASC LIMIT 1",
+        targetLang,
+      );
   return row ? toParagraph(row) : null;
 }
 

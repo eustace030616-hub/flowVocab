@@ -20,7 +20,7 @@ import {
   wordsByKeys,
   countWords,
 } from "../src/lib/store/dictionary";
-import { paragraphSummaries, paragraphsFor } from "../src/lib/store/content";
+import { nextBufferedParagraph, paragraphSummaries, paragraphsFor } from "../src/lib/store/content";
 import { abilityFor } from "../src/lib/store/learner";
 
 const ready = existsSync(DATABASE_PATH);
@@ -112,4 +112,14 @@ test("an ability estimate survives the move", { skip }, () => {
   // The columns are the shape the interface reads; a null where a number belongs would show as a
   // blank level rather than an error.
   assert.ok(abilityFor("no-such-user", "de") === null, "an unknown learner has no estimate");
+});
+
+test("the stock is served only at the level asked for", { skip }, () => {
+  // A passage written for A2 must not be served to a reader the estimate now places at B2 — the stock
+  // outlives the estimate that produced it.
+  const a2 = nextBufferedParagraph("de", "A2");
+  const b2 = nextBufferedParagraph("de", "B2");
+  for (const [level, row] of [["A2", a2], ["B2", b2]] as const) {
+    if (row) assert.equal(row.level, level, `stock for ${level} should be ${level}`);
+  }
 });
