@@ -9,7 +9,13 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { RUBRIC_LIMITS, bandFor, checkParagraph, measureParagraph } from "../src/lib/content/rubric";
+import {
+  RUBRIC_LIMITS,
+  bandFor,
+  checkParagraph,
+  checkPassage,
+  measureParagraph,
+} from "../src/lib/content/rubric";
 import type { CefrLevel } from "../src/lib/lang";
 
 /** A candidate of `count` distinct words, all at one difficulty. */
@@ -283,5 +289,148 @@ test("a high unknown count is still reported", () => {
   assert.ok(
     verdict.issues.every((issue) => !issue.includes("unknown words")),
     "but a high count alone does not reject a passage — only coverage does",
+  );
+});
+
+/**
+ * ── Passages ────────────────────────────────────────────────────────────────────────────────
+ *
+ * The failure modes a longer text has and a single paragraph cannot: restatement, an unbalanced
+ * shape, a fragment for a last paragraph.
+ */
+
+/** Words with surfaces, so sentences can be compared. `n` distinct lemmas, all at `difficulty`. */
+function sentence(prefix: string, n: number, difficulty: number, glossed = true) {
+  const tokens: Array<{ lemmaKey: string; kind: string; surface?: string }> = [];
+  for (let i = 0; i < n; i += 1) {
+    tokens.push({ lemmaKey: `${prefix}${i}`, kind: "word", surface: `${prefix}${i}` });
+    if (i < n - 1) tokens.push({ lemmaKey: ".", kind: "punct", surface: " " });
+  }
+  tokens.push({ lemmaKey: ".", kind: "punct", surface: "." });
+  void difficulty;
+  void glossed;
+  return tokens;
+}
+
+const A2_CENTRE = bandFor("A2").centre;
+const difficultyAt = (d: number) => () => d;
+
+test("a three-paragraph passage with progression passes", () => {
+  const paragraphs = [
+    sentence("a", 70, A2_CENTRE),
+    sentence("b", 70, A2_CENTRE),
+    sentence("c", 70, A2_CENTRE),
+  ];
+  const result = checkPassage(paragraphs, {
+    level: "A2",
+    difficultyOf: difficultyAt(A2_CENTRE),
+    hasGloss: () => true,
+  });
+  assert.equal(result.metrics.paragraphCount, 3);
+  assert.equal(result.metrics.wordTokens, 210);
+  assert.deepEqual(result.metrics.paragraphWords, [70, 70, 70]);
+  assert.deepEqual(result.metrics.newLemmaShare, [1, 1, 1], "each paragraph is new material");
+  assert.ok(result.passed, result.issues.join("; "));
+});
+
+test("one paragraph is a paragraph, not a passage", () => {
+  const result = checkPassage([sentence("a", 120, A2_CENTRE)], {
+    level: "A2",
+    difficultyOf: difficultyAt(A2_CENTRE),
+    hasGloss: () => true,
+  });
+  assert.equal(result.passed, false);
+  assert.ok(
+    result.issues.some((i) => i.startsWith("too few paragraphs")),
+    result.issues.join("; "),
+  );
+});
+
+test("a paragraph that restates the passage is rejected for bringing nothing new", () => {
+  // The multi-paragraph failure the objective rubric would otherwise miss: every paragraph passes on
+  // its own, and the text says the same thing three times.
+  const first = sentence("a", 40, A2_CENTRE);
+  const result = checkPassage([first, sentence("a", 40, A2_CENTRE), sentence("b", 40, A2_CENTRE)], {
+    level: "A2",
+    difficultyOf: difficultyAt(A2_CENTRE),
+    hasGloss: () => true,
+  });
+  assert.equal(result.metrics.newLemmaShare[1], 0, "the second paragraph reuses every word");
+  assert.ok(
+    result.issues.some((i) => i.includes("paragraph 2 brings nothing new")),
+    result.issues.join("; "),
+  );
+});
+
+test("a repeated sentence is caught", () => {
+  // Long enough to carry content — a repeated four-word formula is how simple prose works, and the
+  // fixture has to reflect that or the check rejects ordinary A2 text.
+  const once = sentence("a", 20, A2_CENTRE);
+  const other = sentence("b", 20, A2_CENTRE);
+  const third = sentence("c", 20, A2_CENTRE);
+  const result = checkPassage([once, other, [...once]], {
+    level: "A2",
+    difficultyOf: difficultyAt(A2_CENTRE),
+    hasGloss: () => true,
+  });
+  assert.equal(result.metrics.repeatedSentences.length, 1);
+  assert.ok(
+    result.issues.some((i) => i.includes("sentence is repeated")),
+    result.issues.join("; "),
+  );
+});
+
+test("a hard paragraph is named by position, not averaged away", () => {
+  const easy = sentence("a", 40, A2_CENTRE);
+  const hard = sentence("h", 40, 0.95); // far above an A2 reader
+  const result = checkPassage([easy, hard, sentence("c", 40, A2_CENTRE)], {
+    level: "A2",
+    difficultyOf: (key) => (key.startsWith("h") ? 0.95 : A2_CENTRE),
+    hasGloss: () => true,
+  });
+  assert.equal(result.passed, false);
+  assert.ok(
+    result.issues.some((i) => i.startsWith("paragraph 2 is too hard")),
+    `the failing paragraph must be identifiable: ${result.issues.join("; ")}`,
+  );
+});
+
+test("a fragment for a last paragraph is rejected", () => {
+  const result = checkPassage(
+    [sentence("a", 60, A2_CENTRE), sentence("b", 60, A2_CENTRE), sentence("c", 8, A2_CENTRE)],
+    { level: "A2", difficultyOf: difficultyAt(A2_CENTRE), hasGloss: () => true },
+  );
+  assert.ok(
+    result.issues.some((i) => i.includes("paragraph 3 is a fragment")),
+    result.issues.join("; "),
+  );
+});
+
+test("describing an object instead of naming it is caught", () => {
+  // Observed: "Ich habe kein Gerät für Schutz." for "Ich habe keinen Regenschirm." — it passed every
+  // other check and the coherence judge three times out of three.
+  const withDevice = [
+    { lemmaKey: "ich", kind: "word", surface: "Ich" },
+    { lemmaKey: "haben", kind: "word", surface: "habe" },
+    { lemmaKey: "kein", kind: "word", surface: "kein" },
+    { lemmaKey: "gerät", kind: "word", surface: "Gerät" },
+    { lemmaKey: ".", kind: "punct", surface: "." },
+  ];
+  const filler = (prefix: string, n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      lemmaKey: `${prefix}${i}`,
+      kind: "word",
+      surface: `${prefix}${i}`,
+    }));
+
+  const result = checkPassage([withDevice, filler("b", 70), filler("c", 70)], {
+    level: "A2",
+    difficultyOf: difficultyAt(A2_CENTRE),
+    hasGloss: () => true,
+  });
+  assert.deepEqual(result.metrics.avoidanceNouns, ["gerät"]);
+  assert.ok(
+    result.issues.some((i) => i.includes("describes something instead of naming it")),
+    result.issues.join("; "),
   );
 });

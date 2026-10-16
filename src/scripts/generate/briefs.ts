@@ -15,8 +15,16 @@ export interface BriefSpec {
   targetLang: TargetLang;
   level: CefrLevel;
   topic: string;
-  /** Target length in words, which the rubric bounds too. */
+  /** Target length in words for the whole passage, which the rubric bounds too. */
   words: number;
+  /**
+   * How many paragraphs to write.
+   *
+   * Three: a scene, a complication, a resolution. Four is allowed by the rubric (the model may need
+   * the room) but three is what the prompt asks for, because a four-paragraph ask at a controlled
+   * vocabulary usually buys a thin last paragraph rather than a better story.
+   */
+  paragraphs?: number;
   /**
    * Identity for the paragraph this brief produces, when it should not be replaced.
    *
@@ -28,6 +36,9 @@ export interface BriefSpec {
   briefId?: string;
   /**
    * How many known words to offer as a register to aim at.
+   *
+   * Raised from 15 when passages became three paragraphs: a register for a 90-word text is not a
+   * register for a 300-word one, and a thin list is what pushes the writer above the level.
    *
    * Small on purpose. A large list is an instruction to write a large number of unrelated sentences;
    * fifty-five words produced exactly that.
@@ -45,37 +56,42 @@ export const BRIEFS: BriefSpec[] = [
     // asking for a level of language the level does not have. The model's own topic-word proposals
     // for it scored 0 usable out of 15. Rain, a bus and no umbrella is a scene A2 can tell.
     topic: "It starts to rain and you have no umbrella",
-    words: 90,
-    coreSize: 15,
+    words: 160,
+    paragraphs: 2,
+    coreSize: 25,
   },
   {
     targetLang: "de",
     level: "B1",
     topic: "The train is late and a stranger explains why it is worth the wait",
-    words: 110,
-    coreSize: 15,
+    words: 330,
+    paragraphs: 3,
+    coreSize: 25,
   },
   {
     targetLang: "de",
     level: "B2",
     topic: "A short account of moving to a new city and what was hardest about it",
-    words: 130,
-    coreSize: 15,
+    words: 390,
+    paragraphs: 3,
+    coreSize: 25,
   },
   // English, for the Chinese-speaking track.
   {
     targetLang: "en",
     level: "A2",
     topic: "A lost dog comes back three days later, cleaner than when it left",
-    words: 90,
-    coreSize: 15,
+    words: 160,
+    paragraphs: 2,
+    coreSize: 25,
   },
   {
     targetLang: "en",
     level: "B1",
     topic: "Why a small town decided to close its main street to cars",
-    words: 110,
-    coreSize: 15,
+    words: 330,
+    paragraphs: 3,
+    coreSize: 25,
   },
 ];
 
@@ -146,7 +162,12 @@ export function onDemandBrief(
     targetLang,
     level,
     topic: chosen,
-    words: level === "A2" ? 90 : level === "B1" ? 110 : 130,
-    coreSize: 15,
+    // Whole-passage length: three paragraphs of roughly 90-130 words, which the rubric bounds.
+    // Three paragraphs, but a total the level's vocabulary can sustain: A2 at 300 words measured
+    // 91-92% coverage per paragraph against a 93% floor, because the words to fill 300 words at A2 do
+    // not exist at A2. That is a fact about the level, not a fault in the text.
+    words: level === "A2" ? 160 : level === "B1" ? 330 : 390,
+    paragraphs: level === "A2" ? 2 : 3,
+    coreSize: 25,
   };
 }

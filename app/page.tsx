@@ -1210,7 +1210,7 @@ export default function Home() {
             }}
           >
             {paragraph ? (
-              <p className="text-lg leading-relaxed text-zinc-800 select-text">
+              <p className="text-lg leading-relaxed text-zinc-800 select-text whitespace-pre-line">
                 {paragraph.spans.map((span) => {
                   if (span.kind === "punct") {
                     return <span key={span.start}>{span.surface}</span>;

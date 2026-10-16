@@ -40,8 +40,10 @@ export interface Brief {
   level: CefrLevel;
   /** What the text is about, in the learner's own frame of reference. */
   topic: string;
-  /** Target length in words. */
+  /** Target length in words, for the whole passage. */
   words: number;
+  /** How many paragraphs to write. Three or four is a scene with room for a turn. */
+  paragraphs?: number;
   core: VocabularyItem[];
   target: VocabularyItem[];
 }
@@ -62,6 +64,21 @@ export function buildSystemPrompt(brief: Brief): string {
     "- A single small scene or event, with a beginning and an end.",
     "- Every sentence must follow from the one before it. If a sentence could be moved anywhere else",
     "  in the passage without changing anything, it does not belong.",
+    "",
+    `Structure it as exactly ${brief.paragraphs ?? 3} substantial paragraphs — about ` +
+      `${Math.round(brief.words / (brief.paragraphs ?? 3))} words each, not three short ones — ` +
+      `and give each one a job:`,
+    "- Paragraph 1 sets the scene: who, where, and what is already true.",
+    "- Paragraph 2 introduces the complication: the thing that goes wrong or is missing.",
+    "- Paragraph 3 (and 4, if you write four) resolves it, and the last sentence ends the scene.",
+    "",
+    "Across paragraphs:",
+    "- Each paragraph must move the story forward. A paragraph that only restates what the reader",
+    "  already knows is wrong even if its sentences are all correct.",
+    "- Do not repeat a sentence, and do not open consecutive paragraphs the same way.",
+    "- Keep the same people and place throughout. No new characters in the last paragraph.",
+    `- Each paragraph should be roughly ${Math.round((brief.paragraphs ? brief.words / brief.paragraphs : brief.words) / 25) * 25} words: four to eight sentences of ordinary length.`,
+    "  A paragraph of one or two sentences is a fragment, not a paragraph.",
     "- Concrete and ordinary: something happens, someone does something, there is a small outcome.",
     "- At most one short quotation, and never the whole passage inside quotation marks.",
     "- No lists of unrelated facts, no abrupt changes of subject, no absurd combinations.",
@@ -76,7 +93,7 @@ export function buildSystemPrompt(brief: Brief): string {
     "  forcing an awkward phrase to avoid it. A simpler event told naturally beats a strained one.",
     "",
     "Reply with JSON only, no code fences:",
-    '{"title": "short title", "content": "the passage"}',
+    `{"title": "short title", "paragraphs": ["first paragraph", "second", "third"]}`,
   ].join("\n");
 }
 
@@ -100,9 +117,21 @@ export function buildJudgeSystemPrompt(targetLang: TargetLang): string {
     "Fail a passage if any of these is true:",
     "- Its sentences are unrelated to each other; the order could be shuffled without loss.",
     "- It changes subject abruptly, or piles up unrelated facts.",
+    "- A paragraph restates what an earlier paragraph already said, or the passage never gets",
+    "  anywhere: the same situation repeated three times is not a passage.",
+    "- It stops without resolving anything, or introduces a new person or place in the last",
+    "  paragraph that the rest of the text has not prepared.",
+    "- Paragraphs are wildly different in length or difficulty, so one reads like a different text.",
     "- It contains combinations that are absurd or meaningless even if grammatical.",
     "- The language is stilted or unnatural: a phrase no native speaker would write, a word used with",
     "  the wrong meaning, or a sentence that only exists to place a word. Simple is fine; odd is not.",
+    "- **It describes an ordinary thing instead of naming it.** This is the failure to look for",
+    "  hardest. A writer held to a small vocabulary will avoid a word it thinks is too hard and",
+    "  explain the object instead — \"a device for protection\" for an umbrella, \"a thing for the",
+    "  rain\" for a coat. To the writer that looks like obeying the constraint; to a reader it is",
+    "  broken language, because no native speaker says it. For each object the text describes,",
+    "  ask yourself what the ordinary word is. If the text went around it, fail the passage and say",
+    "  which phrase is the problem.",
     "- The whole passage is one long quotation, or a list rather than a scene.",
     "",
     "Pass it if a patient reader would accept it as a short, simple, connected text.",
@@ -149,7 +178,8 @@ function list(items: VocabularyItem[]): string {
 export function buildUserPrompt(brief: Brief, feedback?: string[]): string {
   const parts = [
     `Topic: ${brief.topic}`,
-    `Length: about ${brief.words} words.`,
+    `Length: about ${brief.words} words in total, across ${brief.paragraphs ?? 3} paragraphs — ` +
+      `roughly ${Math.round(brief.words / (brief.paragraphs ?? 3))} words each.`,
     "",
     `CORE vocabulary (the reader already knows these — build the passage from them):\n${list(brief.core)}`,
     "",
@@ -252,8 +282,21 @@ export function parseGenerated(text: string): GeneratedParagraph | null {
 
   for (const candidate of candidates) {
     try {
-      const parsed = JSON.parse(candidate) as { title?: unknown; content?: unknown };
-      const content = typeof parsed.content === "string" ? parsed.content.trim() : "";
+      const parsed = JSON.parse(candidate) as {
+        title?: unknown;
+        content?: unknown;
+        paragraphs?: unknown;
+      };
+      // The array form is what the prompt now asks for: it makes the paragraph structure explicit
+      // rather than something inferred from blank lines, which a model may or may not emit.
+      const fromArray = Array.isArray(parsed.paragraphs)
+        ? parsed.paragraphs.filter((p): p is string => typeof p === "string" && p.trim().length > 0)
+        : [];
+      const content = fromArray.length
+        ? fromArray.map((p) => p.trim()).join("\n\n")
+        : typeof parsed.content === "string"
+          ? parsed.content.trim()
+          : "";
       if (!content) continue;
       const title = typeof parsed.title === "string" ? parsed.title.trim() : "";
       return { title: title || "Untitled", content };

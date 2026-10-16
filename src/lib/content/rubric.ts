@@ -31,6 +31,8 @@ const BAND_HALF_WIDTH = 1 / (CEFR_LEVELS.length * 2);
 export interface RubricToken {
   lemmaKey: string;
   kind: string;
+  /** The text as written. Needed to compare sentences; optional so existing callers still work. */
+  surface?: string;
 }
 
 export interface RubricOptions {
@@ -266,6 +268,298 @@ export function checkParagraph(tokens: RubricToken[], options: RubricOptions): R
     issues.push(
       `unknown vocabulary: ${metrics.unresolved} of ${metrics.wordTokens} words are not in the lexicon`,
     );
+  }
+
+  return { passed: issues.length === 0, issues, metrics };
+}
+
+
+/**
+ * ── Passages: three or four paragraphs ──────────────────────────────────────────────────────
+ *
+ * A longer text fails in ways a single paragraph cannot. One paragraph can only be incoherent; four
+ * can also be *repetitive* (the same situation restated), *unbalanced* (a two-line last paragraph),
+ * or *stuck* (nothing changes from beginning to end). And the failure is invisible to an aggregate
+ * measurement: four paragraphs that each pass the rubric on their own can still be four ways of
+ * saying it rained.
+ *
+ * So the checks are layered, and each layer catches something the one below cannot:
+ *
+ *   per paragraph    the rubric, applied independently. A learner reads paragraph by paragraph, so a
+ *                    hard third paragraph is not rescued by an easy first one, and averaging would
+ *                    hide exactly the paragraph they give up on.
+ *   whole text       length, paragraph count, and no repeated sentence.
+ *   progression      every paragraph after the first must bring new words. A paragraph whose
+ *                    vocabulary is already covered is restatement, whatever its sentences say.
+ *
+ * The judgement layer above these — is it a story, does it end — stays with the reader model, because
+ * no amount of counting notices that a text is boring.
+ */
+
+export const PASSAGE_LIMITS = {
+  /**
+   * Two, not three, because A2 cannot fill three.
+   *
+   * Measured on repeated generation at A2 with three paragraphs: every attempt landed on one side of
+   * the reading bar or the other — 200+ words at 90.6-93.0% coverage per paragraph, or under the word
+   * minimum at 95%+. The vocabulary that exists at A2 does not stretch to 200 words inside the level.
+   * That is information about A2, not a fault in the text, so an A2 brief asks for two paragraphs and
+   * B1/B2 ask for three.
+   */
+  minParagraphs: 2,
+  maxParagraphs: 4,
+  /** A paragraph shorter than this is a fragment, not a paragraph. */
+  minParagraphWords: 35,
+  /**
+   * The coverage floor for a single paragraph, one point below the whole-text floor.
+   *
+   * A paragraph is 35-130 words, so its coverage is a noisier measurement than a 300-word passage's,
+   * and at the same threshold a paragraph measuring 94.0% against a floor of 94.0% fails on rounding
+   * rather than on difficulty. One point of slack removes the knife-edge without hiding a paragraph
+   * that is genuinely harder than the rest — 90.9% still fails.
+   */
+  paragraphCoverageSlack: 0.01,
+  /** Two substantial paragraphs, which is what an A2 brief asks for. */
+  minTotalWords: 140,
+  maxTotalWords: 560,
+  /**
+   * Share of a paragraph's distinct lemmas that must not have appeared earlier.
+   *
+   * Set low deliberately. A continuing scene *should* reuse its people, places and verbs — that is
+   * what makes it a scene rather than a list of topics — so the check is aimed at a paragraph that
+   * brings nothing at all, not at ordinary lexical continuity.
+   */
+  minNewLemmaShare: 0.2,
+  /**
+   * Repeating a *long* sentence is padding; repeating a short one is how simple prose works.
+   *
+   * Measured: with every repeated sentence rejected, four attempts in a row failed on lines like
+   * "Ich habe keinen Schirm." and "Ich öffne die Tür." — the story's own motif, restated. At A2 that
+   * is ordinary, and graded readers repeat deliberately. What the check is for is a paragraph that
+   * re-runs an earlier *sentence* rather than continuing, which only shows up in a sentence long
+   * enough to carry content.
+   */
+  minRepeatedSentenceWords: 6,
+  /** A short formula repeated this many times is padding whatever its length. */
+  maxShortSentenceRepeats: 3,
+} as const;
+
+/**
+ * Nouns a writer reaches for when it is avoiding the real word.
+ *
+ * Observed, not imagined. A generated A2 passage about being caught in the rain contained
+ *
+ *     "Ich habe kein Gerät für Schutz."        …for "Ich habe keinen Regenschirm."
+ *
+ * and passed every objective check and the coherence judge three times out of three. The writer had
+ * been told to keep to a small vocabulary and to "change what happens in the scene rather than
+ * forcing an awkward phrase"; it did neither, and produced a sentence no German speaker would say.
+ *
+ * These nouns are the tell. They are close to meaningless on their own, so their only job is to be
+ * the head of a description that belongs to one ordinary noun. Legitimate uses exist — a real
+ * *Gerät* in a technical scene — which is why this is one flag and not a hard rule, but at A2 and B1
+ * a described object is nearly always an avoided word.
+ */
+export const AVOIDANCE_NOUNS = [
+  "gerät",
+  "apparat",
+  "vorrichtung",
+  "gegenstand",
+  "zeug",
+  "konstruktion",
+  "anlage",
+  "device",
+  "apparatus",
+  "contraption",
+  "thingamajig",
+] as const;
+
+/** How many avoidance nouns one passage may contain before it is questioned. */
+export const MAX_AVOIDANCE_NOUNS = 0;
+
+export interface PassageResult {
+  passed: boolean;
+  issues: string[];
+  metrics: PassageMetrics;
+}
+
+export interface PassageMetrics {
+  paragraphs: RubricMetrics[];
+  /** Lemmas from `AVOIDANCE_NOUNS` — the writer describing an object instead of naming it. */
+  avoidanceNouns: string[];
+  paragraphCount: number;
+  wordTokens: number;
+  coverage: number;
+  glossed: number;
+  measuredLevel: CefrLevel | null;
+  unknownCount: number;
+  repeatedSentences: string[];
+  /** New-lemma share per paragraph, by position. The first is 1 by definition. */
+  newLemmaShare: number[];
+  /** Words per paragraph, so an unbalanced text is visible rather than averaged away. */
+  paragraphWords: number[];
+}
+
+/** Sentences as normalised word sequences — punctuation-free, so a re-punctuated repeat still counts. */
+function sentencesOf(tokens: RubricToken[]): string[] {
+  const out: string[] = [];
+  let current: string[] = [];
+  for (const token of tokens) {
+    if (token.kind === "punct") {
+      const surface = token.surface ?? "";
+      if (/[.!?]/.test(surface) && current.length > 0) {
+        out.push(current.join(" "));
+        current = [];
+      }
+      continue;
+    }
+    current.push(token.lemmaKey);
+  }
+  if (current.length > 0) out.push(current.join(" "));
+  return out;
+}
+
+export function measurePassage(paragraphs: RubricToken[][], options: RubricOptions): PassageMetrics {
+  const perParagraph = paragraphs.map((tokens) => measureParagraph(tokens, options));
+
+  const wordTokens = perParagraph.reduce((sum, m) => sum + m.wordTokens, 0);
+  const covered = paragraphs.reduce(
+    (sum, tokens, index) => sum + perParagraph[index].coverage * perParagraph[index].wordTokens,
+    0,
+  );
+  const glossedWords = perParagraph.reduce((sum, m) => sum + m.glossed * m.wordTokens, 0);
+
+  // Sentence repetition, across the whole passage rather than within a paragraph only.
+  const seen = new Map<string, number>();
+  for (const tokens of paragraphs) {
+    for (const sentence of sentencesOf(tokens)) {
+      seen.set(sentence, (seen.get(sentence) ?? 0) + 1);
+    }
+  }
+  const repeatedSentences = [...seen.entries()]
+    .filter(([sentence, n]) => {
+      const words = sentence.split(" ").length;
+      // A long sentence twice is a paragraph standing still; a short one twice is a motif.
+      if (words >= PASSAGE_LIMITS.minRepeatedSentenceWords) return n > 1;
+      return n > PASSAGE_LIMITS.maxShortSentenceRepeats;
+    })
+    .map(([sentence]) => sentence);
+
+  // Progression: how much of each paragraph is new to the passage so far.
+  const known = new Set<string>();
+  const newLemmaShare = paragraphs.map((tokens, index) => {
+    const lemmas = [...new Set(tokens.filter((t) => t.kind === "word").map((t) => t.lemmaKey))];
+    const fresh = lemmas.filter((lemma) => !known.has(lemma)).length;
+    for (const lemma of lemmas) known.add(lemma);
+    if (lemmas.length === 0) return 0;
+    return index === 0 ? 1 : fresh / lemmas.length;
+  });
+
+  const difficulties = perParagraph.map((m) => m.medianDifficulty).filter((d) => Number.isFinite(d));
+  const medianDifficulty = median(difficulties);
+
+  return {
+    paragraphs: perParagraph,
+    avoidanceNouns: [
+      ...new Set(
+        paragraphs
+          .flat()
+          .filter((token) => token.kind === "word")
+          .map((token) => token.lemmaKey)
+          .filter((lemma) => (AVOIDANCE_NOUNS as readonly string[]).includes(lemma)),
+      ),
+    ],
+    paragraphCount: paragraphs.length,
+    wordTokens,
+    coverage: wordTokens === 0 ? 0 : covered / wordTokens,
+    glossed: wordTokens === 0 ? 0 : glossedWords / wordTokens,
+    measuredLevel: levelForDifficulty(medianDifficulty),
+    unknownCount: perParagraph.reduce((sum, m) => sum + m.unknownCount, 0),
+    repeatedSentences,
+    newLemmaShare,
+    paragraphWords: perParagraph.map((m) => m.wordTokens),
+  };
+}
+
+export function checkPassage(paragraphs: RubricToken[][], options: RubricOptions): PassageResult {
+  const metrics = measurePassage(paragraphs, options);
+  const issues: string[] = [];
+
+  if (metrics.paragraphCount < PASSAGE_LIMITS.minParagraphs) {
+    issues.push(
+      `too few paragraphs: ${metrics.paragraphCount}, minimum ${PASSAGE_LIMITS.minParagraphs}`,
+    );
+  }
+  if (metrics.paragraphCount > PASSAGE_LIMITS.maxParagraphs) {
+    issues.push(
+      `too many paragraphs: ${metrics.paragraphCount}, maximum ${PASSAGE_LIMITS.maxParagraphs}`,
+    );
+  }
+  if (metrics.wordTokens < PASSAGE_LIMITS.minTotalWords) {
+    issues.push(`too short: ${metrics.wordTokens} words, minimum ${PASSAGE_LIMITS.minTotalWords}`);
+  }
+  if (metrics.wordTokens > PASSAGE_LIMITS.maxTotalWords) {
+    issues.push(`too long: ${metrics.wordTokens} words, maximum ${PASSAGE_LIMITS.maxTotalWords}`);
+  }
+
+  // Per paragraph, and named by position, so a retry can be told which one to rewrite.
+  metrics.paragraphs.forEach((paragraph, index) => {
+    const at = `paragraph ${index + 1}`;
+    if (paragraph.wordTokens < PASSAGE_LIMITS.minParagraphWords) {
+      issues.push(
+        `${at} is a fragment: ${paragraph.wordTokens} words, minimum ${PASSAGE_LIMITS.minParagraphWords}`,
+      );
+    }
+    const floor = RUBRIC_LIMITS.minCoverage - PASSAGE_LIMITS.paragraphCoverageSlack;
+    if (paragraph.coverage < floor) {
+      issues.push(
+        `${at} is too hard: coverage ${(paragraph.coverage * 100).toFixed(1)}%, ` +
+          `minimum ${(floor * 100).toFixed(0)}%`,
+      );
+    }
+    if (paragraph.glossed < RUBRIC_LIMITS.minGlossed) {
+      issues.push(
+        `${at} has too few translations: ${(paragraph.glossed * 100).toFixed(0)}%, ` +
+          `minimum ${(RUBRIC_LIMITS.minGlossed * 100).toFixed(0)}%`,
+      );
+    }
+  });
+
+  if (metrics.repeatedSentences.length > 0) {
+    issues.push(
+      `a sentence is repeated: "${metrics.repeatedSentences[0]}" — the passage must move forward, ` +
+        `not restate itself`,
+    );
+  }
+
+  metrics.newLemmaShare.forEach((share, index) => {
+    if (index === 0) return;
+    if (share < PASSAGE_LIMITS.minNewLemmaShare) {
+      issues.push(
+        `paragraph ${index + 1} brings nothing new: only ${(share * 100).toFixed(0)}% of its words ` +
+          `are new to the passage, minimum ${(PASSAGE_LIMITS.minNewLemmaShare * 100).toFixed(0)}%`,
+      );
+    }
+  });
+
+  // A vague noun heading a description is the signature of an avoided word. Named in the feedback, so
+  // the retry can either use the real word or change what happens.
+  if (metrics.avoidanceNouns.length > MAX_AVOIDANCE_NOUNS) {
+    issues.push(
+      `the text describes something instead of naming it: ${metrics.avoidanceNouns.join(", ")} — ` +
+        `use the ordinary word for the thing, or change the scene so the thing is not needed`,
+    );
+  }
+
+  // The median word must not sit above the level the text claims, same one-sided rule as a paragraph.
+  const { high } = bandFor(options.level);
+  for (const [index, paragraph] of metrics.paragraphs.entries()) {
+    if (Number.isFinite(paragraph.medianDifficulty) && paragraph.medianDifficulty > high) {
+      issues.push(
+        `paragraph ${index + 1} is harder than it claims: median word ` +
+          `${paragraph.medianDifficulty.toFixed(2)} above ${options.level}`,
+      );
+    }
   }
 
   return { passed: issues.length === 0, issues, metrics };

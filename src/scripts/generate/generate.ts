@@ -28,7 +28,14 @@ import { assertShippable } from "../../lib/licence/datasets";
 import { levelMidpoint } from "../../lib/difficulty";
 import { glossLangFor, type CefrLevel, type TargetLang } from "../../lib/lang";
 import { tokenizeWithLexicon } from "../../lib/learner/lexicon";
-import { RUBRIC_LIMITS, UNKNOWN_TARGET, checkParagraph, measureParagraph } from "../../lib/content/rubric";
+import {
+  PASSAGE_LIMITS,
+  RUBRIC_LIMITS,
+  UNKNOWN_TARGET,
+  checkParagraph,
+  checkPassage,
+  measureParagraph,
+} from "../../lib/content/rubric";
 import { BRIEFS, briefIdOf, type BriefSpec } from "./briefs";
 import { deepseekProvider, describeProvider, type Provider } from "./provider";
 import {
@@ -76,6 +83,20 @@ function bandFor(level: CefrLevel): { low: number; high: number; centre: number 
  * are the words a reader at this level knows well and which still carry meaning. Target words come
  * from the level's own band — the new material.
  */
+/**
+ * Split a reply into paragraphs.
+ *
+ * Blank lines are the intended separator and what the prompt asks for. A single-paragraph reply comes
+ * back as one element, which `checkPassage` then rejects for having too few paragraphs — a real
+ * signal, not a parsing failure, and the retry feedback says so.
+ */
+export function splitParagraphs(content: string): string[] {
+  return content
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter((paragraph) => paragraph.length > 0);
+}
+
 async function sampleVocabulary(targetLang: TargetLang, level: CefrLevel, size: number) {
   const { low, high } = bandFor(level);
   const floor = Math.max(0, low - 0.45);
@@ -216,10 +237,10 @@ export async function generateOne(
   let lastIssues: string[] = [];
   let lastMetrics: { coverage: number; measuredLevel: CefrLevel | null } = { coverage: 0, measuredLevel: null };
 
-  // Bounded output. A 90-130 word passage is roughly 200 tokens plus the JSON envelope, and thinking
-  // is disabled, so there is no reason to allow more — the API's own default in thinking mode is 64K,
-  // which is what previously let a single call run for minutes.
-  const budget = Number(process.env.DEEPSEEK_MAX_TOKENS || 1200);
+  // Bounded output, sized for a *passage*: three paragraphs of 90-130 words is 300-400 words, which
+  // in German runs to roughly 700-900 tokens with the JSON envelope. Reasoning is disabled, so the
+  // budget is only a ceiling — but a ceiling below the text is how a reply gets truncated mid-JSON.
+  const budget = Number(process.env.DEEPSEEK_MAX_TOKENS || 2000);
 
   let unusableReplies = 0;
   while (attempts < MAX_ATTEMPTS && unusableReplies < MAX_UNUSABLE_REPLIES) {
@@ -261,6 +282,10 @@ export async function generateOne(
     }
 
     // Measured with the reader's tokenizer and the reader's thresholds — not a paraphrase of them.
+    //
+    // Paragraph by paragraph, because that is how it is read. A passage that averages out well can
+    // still contain one paragraph the reader gives up on, and averaging is exactly what hides it.
+    const paragraphs = splitParagraphs(parsed.content);
     const spans = await tokenizeWithLexicon(parsed.content, spec.targetLang);
     const keys = [...new Set(spans.filter((s) => s.kind === "word").map((s) => s.lemmaKey))];
     const words = wordsByKeys(spec.targetLang, keys, { origin: "import" });
@@ -271,23 +296,33 @@ export async function generateOne(
     }
 
     const glossKeys = glossKeySet(spec.targetLang, glossLangFor(spec.targetLang), keys);
+    const rubricOptions = {
+      level: spec.level,
+      difficultyOf: (key: string) => difficultyOf.get(key),
+      hasGloss: (key: string) => glossKeys.has(key),
+    };
 
-    const verdict = checkParagraph(
-      spans.map((s) => ({ lemmaKey: s.lemmaKey, kind: s.kind })),
-      {
-        level: spec.level,
-        difficultyOf: (key) => difficultyOf.get(key),
-        hasGloss: (key) => glossKeys.has(key),
-      },
+    const paragraphTokens = await Promise.all(
+      paragraphs.map(async (text) =>
+        (await tokenizeWithLexicon(text, spec.targetLang)).map((s) => ({
+          lemmaKey: s.lemmaKey,
+          kind: s.kind,
+          surface: s.surface,
+        })),
+      ),
     );
+    const verdict = checkPassage(paragraphTokens, rubricOptions);
 
     lastIssues = verdict.issues;
-    lastMetrics = { coverage: verdict.metrics.coverage, measuredLevel: verdict.metrics.measuredLevel };
+    lastMetrics = {
+      coverage: verdict.metrics.coverage,
+      measuredLevel: verdict.metrics.measuredLevel,
+    };
     if (!verdict.passed) {
       options.onAttempt?.(
-        `    attempt ${attempts}: rejected by the rubric · ${verdict.metrics.wordTokens} words · ` +
-          `coverage ${(verdict.metrics.coverage * 100).toFixed(1)}% · ` +
-          `median word ${verdict.metrics.medianDifficulty.toFixed(2)} · ${completion.reasoningTokens} reasoning · ` +
+        `    attempt ${attempts}: rejected by the rubric · ${verdict.metrics.paragraphCount} paragraphs · ` +
+          `${verdict.metrics.wordTokens} words · coverage ${(verdict.metrics.coverage * 100).toFixed(1)}% · ` +
+          `${completion.reasoningTokens} reasoning · ` +
           verdict.issues.slice(0, 2).join("; "),
       );
     }
@@ -322,8 +357,7 @@ export async function generateOne(
 
       options.onAttempt?.(
         `    attempt ${attempts}: measures up · judge ${accepts}/${samples} accept` +
-          // The text itself, because a rejection is not diagnosable from a list of complaints.
-          (coherent ? "" : ` · "${parsed.content.slice(0, 80)}…"`),
+          (coherent ? "" : ` · ${problems.slice(0, 2).join("; ") || "no reason given"}`),
       );
 
       if (!coherent) {
@@ -331,6 +365,12 @@ export async function generateOne(
           "The passage was rejected as incoherent. Fix exactly this:",
           ...problems.slice(0, 5),
           "Rewrite it as one scene where each sentence follows from the previous one.",
+        ];
+        // Carried out of the loop as well as into the retry: a rejection whose reason is discarded is
+        // not diagnosable from outside, which is exactly what happened while testing this.
+        lastIssues = [
+          `rejected by the coherence judge (${accepts}/${samples} accept)`,
+          ...problems.slice(0, 4),
         ];
         continue;
       }
