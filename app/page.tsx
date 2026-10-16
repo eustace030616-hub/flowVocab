@@ -347,7 +347,15 @@ export default function Home() {
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [ready, setReady] = useState(false);
+  /**
+   * Something is being fetched for the reader.
+   *
+   * Switching language is the case that made this necessary: the old passage stayed on screen while
+   * the new track's list and passage arrived, so the reader watched the previous language's text sit
+   * there and then swap. A placeholder that occupies the same space is better than a stale page and
+   * better than an empty one.
+   */
+  const [loading, setLoading] = useState(true);
   const [paragraph, setParagraph] = useState<Paragraph | null>(null);
   const [marked, setMarked] = useState<Set<number>>(new Set());
   /** Whether the open passage is kept on purpose. Mirrors `paragraph.starred`, and moves on tap. */
@@ -425,6 +433,38 @@ export default function Home() {
    * One passage at a time, fetched in the shape the reader renders. `null` clears the view — a track
    * with nothing in it yet.
    */
+  /**
+   * What the reader shows while something is being fetched.
+   *
+   * Bars in the reading measure — same type size, same leading, same box padding — so the passage
+   * arrives into exactly the space the placeholder occupied. Three blocks, because a passage is
+   * three paragraphs and the height should be roughly right as well as the position.
+   */
+  const skeleton = (blocks = 3) => (
+    <div className="space-y-8" aria-hidden="true">
+      {Array.from({ length: blocks }).map((_, block) => (
+        <div key={block} className="space-y-4">
+          {[100, 94, 98, 62].map((width, line) => (
+            <div
+              key={line}
+              className="h-4 rounded-sm bg-zinc-100 animate-pulse"
+              style={{ width: `${width}%`, animationDelay: `${(block * 4 + line) * 60}ms` }}
+            />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+
+  /** One bar sized like a line of chrome, for the heading and the metadata. */
+  const skeletonLine = (width: string) => (
+    <span
+      className="inline-block h-3 rounded-sm bg-zinc-100 animate-pulse"
+      style={{ width }}
+      aria-hidden="true"
+    />
+  );
+
   /** History as the reader sees it: everything except the passage they are living in. */
   const browsableHistory = useMemo(
     () => history.filter((item) => item._id !== currentId),
@@ -448,7 +488,9 @@ export default function Home() {
   const openHistoryPassage = useCallback(
     async (id: string) => {
       setBrowsing(true);
+      setLoading(true);
       await openParagraph(id);
+      setLoading(false);
     },
     // `openParagraph` is stable; listing it keeps the lint honest.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -467,7 +509,9 @@ export default function Home() {
       const index = browsableHistory.findIndex((item) => item._id === openId);
       const next = browsableHistory[(index === -1 ? 0 : index) + direction];
       if (!next) return;
+      setLoading(true);
       await openParagraph(next._id);
+      setLoading(false);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [browsableHistory, paragraph?._id],
@@ -490,6 +534,7 @@ export default function Home() {
 
   const load = useCallback(async (track?: string) => {
     setError(null);
+    setLoading(true);
 
     const meRes = await fetch("/api/me");
     let meData = await readJson<Me>(meRes);
@@ -498,7 +543,7 @@ export default function Home() {
       setHistory([]);
       setParagraph(null);
       setError(describeFailure("/api/me", meRes));
-      setReady(true);
+      setLoading(false);
       return;
     }
 
@@ -521,7 +566,7 @@ export default function Home() {
     if (!summaries) {
       setHistory([]);
       setError(describeFailure("/api/paragraphs", res));
-      setReady(true);
+      setLoading(false);
       return null;
     }
 
@@ -532,7 +577,7 @@ export default function Home() {
     setCurrentId(summaries[0]?._id ?? null);
     setBrowsing(false);
     const open = await openParagraph(summaries[0]?._id ?? null);
-    setReady(true);
+    setLoading(false);
     return open;
   }, [openParagraph]);
 
@@ -1176,7 +1221,7 @@ export default function Home() {
           {/* On a phone the sidebar is hidden, so its two actions live here instead. */}
           <button
             onClick={() => setHistoryOpen(true)}
-            disabled={!me}
+            disabled={!me || loading}
             className="fv-touch md:hidden h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-sm hover:bg-zinc-100 disabled:opacity-50 transition-colors"
           >
             {t.history}
@@ -1187,7 +1232,7 @@ export default function Home() {
           {!browsing && (
             <button
               onClick={() => void startPlacement()}
-              disabled={placementBusy || generating || !me}
+              disabled={placementBusy || generating || loading || !me}
               className="fv-touch md:hidden h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-sm hover:bg-zinc-100 disabled:opacity-50 transition-colors"
             >
               {t.test}
@@ -1213,7 +1258,8 @@ export default function Home() {
                 <button
                   key={track.id}
                   onClick={() => void load(track.id)}
-                  className={`fv-touch px-2 text-xs font-medium transition-colors ${
+                  disabled={loading}
+                  className={`fv-touch px-2 text-xs font-medium transition-colors disabled:opacity-50 ${
                     me.track === track.id
                       ? "bg-zinc-900 text-white"
                       : "text-zinc-500 hover:bg-zinc-100"
@@ -1243,7 +1289,11 @@ export default function Home() {
                 className="text-sm font-medium text-zinc-700 truncate"
                 title={paragraph ? (paragraph.topic ?? paragraph.title) : undefined}
               >
-                {paragraph ? truncateWords(paragraph.topic ?? paragraph.title) : t.empty}
+                {loading
+                  ? skeletonLine("72px")
+                  : paragraph
+                    ? truncateWords(paragraph.topic ?? paragraph.title)
+                    : t.empty}
               </span>
 
               {/* Where you are in the list. Navigating history by memory with no position is how you
@@ -1261,9 +1311,14 @@ export default function Home() {
                   left to right as one statement: how long it is, how hard it is, what you can do. */}
               <div className="flex items-center gap-2 min-w-0">
                 <span className="text-xs text-zinc-400 truncate">
-                  {paragraph ? `${paragraph.wordCount} ${t.words}` : ""}
+                  {loading
+                    ? skeletonLine("56px")
+                    : paragraph
+                      ? `${paragraph.wordCount} ${t.words}`
+                      : ""}
                 </span>
-                {coverage && (
+                {loading && <span className="shrink-0">{skeletonLine("48px")}</span>}
+                {!loading && coverage && (
                   // A label with a hairline, not a coloured pill: colour would compete with the one
                   // accent the style allows, and the word already carries the verdict.
                   <span
@@ -1302,7 +1357,7 @@ export default function Home() {
                 {paragraph && (
                   <button
                     onClick={() => void toggleStar()}
-                    disabled={!me}
+                    disabled={!me || loading}
                     aria-pressed={starred}
                     title={starred ? t.unstar : t.star}
                     className={`fv-touch h-8 w-8 text-sm leading-none rounded-sm border transition-colors disabled:opacity-50 ${
@@ -1339,7 +1394,7 @@ export default function Home() {
                 ) : (
                   <button
                     onClick={() => void generateParagraph()}
-                    disabled={generating || !me}
+                    disabled={generating || loading || !me}
                     className="fv-touch h-8 px-4 text-xs font-medium bg-zinc-900 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50 transition-colors"
                   >
                     {generating ? t.generating : t.generate}
@@ -1373,7 +1428,9 @@ export default function Home() {
               if (canHover) void toggleMark(ownerStart);
             }}
           >
-            {paragraph ? (
+            {loading ? (
+              skeleton()
+            ) : paragraph ? (
               <p className="text-lg leading-relaxed text-zinc-800 select-text whitespace-pre-line">
                 {paragraph.spans.map((span) => {
                   if (span.kind === "punct") {
@@ -1414,10 +1471,8 @@ export default function Home() {
                     </p>
                     <p className="text-xs text-zinc-500">{error}</p>
                   </div>
-                ) : ready ? (
-                  t.empty
                 ) : (
-                  t.loading
+                  t.empty
                 )}
               </div>
             )}
