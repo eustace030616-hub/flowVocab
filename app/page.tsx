@@ -488,9 +488,7 @@ export default function Home() {
   const openHistoryPassage = useCallback(
     async (id: string) => {
       setBrowsing(true);
-      setLoading(true);
       await openParagraph(id);
-      setLoading(false);
     },
     // `openParagraph` is stable; listing it keeps the lint honest.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -509,26 +507,31 @@ export default function Home() {
       const index = browsableHistory.findIndex((item) => item._id === openId);
       const next = browsableHistory[(index === -1 ? 0 : index) + direction];
       if (!next) return;
-      setLoading(true);
       await openParagraph(next._id);
-      setLoading(false);
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [browsableHistory, paragraph?._id],
   );
 
   const openParagraph = useCallback(async (id: string | null): Promise<Paragraph | null> => {
+    // The placeholder is raised here rather than by each caller, because a caller that forgets is a
+    // path that fetches with the previous passage still on screen — which is exactly what going back
+    // from history to the live passage did.
+    setLoading(true);
     if (!id) {
       setParagraph(null);
+      setLoading(false);
       return null;
     }
     const res = await fetch(`/api/paragraphs/${id}`);
     const data = await readJson<Paragraph>(res);
     if (!data) {
       setError(describeFailure(`/api/paragraphs/${id}`, res));
+      setLoading(false);
       return null;
     }
     setParagraph(data);
+    setLoading(false);
     return data;
   }, []);
 
