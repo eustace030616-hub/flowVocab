@@ -559,11 +559,20 @@ export default function Home() {
     setGenerating(true);
     setError(null);
     try {
-      const res = await fetch("/api/paragraphs/generate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetLang: paragraph?.targetLang ?? me.targetLang }),
-      });
+      // A deliberate pause, hardcoded rather than real: a pregenerated passage is served instantly,
+      // and an instantaneous button both reads as fake and lets one determined press drain the stock
+      // faster than it can be refilled. Two to three seconds is roughly what writing one costs and
+      // keeps the pace honest.
+      const pause = 2000 + Math.random() * 1000;
+
+      const [res] = await Promise.all([
+        fetch("/api/paragraphs/generate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetLang: paragraph?.targetLang ?? me.targetLang }),
+        }),
+        new Promise((resolve) => setTimeout(resolve, pause)),
+      ]);
       const data = await readJson<{
         paragraphId?: string;
         title?: string;
