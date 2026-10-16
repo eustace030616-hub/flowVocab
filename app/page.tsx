@@ -1737,7 +1737,7 @@ export default function Home() {
             <button
               onClick={() => setHistoryOpen(true)}
               disabled={!me}
-              className="mt-4 h-9 px-4 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-sm hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+              className="fv-touch mt-4 h-8 px-4 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-sm hover:bg-zinc-100 disabled:opacity-50 transition-colors"
             >
               {t.history} {history.length > 0 && <span className="text-zinc-400">{history.length}</span>}
             </button>
@@ -1823,15 +1823,15 @@ export default function Home() {
       )}
 
       {/*
-        The placement test. A grid rather than one word at a time: 100 items on one screen is
-        answered in a couple of minutes, and the yes/no decision is meant to be fast and instinctive
-        — the protocol warns against over-claiming, and deliberating invites it.
+        The placement test: one word at a time, yes or no, exitable at any point. A grid of 100
+        items was tried and rejected — a wall of words invites scanning and over-claiming, where a
+        single word on a blank page asks the only question the test is about.
       */}
-      {(placement || placementResult) && (
+      {(placementBusy || placement || placementResult) && (
         <div className="fixed inset-0 z-50 bg-white/98 backdrop-blur-sm flex flex-col">
           <div className="w-full max-w-5xl mx-auto flex flex-col flex-1 overflow-hidden px-8 py-6">
             <div className="flex items-baseline justify-between">
-              <h2 className="text-lg font-semibold text-zinc-800">{t.placement}</h2>
+              <h2 className="text-lg font-medium tracking-tight text-zinc-900">{t.placement}</h2>
               {placement && (
                 <span className="text-xs text-zinc-400">
                   {Object.keys(placementAnswers).length}/{placement.items.length} {t.placementAnswered}
@@ -1843,7 +1843,7 @@ export default function Home() {
               <>
                 {/* One word at a time. The progress bar is the only ornament: it tells the learner
                     how much is left without inviting them to plan their answers. */}
-                <div className="h-1 bg-zinc-100 rounded-md mt-4 overflow-hidden">
+                <div className="h-2 bg-zinc-100 rounded-sm mt-4 overflow-hidden">
                   <div
                     className="h-full bg-zinc-800 transition-all"
                     style={{
@@ -1854,7 +1854,7 @@ export default function Home() {
 
                 <div className="flex-1 flex flex-col items-center justify-center">
                   <p className="text-sm text-zinc-400">{t.placementOneAtATime}</p>
-                  <p className="text-4xl font-semibold text-zinc-800 mt-4 mb-10">
+                  <p className="text-4xl font-medium tracking-tight text-zinc-900 mt-4 mb-10">
                     {placement.items[placementIndex]?.text}
                   </p>
                   <div className="flex items-center gap-4">
@@ -1871,7 +1871,7 @@ export default function Home() {
                       {t.placementUnknown}
                     </button>
                   </div>
-                  <p className="text-xs text-amber-700 bg-amber-50 rounded-md px-4 py-2 mt-10 max-w-md text-center">
+                  <p className="text-xs text-amber-700 border-l-2 border-amber-400 pl-4 mt-10 max-w-md text-left">
                     {t.placementWarn}
                   </p>
                 </div>
@@ -1880,7 +1880,7 @@ export default function Home() {
                   <button
                     onClick={exitPlacement}
                     disabled={placementBusy}
-                    className="h-9 px-4 text-sm text-zinc-500 hover:text-zinc-700 disabled:opacity-50"
+                    className="fv-touch h-8 px-2 text-xs font-medium text-zinc-500 hover:text-zinc-700 disabled:opacity-50"
                   >
                     {t.placementExit}
                   </button>
@@ -1892,12 +1892,49 @@ export default function Home() {
               </>
             )}
 
+            {placementBusy && !placement && !placementResult && (
+              <>
+                <div className="h-2 bg-zinc-100 rounded-sm mt-4 overflow-hidden">
+                  <div className="h-full w-0 bg-zinc-800" />
+                </div>
+                <div className="flex-1 flex flex-col items-center justify-center">
+                  <p className="text-sm text-zinc-400">{t.placementOneAtATime}</p>
+                  <span
+                    className="inline-block h-10 w-48 rounded-sm bg-zinc-100 animate-pulse mt-4 mb-10"
+                    aria-hidden="true"
+                  />
+                  <div className="flex items-center gap-4">
+                    <button
+                      disabled
+                      className="h-11 px-8 text-sm font-medium bg-emerald-600 text-white rounded-sm opacity-50"
+                    >
+                      {t.placementKnown}
+                    </button>
+                    <button
+                      disabled
+                      className="h-11 px-8 text-sm font-medium border border-zinc-300 text-zinc-600 rounded-sm opacity-50"
+                    >
+                      {t.placementUnknown}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between pt-4">
+                  <button
+                    onClick={exitPlacement}
+                    className="fv-touch h-8 px-2 text-xs font-medium text-zinc-500 hover:text-zinc-700"
+                  >
+                    {t.placementExit}
+                  </button>
+                </div>
+              </>
+            )}
+
             {placementResult && (
               <div className="flex-1 flex flex-col justify-center">
                 <div className="max-w-md">
                   {/* The level is only named when the interval supports it; otherwise the range,
                       which is the same honesty rule the header follows. */}
-                  <p className="text-3xl font-semibold text-zinc-800">
+                  <p className="text-4xl font-medium tracking-tight text-zinc-900">
                     {placementResult.level ?? `${placementResult.levelLow}–${placementResult.levelHigh}`}
                   </p>
                   <p className="text-xs text-zinc-400 mt-1">
@@ -1909,32 +1946,28 @@ export default function Home() {
                       {placementResult.answered}/{placementResult.sessionSize} {t.placementPartial}
                     </p>
                   )}
-                  <dl className="mt-6 space-y-1.5 text-sm">
-                    <div className="flex justify-between">
-                      <dt className="text-zinc-500">{t.placementHits}</dt>
-                      <dd className="text-zinc-700">
-                        {placementResult.hits}/{placementResult.total}
-                      </dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-zinc-500">{t.placementFalseAlarms}</dt>
-                      <dd className="text-zinc-700">
-                        {placementResult.falseAlarms} ({(placementResult.falseAlarmRate * 100).toFixed(0)}%)
-                      </dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-zinc-500">{t.placementCorrected}</dt>
-                      <dd className="text-zinc-700">{placementResult.corrected}</dd>
-                    </div>
-                    <div className="flex justify-between">
-                      <dt className="text-zinc-500">d′</dt>
-                      <dd className="text-zinc-700">{placementResult.dPrime.toFixed(2)}</dd>
-                    </div>
+                  {/* Label column, content column, flush left — the same shape as the word popover's
+                      metadata. Right-aligned values across a wide gap make the eye travel for every
+                      line; a column does not. */}
+                  <dl className="grid grid-cols-[144px_1fr] gap-x-4 gap-y-2 mt-8 text-sm">
+                    <dt className="text-zinc-500">{t.placementHits}</dt>
+                    <dd className="text-zinc-800 tabular-nums">
+                      {placementResult.hits}/{placementResult.total}
+                    </dd>
+                    <dt className="text-zinc-500">{t.placementFalseAlarms}</dt>
+                    <dd className="text-zinc-800 tabular-nums">
+                      {placementResult.falseAlarms} ({(placementResult.falseAlarmRate * 100).toFixed(0)}%)
+                    </dd>
+                    <dt className="text-zinc-500">{t.placementCorrected}</dt>
+                    <dd className="text-zinc-800 tabular-nums">{placementResult.corrected}</dd>
+                    <dt className="text-zinc-500">d′</dt>
+                    <dd className="text-zinc-800 tabular-nums">{placementResult.dPrime.toFixed(2)}</dd>
                   </dl>
-                  <div className="flex items-center gap-2 mt-6">
+                  <div className="flex items-center gap-2 mt-8">
+
                     <button
                       onClick={() => setPlacementResult(null)}
-                      className="h-9 px-4 text-sm font-medium bg-zinc-900 text-white rounded-sm hover:bg-zinc-800"
+                      className="fv-touch h-8 px-4 text-sm font-medium bg-zinc-900 text-white rounded-sm hover:bg-zinc-800"
                     >
                       {t.placementClose}
                     </button>
@@ -1942,7 +1975,7 @@ export default function Home() {
                         newest completed test is folded into the estimate. */}
                     <button
                       onClick={() => void startPlacement()}
-                      className="h-9 px-4 text-sm text-zinc-500 hover:text-zinc-700"
+                      className="fv-touch h-8 px-4 text-sm text-zinc-500 hover:text-zinc-700"
                     >
                       {t.placementRetake}
                     </button>
