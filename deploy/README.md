@@ -34,6 +34,57 @@ The alternative is rebuilding it there, which needs MongoDB and Docker: run the 
 in order, then `npm run migrate:mongo-to-sqlite`. That path exists but it is a long one, and
 the file is already built.
 
+## What was done, and how to do it again
+
+```bash
+# 1. Node 24 (Debian 13 ships 20, which has no `node:sqlite`)
+TARBALL=$(curl -s https://nodejs.org/dist/latest-v24.x/ | grep -oE "node-v24\.[0-9]+\.[0-9]+-linux-arm64\.tar\.xz" | head -1)
+curl -sLO "https://nodejs.org/dist/latest-v24.x/$TARBALL"
+sudo mkdir -p /usr/local/lib/nodejs && sudo tar -xJf "$TARBALL" -C /usr/local/lib/nodejs
+for b in node npm npx; do sudo ln -sf "/usr/local/lib/nodejs/${TARBALL%.tar.xz}/bin/$b" "/usr/local/bin/$b"; done
+
+# 2. The app, its environment and its database (from the Mac)
+rsync -az --exclude node_modules --exclude .next --exclude data --exclude .git --exclude archive \
+      ./ berry:~/flowwing/app/
+rsync -az .env.local berry:~/flowwing/app/.env.local
+rsync -az data/flowwing.sqlite3 berry:~/flowwing/app/data/      # 244MB, ~55s
+
+# 3. Build there — the Pi is arm64 with 4 cores and 2GB, and the build takes ~40s
+ssh berry 'cd ~/flowwing/app && /usr/local/bin/npm ci && /usr/local/bin/npm run build'
+
+# 4. Serve it, and publish it the way the other two are published
+sudo systemctl enable --now flowwing
+sudo tailscale serve --bg --http=3100 http://127.0.0.1:3100
+```
+
+## The unit
+
+`/etc/systemd/system/flowwing.service`, modelled on `bookshelf.service`: same user, same
+`After=network-online.target tailscaled.service`, same `Restart=always` / `RestartSec=2`, and
+loopback-only for the same reason — `tailscale serve` is what faces the tailnet.
+
+```ini
+[Service]
+User=eustace
+Group=eustace
+WorkingDirectory=/home/eustace/flowwing/app
+ExecStart=/usr/local/bin/npm run start -- -H 127.0.0.1 -p 3100
+Restart=always
+RestartSec=2
+```
+
+## Two things that differ from the other projects
+
+**Generation is slower there.** One passage took 24.5s on the Pi against 6-16s on the Mac — the
+model calls are the same but the measuring and tokenising are not. That is inside the app's own
+30-second deadline, but a run that needs a second attempt can reach it. The pregenerated stock is
+what absorbs this: the route refills the buffer in the background after serving, which is verified
+working on the Pi (a B2 passage appeared in the stock right after the first press).
+
+**`npm run pregenerate` is a Mac-side script**, because `assertShippable` reads the licence rows
+from MongoDB and there is no MongoDB on the Pi. The route's own background refill does not touch
+it, so stocking works; only the bulk script would fail.
+
 ## How it is reached
 
 Every project on `berry` is served directly on its own port and reached at `http://berry:<port>/`
