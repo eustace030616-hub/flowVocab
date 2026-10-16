@@ -41,6 +41,8 @@ import {
 import {
   type ParagraphRecord,
   paragraphById,
+  pruneUnmarked,
+  setStarred,
   paragraphSummaries,
   paragraphsFor,
   nextBufferedParagraph,
@@ -559,6 +561,22 @@ app.post("/words/batch", async (c) => {
   return c.json(wordsByKeys(targetLang, keys, { origin: null }));
 });
 
+/**
+ * Star a passage, or unstar it.
+ *
+ * The one signal here about the *text* rather than about the words in it, and the only thing that
+ * exempts a passage from being forgotten once it is old and unmarked.
+ */
+app.post("/paragraphs/:id/star", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { starred?: unknown };
+  const id = c.req.param("id");
+  const paragraph = paragraphById(id);
+  if (!paragraph) return c.json({ error: "no such paragraph" }, 404);
+  const starred = typeof body.starred === "boolean" ? body.starred : !paragraph.starred;
+  setStarred(id, starred);
+  return c.json({ ok: true, starred });
+});
+
 // ── Marks ─────────────────────────────────────────────────────────────────────
 
 /** Marks for one paragraph, keyed by charStart so the renderer can match them to spans. */
@@ -696,6 +714,10 @@ app.post("/paragraphs/generate", async (c) => {
   // caller waiting for it. Generation is seconds rather than minutes now, but a request should still
   // never be the thing that waits.
   // Only stock written for the level this reader is at; anything else is written on demand.
+  // Forget what is no longer worth keeping, before adding to it. Three conditions, all required:
+  // old, unmarked and unstarred — see `pruneUnmarked`.
+  pruneUnmarked(targetLang);
+
   const buffered = nextBufferedParagraph(targetLang, level);
   if (buffered) {
     clearBuffered(buffered._id);

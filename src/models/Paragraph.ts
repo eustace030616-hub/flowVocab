@@ -48,6 +48,14 @@ export interface IParagraph extends Document {
    * passages sit ready, the button serves one immediately, and the stock is topped up afterwards.
    */
   buffered?: boolean;
+  /**
+   * Kept on purpose, whatever the retention rule would otherwise do with it.
+   *
+   * The reader stars a passage to say "this one was worth it" — the only signal here that is about
+   * the text rather than about the words in it, and the only thing that exempts a passage from being
+   * pruned once it is old and unmarked.
+   */
+  starred?: boolean;
   /** Prompt snapshot for generated text, as specified in FLOWWING.md. */
   promptSnapshot?: string;
   createdAt: Date;
@@ -75,6 +83,7 @@ const ParagraphSchema = new Schema<IParagraph>(
     source: { type: String, enum: ["seed", "agent", "import"], default: "seed" },
     briefId: { type: String, default: null },
     buffered: { type: Boolean, default: false },
+    starred: { type: Boolean, default: false },
     promptSnapshot: { type: String },
   },
   { timestamps: true },

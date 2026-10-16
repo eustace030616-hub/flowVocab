@@ -151,6 +151,7 @@ CREATE TABLE IF NOT EXISTS paragraphs (
   -- corpus supplied.
   briefId          TEXT,
   buffered         INTEGER NOT NULL DEFAULT 0,
+  starred          INTEGER NOT NULL DEFAULT 0,
   promptSnapshot   TEXT,
   createdAt        INTEGER NOT NULL,
   updatedAt        INTEGER NOT NULL

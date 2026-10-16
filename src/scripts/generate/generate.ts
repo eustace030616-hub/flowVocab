@@ -490,6 +490,7 @@ export async function importParagraph(outcome: GenerationOutcome): Promise<strin
     tokenizerVersion: TOKENIZER_VERSION,
     source: SOURCE,
     buffered: false,
+    starred: false,
     promptSnapshot,
   });
 }

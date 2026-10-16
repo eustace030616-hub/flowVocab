@@ -56,10 +56,12 @@ interface ParagraphSummary {
   wordCount: number;
   source: string;
   createdAt: string;
+  starred: boolean;
   markedCount: number;
 }
 
 interface Paragraph {
+  starred?: boolean;
   _id: string;
   targetLang: "en" | "de";
   title: string;
@@ -122,6 +124,8 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     lookups: "looked up",
     exposures: "seen",
     noGloss: "No translation yet.",
+    star: "Keep this passage",
+    unstar: "Stop keeping this passage",
     dontKnow: "Don't know this",
     iKnowThis: "I know this",
     level: "Level",
@@ -183,6 +187,8 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     lookups: "查询",
     exposures: "扫过",
     noGloss: "暂无译文。",
+    star: "收藏这段",
+    unstar: "取消收藏",
     dontKnow: "不认识",
     iKnowThis: "我认识",
     level: "水平",
@@ -313,6 +319,8 @@ export default function Home() {
   const [ready, setReady] = useState(false);
   const [paragraph, setParagraph] = useState<Paragraph | null>(null);
   const [marked, setMarked] = useState<Set<number>>(new Set());
+  /** Whether the open passage is kept on purpose. Mirrors `paragraph.starred`, and moves on tap. */
+  const [starred, setStarred] = useState(false);
   const [hoveredOwner, setHoveredOwner] = useState<number | null>(null);
   const [active, setActive] = useState<ActiveItem | null>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
@@ -475,6 +483,7 @@ export default function Home() {
       if (status === "marked") next.add(Number(start));
     }
     setMarked(next);
+    setStarred(Boolean(paragraph.starred));
     setLiveState({});
     setActive(null);
     setHoveredOwner(null);
@@ -555,6 +564,35 @@ export default function Home() {
     query.addEventListener("change", apply);
     return () => query.removeEventListener("change", apply);
   }, []);
+
+  /**
+   * Star the open passage, or unstar it.
+   *
+   * Optimistic, because it is a statement about the passage rather than evidence about the learner:
+   * nothing downstream depends on it, so the icon can move on the tap and the request catch up. The
+   * history list is updated too, so the exemption is visible where it matters.
+   */
+  const toggleStar = useCallback(async () => {
+    if (!paragraph || !me) return;
+    const next = !starred;
+    setStarred(next);
+    setHistory((prev) =>
+      prev.map((item) => (item._id === paragraph._id ? { ...item, starred: next } : item)),
+    );
+    const res = await fetch(`/api/paragraphs/${paragraph._id}/star`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ starred: next }),
+    });
+    if (!res.ok) {
+      // Put it back rather than leaving the icon claiming something the server did not record.
+      setStarred(!next);
+      setHistory((prev) =>
+        prev.map((item) => (item._id === paragraph._id ? { ...item, starred: !next } : item)),
+      );
+      setError(describeFailure(`/api/paragraphs/${paragraph._id}/star`, res));
+    }
+  }, [paragraph, me, starred]);
 
   /**
    * The strongest positive signal there is: the reader says they know this word.
@@ -1029,28 +1067,14 @@ export default function Home() {
   const isHoveredOwner = (span: Span) => hoveredOwner === ownerOf(span);
 
   return (
-    <div className="fv-safe-bottom min-h-screen flex flex-col bg-zinc-50">
+    // `h-[100dvh]` rather than `min-h-screen`: the shell is exactly the viewport and never scrolls,
+    // so the header, the badge and the buttons hold still while the passage scrolls inside its own
+    // box. `dvh` because a phone's viewport changes height as the browser chrome hides and shows, and
+    // `vh` would leave the buttons half under it.
+    <div className="fv-safe-bottom h-[100dvh] flex flex-col bg-zinc-50 overflow-hidden">
       <header className="w-full min-h-14 bg-white border-b border-zinc-200 flex items-center justify-between gap-2 px-3 sm:px-6 py-2 shrink-0">
         <div className="flex items-center gap-3">
           <h1 className="text-lg font-semibold text-zinc-800">{t.appName}</h1>
-          {/* The level, and nothing else: the track, the language codes and the interval are all
-              still in the tooltip, but the header carries one word so it never wraps on a phone.
-              The estimate is unchanged; only how much of it is on screen. */}
-          {activeAbility && (
-            <span
-              className="text-sm font-medium text-zinc-600"
-              title={
-                `${t.level}: θ=${activeAbility.theta.toFixed(2)} ± ${activeAbility.se.toFixed(2)}` +
-                ` · n=${activeAbility.n.toFixed(1)} (${activeAbility.levelLow}–${activeAbility.levelHigh})` +
-                `${me ? ` · ${me.track} · ${me.targetLang}` : ""}` +
-                `${activeAbility.fromTransfer ? ` · ${t.levelFromOther}` : ""}`
-              }
-            >
-              {activeAbility.n === 0
-                ? t.levelUnknown
-                : (activeAbility.level ?? activeAbility.levelPoint)}
-            </span>
-          )}
         </div>
         <div className="flex items-center gap-1">
           {/* On a phone the sidebar is hidden, so its two actions live here instead. */}
@@ -1069,24 +1093,30 @@ export default function Home() {
           >
             {t.test}
           </button>
-          {me?.tracks?.map((track) => (
-            <button
-              key={track.id}
-              onClick={() => void load(track.id)}
-              className={`h-8 px-3 text-xs font-medium rounded-lg transition-colors ${
-                me.track === track.id
-                  ? "bg-zinc-900 text-white"
-                  : "border border-zinc-200 text-zinc-500 hover:bg-zinc-100"
-              }`}
-            >
-              {track.label}
-            </button>
-          ))}
+          {/* One segmented control rather than one button per track: shared border, no gap, and it
+              stops growing the header each time a language is added. */}
+          {me?.tracks && me.tracks.length > 0 && (
+            <div className="flex h-8 rounded-lg border border-zinc-200 overflow-hidden">
+              {me.tracks.map((track) => (
+                <button
+                  key={track.id}
+                  onClick={() => void load(track.id)}
+                  className={`px-2.5 text-xs font-medium transition-colors ${
+                    me.track === track.id
+                      ? "bg-zinc-900 text-white"
+                      : "text-zinc-500 hover:bg-zinc-100"
+                  }`}
+                >
+                  {track.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </header>
 
-      <div className="flex flex-col md:flex-row flex-1 overflow-hidden">
-        <div className="w-full md:w-4/5 flex flex-col p-3 sm:p-4 md:p-6 overflow-auto">
+      <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
+        <div className="w-full md:w-4/5 flex flex-col min-h-0 p-3 sm:p-4 md:p-6">
           <div className="flex items-center justify-between h-10 mb-3">
             <div className="flex items-center gap-3">
               <span className="text-sm text-zinc-500 font-medium">
@@ -1142,8 +1172,44 @@ export default function Home() {
                     : t.coverageUnmeasured}
                 </span>
               )}
+
+              {/* The level, beside the band it explains: "B2" and "easy" are the same judgement
+                  seen from two sides, so they belong in one place and one glance. The interval and
+                  the standard error stay in the tooltip. */}
+              {activeAbility && (
+                <span
+                  className="text-sm font-medium text-zinc-600"
+                  title={
+                    `${t.level}: θ=${activeAbility.theta.toFixed(2)} ± ${activeAbility.se.toFixed(2)}` +
+                    ` · n=${activeAbility.n.toFixed(1)} (${activeAbility.levelLow}–${activeAbility.levelHigh})` +
+                    `${me ? ` · ${me.track} · ${me.targetLang}` : ""}` +
+                    `${activeAbility.fromTransfer ? ` · ${t.levelFromOther}` : ""}`
+                  }
+                >
+                  {activeAbility.n === 0
+                    ? t.levelUnknown
+                    : (activeAbility.level ?? activeAbility.levelPoint)}
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
+              {/* Keep this one. The only thing here that is about the passage rather than the words
+                  in it, and the only exemption from being forgotten once it is old and unmarked. */}
+              {paragraph && (
+                <button
+                  onClick={() => void toggleStar()}
+                  disabled={!me}
+                  aria-pressed={starred}
+                  title={starred ? t.unstar : t.star}
+                  className={`h-8 w-8 text-base leading-none rounded-lg border transition-colors disabled:opacity-50 ${
+                    starred
+                      ? "border-amber-200 bg-amber-50 text-amber-500"
+                      : "border-zinc-200 text-zinc-400 hover:bg-zinc-100"
+                  }`}
+                >
+                  {starred ? "★" : "☆"}
+                </button>
+              )}
               {/* Forward is the only direction: the reader moves on by generating something new.
                   Paging backwards was a development shortcut and is gone. */}
               <button
@@ -1157,7 +1223,7 @@ export default function Home() {
           </div>
 
           <div
-            className="fv-reader flex-1 bg-white border border-zinc-200 rounded-xl p-4 sm:p-6 overflow-auto"
+            className="fv-reader flex-1 min-h-0 bg-white border border-zinc-200 rounded-xl p-4 sm:p-6 overflow-y-auto overscroll-contain"
             onMouseMove={canHover ? handleMouseMove : undefined}
             onMouseLeave={canHover ? handleBoxLeave : undefined}
             onClick={(e) => {

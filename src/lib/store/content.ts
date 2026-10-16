@@ -3,7 +3,7 @@
  * pregenerated.
  */
 
-import { all, bool, flag, get, newId, nowMs, run } from "./db";
+import { all, bool, flag, get, newId, nowMs, run, transaction } from "./db";
 
 export interface ParagraphRecord {
   _id: string;
@@ -20,6 +20,8 @@ export interface ParagraphRecord {
   source: "seed" | "agent" | "import";
   briefId: string | null;
   buffered: boolean;
+  /** Kept on purpose, and exempt from pruning. See the schema for why. */
+  starred: boolean;
   promptSnapshot?: string | null;
   createdAt: number;
 }
@@ -32,6 +34,7 @@ export interface ParagraphSummary {
   source: string;
   createdAt: number;
   briefId: string | null;
+  starred: boolean;
   markedCount: number;
 }
 
@@ -50,6 +53,7 @@ interface ParagraphRow {
   source: string;
   briefId: string | null;
   buffered: number;
+  starred: number;
   promptSnapshot: string | null;
   createdAt: number;
 }
@@ -70,6 +74,7 @@ export function toParagraph(row: ParagraphRow): ParagraphRecord {
     source: row.source as ParagraphRecord["source"],
     briefId: row.briefId,
     buffered: bool(row.buffered),
+    starred: bool(row.starred),
     promptSnapshot: row.promptSnapshot,
     createdAt: row.createdAt,
   };
@@ -108,9 +113,10 @@ export function paragraphSummaries(targetLang: string, userId: string): Paragrap
     source: string;
     createdAt: number;
     briefId: string | null;
+    starred: number;
     markedCount: number;
   }>(
-    `SELECT p.id, p.title, p.level, p.wordCount, p.source, p.createdAt, p.briefId,
+    `SELECT p.id, p.title, p.level, p.wordCount, p.source, p.createdAt, p.briefId, p.starred,
             COALESCE(m.n, 0) AS markedCount
      FROM paragraphs p
      LEFT JOIN (
@@ -129,6 +135,7 @@ export function paragraphSummaries(targetLang: string, userId: string): Paragrap
     source: row.source,
     createdAt: row.createdAt,
     briefId: row.briefId,
+    starred: bool(row.starred),
     markedCount: row.markedCount,
   }));
 }
@@ -154,14 +161,15 @@ export function upsertParagraphByBrief(
   run(
     `INSERT INTO paragraphs (id, targetLang, title, content, topic, wordCount, level, difficulty,
                              difficultySource, coverage, tokenizerVersion, source, briefId, buffered,
-                             promptSnapshot, createdAt, updatedAt)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                             starred, promptSnapshot, createdAt, updatedAt)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(id) DO UPDATE SET
        title = excluded.title, content = excluded.content, topic = excluded.topic,
        wordCount = excluded.wordCount, level = excluded.level, difficulty = excluded.difficulty,
        difficultySource = excluded.difficultySource, coverage = excluded.coverage,
        tokenizerVersion = excluded.tokenizerVersion, source = excluded.source,
        briefId = excluded.briefId, buffered = excluded.buffered,
+       starred = excluded.starred,
        promptSnapshot = excluded.promptSnapshot, updatedAt = excluded.updatedAt`,
     id,
     paragraph.targetLang,
@@ -177,6 +185,7 @@ export function upsertParagraphByBrief(
     paragraph.source,
     paragraph.briefId ?? null,
     flag(paragraph.buffered),
+    flag(paragraph.starred),
     paragraph.promptSnapshot ?? null,
     nowMs(),
     nowMs(),
@@ -247,4 +256,61 @@ export function markBufferedByBrief(targetLang: string, briefId: string): void {
 
 export function countParagraphs(targetLang: string): number {
   return Number(get<{ n: number }>("SELECT COUNT(*) AS n FROM paragraphs WHERE targetLang = ?", targetLang)?.n ?? 0);
+}
+
+
+// ── Starring, and what that is for ────────────────────────────────────────────────────────────
+
+export function setStarred(id: string, starred: boolean): void {
+  run("UPDATE paragraphs SET starred = ?, updatedAt = ? WHERE id = ?", flag(starred), nowMs(), id);
+}
+
+/**
+ * How many passages to keep per language, however forgettable.
+ *
+ * The reader moves forward by generating, so the list only grows. Beyond a screenful or two of
+ * history nothing is ever revisited, and the ones worth revisiting are either still marked or
+ * starred.
+ */
+export const HISTORY_KEEP = 30;
+
+/**
+ * Forget old passages that carry nothing.
+ *
+ * Three conditions, all required: older than the newest `HISTORY_KEEP`, no marks at all, and not
+ * starred. The reasoning is the app's own premise — reading past a word without marking it counts as
+ * knowing it — so a passage with no marks is one the reader already knew, and an old one they knew is
+ * the least valuable thing in the database.
+ *
+ * Marks are *not* permanent: unmarking retracts one. So a passage loses its protection as its marks
+ * are retracted, which is intended and is why the check is against the current mark rows rather than
+ * against a stored count.
+ *
+ * Pregenerated stock is excluded: it is inventory rather than history, it is unread by definition,
+ * and pruning it would only make the next press wait for a new passage to be written.
+ *
+ * Event rows are deliberately left alone. They are the evidence log the learner model folds, they
+ * reference the passage only for provenance, and deleting evidence to tidy up a list would change
+ * how well the app knows the reader.
+ *
+ * Returns the ids removed, so a caller can report rather than guess.
+ */
+export function pruneUnmarked(targetLang: string, keep = HISTORY_KEEP): string[] {
+  const candidates = all<{ id: string }>(
+    `SELECT id FROM paragraphs
+     WHERE targetLang = ? AND starred = 0 AND buffered = 0
+       AND id NOT IN (SELECT paragraphId FROM marks WHERE paragraphId IS NOT NULL)
+       AND id NOT IN (
+         SELECT id FROM paragraphs WHERE targetLang = ? ORDER BY createdAt DESC LIMIT ?
+       )`,
+    targetLang,
+    targetLang,
+    keep,
+  );
+  if (candidates.length === 0) return [];
+  const ids = candidates.map((row) => row.id);
+  transaction(() => {
+    for (const id of ids) run("DELETE FROM paragraphs WHERE id = ?", id);
+  });
+  return ids;
 }
