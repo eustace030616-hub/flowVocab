@@ -136,6 +136,7 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     placementFakeHint: "Invented for this test — claiming it lowers your result.",
     placementNoGloss: "No translation yet.",
     placementKeepGoing: "Keep going for a more accurate estimate",
+    placementAnswerMore: "Answer more to get an estimate",
     older: "Older",
     newer: "Newer",
     star: "Keep this passage",
@@ -214,6 +215,7 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     placementFakeHint: "为本次测试编造 — 声称认识会降低结果。",
     placementNoGloss: "暂无译文。",
     placementKeepGoing: "继续作答，结果会更准确",
+    placementAnswerMore: "继续作答以得到估算",
     older: "更早",
     newer: "更新",
     star: "收藏这段",
@@ -1969,7 +1971,7 @@ export default function Home() {
                       enough to be worth something. There is no end, so the reader needs a reason to
                       keep going and a way to stop. */}
                   <div className="flex items-center gap-4 text-xs">
-                    {placementEstimate && placementEstimate.answered >= 3 && (
+                    {placementEstimate && placementEstimate.answered >= 3 ? (
                       <span className="tabular-nums text-zinc-500">
                         {t.level}{" "}
                         <span className="font-medium text-zinc-800">
@@ -1977,6 +1979,11 @@ export default function Home() {
                             `${placementEstimate.levelLow}–${placementEstimate.levelHigh}`}
                         </span>
                       </span>
+                    ) : (
+                      // The slot the level will occupy, saying what fills it. Three answers is the
+                      // point at which a range means anything; before that the honest answer is that
+                      // there is nothing to estimate from yet.
+                      <span className="text-zinc-400">{t.placementAnswerMore}</span>
                     )}
                     {placementEstimate && placementEstimate.answered >= 10 && (
                       <span className="text-zinc-400">{t.placementKeepGoing}</span>
