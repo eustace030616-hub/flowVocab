@@ -479,7 +479,7 @@ export default function Home() {
           {[100, 94, 98, 62].map((width, line) => (
             <div
               key={line}
-              className="h-4 rounded-sm bg-zinc-100 animate-pulse"
+              className="h-4 rounded-none bg-zinc-100 animate-pulse"
               style={{ width: `${width}%`, animationDelay: `${(block * 4 + line) * 60}ms` }}
             />
           ))}
@@ -491,7 +491,7 @@ export default function Home() {
   /** One bar sized like a line of chrome, for the heading and the metadata. */
   const skeletonLine = (width: string) => (
     <span
-      className="inline-block h-3 rounded-sm bg-zinc-100 animate-pulse"
+      className="inline-block h-3 rounded-none bg-zinc-100 animate-pulse"
       style={{ width }}
       aria-hidden="true"
     />
@@ -1291,7 +1291,7 @@ export default function Home() {
           <button
             onClick={() => setHistoryOpen(true)}
             disabled={!me || loading}
-            className="fv-touch md:hidden h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-sm hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+            className="fv-touch md:hidden h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-50 transition-colors"
           >
             {t.history}
             {history.length > 0 && <span className="ml-1 text-zinc-400">{history.length}</span>}
@@ -1302,7 +1302,7 @@ export default function Home() {
             <button
               onClick={() => void startPlacement()}
               disabled={placementBusy || generating || loading || !me}
-              className="fv-touch md:hidden h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-sm hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+              className="fv-touch md:hidden h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-50 transition-colors"
             >
               {t.test}
             </button>
@@ -1316,13 +1316,13 @@ export default function Home() {
                 if (currentId) void openParagraph(currentId);
                 setBrowsing(false);
               }}
-              className="fv-touch h-8 px-4 text-xs font-medium bg-zinc-900 text-white rounded-sm hover:bg-zinc-800 transition-colors"
+              className="fv-touch h-8 px-4 text-xs font-medium bg-zinc-900 text-white rounded-none hover:bg-zinc-800 transition-colors"
             >
               {t.current}
             </button>
           )}
           {!browsing && me?.tracks && me.tracks.length > 0 && (
-            <div className="flex h-8 rounded-sm border border-zinc-200 overflow-hidden">
+            <div className="flex h-8 rounded-none border border-zinc-200 overflow-hidden">
               {me.tracks.map((track) => (
                 <button
                   key={track.id}
@@ -1429,7 +1429,7 @@ export default function Home() {
                     disabled={!me || loading}
                     aria-pressed={starred}
                     title={starred ? t.unstar : t.star}
-                    className={`fv-touch h-8 w-8 text-sm leading-none rounded-sm border transition-colors disabled:opacity-50 ${
+                    className={`fv-touch h-8 w-8 text-sm leading-none rounded-none border transition-colors disabled:opacity-50 ${
                       starred
                         ? "border-[#da291c] text-[#da291c]"
                         : "border-zinc-200 text-zinc-400 hover:bg-zinc-100"
@@ -1448,14 +1448,14 @@ export default function Home() {
                     <button
                       onClick={() => void stepHistory(1)}
                       disabled={!historyPosition || historyPosition.index >= historyPosition.total - 1}
-                      className="fv-touch h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-sm hover:bg-zinc-100 disabled:opacity-40 transition-colors"
+                      className="fv-touch h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-40 transition-colors"
                     >
                       ‹ {t.older}
                     </button>
                     <button
                       onClick={() => void stepHistory(-1)}
                       disabled={!historyPosition || historyPosition.index <= 0}
-                      className="fv-touch h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-sm hover:bg-zinc-100 disabled:opacity-40 transition-colors"
+                      className="fv-touch h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-40 transition-colors"
                     >
                       {t.newer} ›
                     </button>
@@ -1464,7 +1464,7 @@ export default function Home() {
                   <button
                     onClick={() => void generateParagraph()}
                     disabled={generating || loading || !me}
-                    className="fv-touch h-8 px-4 text-xs font-medium bg-zinc-900 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50 transition-colors"
+                    className="fv-touch h-8 px-4 text-xs font-medium bg-zinc-900 text-white rounded-none hover:bg-zinc-800 disabled:opacity-50 transition-colors"
                   >
                     {generating ? t.generating : t.generate}
                   </button>
@@ -1474,7 +1474,7 @@ export default function Home() {
           </div>
 
           <div
-            className="fv-reader flex-1 min-h-0 bg-white border border-zinc-200 rounded-md p-4 sm:p-6 overflow-y-auto overscroll-contain"
+            className="fv-reader flex-1 min-h-0 bg-white border border-zinc-200 rounded-none p-4 sm:p-6 overflow-y-auto overscroll-contain"
             onMouseMove={canHover ? handleMouseMove : undefined}
             onMouseLeave={canHover ? handleBoxLeave : undefined}
             onClick={(e) => {
@@ -1572,7 +1572,7 @@ export default function Home() {
                 }}
                 onClick={(e) => e.stopPropagation()}
                 ref={popoverRef}
-                className="fv-popover fixed z-50 bg-white border border-zinc-200 rounded-md p-4 min-w-[200px] max-w-[320px]"
+                className="fv-popover fixed z-50 bg-white border border-zinc-200 rounded-none p-4 min-w-[200px] max-w-[320px]"
                 style={{
                   top: popoverPos?.top ?? 0,
                   left: popoverPos?.left ?? 0,
@@ -1757,7 +1757,7 @@ export default function Home() {
                   {isActiveMarked ? (
                     <button
                       onClick={() => void recordConfirmed(active.span)}
-                      className="h-8 px-4 text-xs font-medium rounded-sm bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                      className="h-8 px-4 text-xs font-medium rounded-none bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
                     >
                       {t.iKnowThis}
                     </button>
@@ -1765,13 +1765,13 @@ export default function Home() {
                     <>
                       <button
                         onClick={() => void toggleMark(active.ownerStart)}
-                        className="h-8 px-4 text-xs font-medium rounded-sm bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
+                        className="h-8 px-4 text-xs font-medium rounded-none bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
                       >
                         {t.dontKnow}
                       </button>
                       <button
                         onClick={() => void recordConfirmed(active.span)}
-                        className="h-8 px-4 text-xs font-medium rounded-sm border border-zinc-200 text-zinc-600 hover:bg-zinc-100 transition-colors"
+                        className="h-8 px-4 text-xs font-medium rounded-none border border-zinc-200 text-zinc-600 hover:bg-zinc-100 transition-colors"
                       >
                         {t.iKnowThis}
                       </button>
@@ -1785,14 +1785,14 @@ export default function Home() {
 
         <aside className="hidden md:flex md:w-1/5 bg-white border-l fv-hairline flex-col shrink-0">
           <div className="h-1/2 flex flex-col items-center justify-center gap-4 p-4 border-b border-zinc-200">
-            <div className="w-16 h-16 rounded-md bg-zinc-200 flex items-center justify-center text-zinc-400 text-2xl">
+            <div className="w-16 h-16 rounded-none bg-zinc-200 flex items-center justify-center text-zinc-400 text-2xl">
               ?
             </div>
             <span className="text-sm text-zinc-500">
               {me ? `${me.track}` : "…"}
             </span>
             <div className="flex items-center gap-2 mt-2">
-              <span className="text-xs px-2 py-0.5 rounded-sm bg-zinc-100 text-zinc-600 font-medium">
+              <span className="text-xs px-2 py-0.5 rounded-none bg-zinc-100 text-zinc-600 font-medium">
                 {me?.targetLang ?? "…"}
               </span>
               <span className="text-xs text-zinc-400">→</span>
@@ -1803,7 +1803,7 @@ export default function Home() {
             <button
               onClick={() => setHistoryOpen(true)}
               disabled={!me}
-              className="fv-touch mt-4 h-8 px-4 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-sm hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+              className="fv-touch mt-4 h-8 px-4 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-50 transition-colors"
             >
               {t.history} {history.length > 0 && <span className="text-zinc-400">{history.length}</span>}
             </button>
@@ -1813,7 +1813,7 @@ export default function Home() {
               <button
                 onClick={() => void startPlacement()}
                 disabled={placementBusy || generating || !me}
-                className="mt-2 h-8 px-4 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-sm hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+                className="mt-2 h-8 px-4 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-50 transition-colors"
               >
                 {t.placement}
               </button>
@@ -1861,7 +1861,7 @@ export default function Home() {
                           void openHistoryPassage(item._id);
                           setHistoryOpen(false);
                         }}
-                        className="w-full text-left flex items-center justify-between gap-4 px-4 py-2 rounded-md hover:bg-zinc-100 transition-colors"
+                        className="w-full text-left flex items-center justify-between gap-4 px-4 py-2 rounded-none hover:bg-zinc-100 transition-colors"
                       >
                         <span className="text-sm text-zinc-700 truncate">{item.title}</span>
                         <span className="text-xs text-zinc-400 shrink-0 flex items-center gap-2">
@@ -1934,7 +1934,7 @@ export default function Home() {
                   {placementReveal ? (
                     <button
                       onClick={nextPlacementItem}
-                      className="h-11 w-full max-w-md text-sm font-medium bg-zinc-900 text-white rounded-sm hover:bg-zinc-800"
+                      className="h-11 w-full max-w-md text-sm font-medium bg-zinc-900 text-white rounded-none hover:bg-zinc-800"
                     >
                       {t.placementNext}
                     </button>
@@ -1942,13 +1942,13 @@ export default function Home() {
                     <div className="flex items-center gap-4">
                       <button
                         onClick={() => void answerPlacement(true)}
-                        className="h-11 px-8 text-sm font-medium bg-zinc-900 text-white rounded-sm hover:bg-zinc-800"
+                        className="h-11 px-8 text-sm font-medium bg-zinc-900 text-white rounded-none hover:bg-zinc-800"
                       >
                         {t.placementKnown}
                       </button>
                       <button
                         onClick={() => void answerPlacement(false)}
-                        className="h-11 px-8 text-sm font-medium border border-zinc-300 text-zinc-600 rounded-sm hover:bg-zinc-100"
+                        className="h-11 px-8 text-sm font-medium border border-zinc-300 text-zinc-600 rounded-none hover:bg-zinc-100"
                       >
                         {t.placementUnknown}
                       </button>
@@ -2024,7 +2024,7 @@ export default function Home() {
 
                     <button
                       onClick={() => setPlacementResult(null)}
-                      className="fv-touch h-8 px-4 text-sm font-medium bg-zinc-900 text-white rounded-sm hover:bg-zinc-800"
+                      className="fv-touch h-8 px-4 text-sm font-medium bg-zinc-900 text-white rounded-none hover:bg-zinc-800"
                     >
                       {t.placementClose}
                     </button>
