@@ -128,6 +128,8 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     noGloss: "No translation yet.",
     current: "Current",
     words: "words",
+    partOfSpeech: "POS",
+    form: "Form",
     older: "Older",
     newer: "Newer",
     star: "Keep this passage",
@@ -195,6 +197,8 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     noGloss: "暂无译文。",
     current: "当前",
     words: "词",
+    partOfSpeech: "词性",
+    form: "形式",
     older: "更早",
     newer: "更新",
     star: "收藏这段",
@@ -1156,17 +1160,21 @@ export default function Home() {
     // so the header, the badge and the buttons hold still while the passage scrolls inside its own
     // box. `dvh` because a phone's viewport changes height as the browser chrome hides and shows, and
     // `vh` would leave the buttons half under it.
-    <div className="fv-safe-bottom h-[100dvh] flex flex-col bg-zinc-50 overflow-hidden">
-      <header className="w-full min-h-14 bg-white border-b border-zinc-200 flex items-center justify-between gap-2 px-3 sm:px-6 py-2 shrink-0">
-        <div className="flex items-center gap-3">
-          <h1 className="text-lg font-semibold text-zinc-800">{t.appName}</h1>
+    <div className="fv-safe-bottom h-[100dvh] flex flex-col bg-white text-zinc-900 overflow-hidden">
+      {/* A 2px rule under the header, the way a section is marked in print — the header is not a
+          panel with a shadow, it is the top of the page. */}
+      <header className="w-full min-h-16 fv-rule-bottom bg-white flex items-center justify-between gap-2 px-4 sm:px-6 py-4 shrink-0">
+        <div className="flex items-center gap-4">
+          {/* The hero course name: the style's second deliberate exception, and the only text on
+              the page that carries the misregistration fringe. */}
+          <h1 className="fv-hero text-xl font-medium tracking-tight text-zinc-900">{t.appName}</h1>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           {/* On a phone the sidebar is hidden, so its two actions live here instead. */}
           <button
             onClick={() => setHistoryOpen(true)}
             disabled={!me}
-            className="md:hidden h-8 px-2.5 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+            className="fv-touch md:hidden h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-50 transition-colors"
           >
             {t.history}
             {history.length > 0 && <span className="ml-1 text-zinc-400">{history.length}</span>}
@@ -1177,7 +1185,7 @@ export default function Home() {
             <button
               onClick={() => void startPlacement()}
               disabled={placementBusy || generating || !me}
-              className="md:hidden h-8 px-2.5 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+              className="fv-touch md:hidden h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-50 transition-colors"
             >
               {t.test}
             </button>
@@ -1191,18 +1199,18 @@ export default function Home() {
                 if (currentId) void openParagraph(currentId);
                 setBrowsing(false);
               }}
-              className="h-8 px-3 text-xs font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 transition-colors"
+              className="fv-touch h-8 px-4 text-xs font-medium bg-zinc-900 text-white rounded-none hover:bg-zinc-800 transition-colors"
             >
               {t.current}
             </button>
           )}
           {!browsing && me?.tracks && me.tracks.length > 0 && (
-            <div className="flex h-8 rounded-lg border border-zinc-200 overflow-hidden">
+            <div className="flex h-8 rounded-none border border-zinc-200 overflow-hidden">
               {me.tracks.map((track) => (
                 <button
                   key={track.id}
                   onClick={() => void load(track.id)}
-                  className={`px-2.5 text-xs font-medium transition-colors ${
+                  className={`fv-touch px-2 text-xs font-medium transition-colors ${
                     me.track === track.id
                       ? "bg-zinc-900 text-white"
                       : "text-zinc-500 hover:bg-zinc-100"
@@ -1217,7 +1225,7 @@ export default function Home() {
       </header>
 
       <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
-        <div className="w-full md:w-4/5 flex flex-col min-h-0 p-3 sm:p-4 md:p-6">
+        <div className="w-full md:w-4/5 flex flex-col min-h-0 p-4 sm:p-4 md:p-6">
           {/*
             Two rows, because the reader is doing two different things.
 
@@ -1226,8 +1234,8 @@ export default function Home() {
             on the right, with room to be tapped on a phone. The level is gone from both, and the space
             it and the test button used is what this format is made of.
           */}
-          <div className="flex flex-col gap-1 mb-2 shrink-0">
-            <div className="flex items-center justify-between gap-3 min-w-0">
+          <div className="flex flex-col gap-2 mb-2 shrink-0">
+            <div className="flex items-center justify-between gap-4 min-w-0">
               <span
                 className="text-sm font-medium text-zinc-700 truncate"
                 title={paragraph ? (paragraph.topic ?? paragraph.title) : undefined}
@@ -1253,16 +1261,10 @@ export default function Home() {
                   {paragraph ? `${paragraph.wordCount} ${t.words}` : ""}
                 </span>
                 {coverage && (
+                  // A label with a hairline, not a coloured pill: colour would compete with the one
+                  // accent the style allows, and the word already carries the verdict.
                   <span
-                    className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${
-                      !coverage.measured
-                        ? "bg-zinc-100 text-zinc-500"
-                        : coverage.unknown.band === "easy"
-                          ? "bg-emerald-50 text-emerald-700"
-                          : coverage.unknown.band === "hard"
-                            ? "bg-amber-50 text-amber-700"
-                            : "bg-rose-50 text-rose-700"
-                    }`}
+                    className="shrink-0 text-xs px-2 py-1 font-medium border fv-hairline text-zinc-700 uppercase tracking-wide"
                     title={
                       `${t.coverageHelp}\n` +
                       (coverage.measured
@@ -1300,9 +1302,9 @@ export default function Home() {
                     disabled={!me}
                     aria-pressed={starred}
                     title={starred ? t.unstar : t.star}
-                    className={`h-8 w-8 text-sm leading-none rounded-lg border transition-colors disabled:opacity-50 ${
+                    className={`fv-touch h-8 w-8 text-sm leading-none rounded-none border transition-colors disabled:opacity-50 ${
                       starred
-                        ? "border-amber-200 bg-amber-50 text-amber-500"
+                        ? "border-[#da291c] text-[#da291c]"
                         : "border-zinc-200 text-zinc-400 hover:bg-zinc-100"
                     }`}
                   >
@@ -1319,14 +1321,14 @@ export default function Home() {
                     <button
                       onClick={() => void stepHistory(1)}
                       disabled={!historyPosition || historyPosition.index >= historyPosition.total - 1}
-                      className="h-8 px-2.5 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-40 transition-colors"
+                      className="fv-touch h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-40 transition-colors"
                     >
                       ‹ {t.older}
                     </button>
                     <button
                       onClick={() => void stepHistory(-1)}
                       disabled={!historyPosition || historyPosition.index <= 0}
-                      className="h-8 px-2.5 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-40 transition-colors"
+                      className="fv-touch h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-40 transition-colors"
                     >
                       {t.newer} ›
                     </button>
@@ -1335,7 +1337,7 @@ export default function Home() {
                   <button
                     onClick={() => void generateParagraph()}
                     disabled={generating || !me}
-                    className="h-8 px-3 text-xs font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition-colors"
+                    className="fv-touch h-8 px-4 text-xs font-medium bg-zinc-900 text-white rounded-none hover:bg-zinc-800 disabled:opacity-50 transition-colors"
                   >
                     {generating ? t.generating : t.generate}
                   </button>
@@ -1345,7 +1347,7 @@ export default function Home() {
           </div>
 
           <div
-            className="fv-reader flex-1 min-h-0 bg-white border border-zinc-200 rounded-xl p-4 sm:p-6 overflow-y-auto overscroll-contain"
+            className="fv-reader flex-1 min-h-0 bg-white border border-zinc-200 rounded-none p-4 sm:p-6 overflow-y-auto overscroll-contain"
             onMouseMove={canHover ? handleMouseMove : undefined}
             onMouseLeave={canHover ? handleBoxLeave : undefined}
             onClick={(e) => {
@@ -1443,7 +1445,7 @@ export default function Home() {
                 }}
                 onClick={(e) => e.stopPropagation()}
                 ref={popoverRef}
-                className="fv-popover fixed z-50 bg-white border border-zinc-200 rounded-lg shadow-lg p-3 min-w-[200px] max-w-[320px]"
+                className="fv-popover fixed z-50 bg-white border border-zinc-200 rounded-none p-4 min-w-[200px] max-w-[320px]"
                 style={{
                   top: popoverPos?.top ?? 0,
                   left: popoverPos?.left ?? 0,
@@ -1470,53 +1472,50 @@ export default function Home() {
                   })()}
                 </p>
 
-                <div className="flex flex-wrap gap-1 mt-1">
+                <dl className="grid grid-cols-[64px_1fr] gap-x-4 gap-y-2 mt-4 pt-4 border-t fv-hairline text-left">
                   {(() => {
-                    // Which entry was clicked: "train" is a noun and a verb, and they gloss
-                    // differently, so the reading should be visible.
                     const label = posLabel(activeVocab?.glossPos);
                     if (!label) return null;
                     return (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-500 font-mono">
-                        {label}
-                      </span>
+                      <>
+                        <dt className="text-[10px] uppercase tracking-wide text-zinc-400 pt-0.5">
+                          {t.partOfSpeech}
+                        </dt>
+                        <dd className="text-xs text-zinc-700 font-mono">{label}</dd>
+                      </>
                     );
                   })()}
                   {(() => {
                     const vocab = activeVocab;
                     if (!vocab?.level) return null;
                     return (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-zinc-100 text-zinc-600 font-medium">
-                        {vocab.level}
-                        {vocab.levelEstimated ? ` (${t.estimated})` : ""}
-                      </span>
+                      <>
+                        <dt className="text-[10px] uppercase tracking-wide text-zinc-400 pt-0.5">
+                          {t.level}
+                        </dt>
+                        <dd className="text-xs text-zinc-700">
+                          {vocab.level}
+                          {vocab.levelEstimated ? ` (${t.estimated})` : ""}
+                        </dd>
+                      </>
                     );
                   })()}
-                  {active.span.compoundParts && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-sky-50 text-sky-700">
-                      {t.compound}
-                    </span>
+                  {(active.span.compoundParts || active.span.detached) && (
+                    <>
+                      <dt className="text-[10px] uppercase tracking-wide text-zinc-400 pt-0.5">
+                        {t.form}
+                      </dt>
+                      <dd className="text-xs text-zinc-700">
+                        {[
+                          active.span.compoundParts ? t.compound : null,
+                          active.span.detached ? t.separable : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </dd>
+                    </>
                   )}
-                  {active.span.detached && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-700">
-                      {t.separable}
-                    </span>
-                  )}
-                  {(() => {
-                    const vocab = activeVocab;
-                    if (!vocab) return null;
-                    const flags: string[] = [];
-                    if (vocab.status === "known") flags.push(t.mastered);
-                    return flags.map((f) => (
-                      <span
-                        key={f}
-                        className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700"
-                      >
-                        {f}
-                      </span>
-                    ));
-                  })()}
-                </div>
+                </dl>
 
                 {(() => {
                   const vocab = activeVocab;
@@ -1627,11 +1626,11 @@ export default function Home() {
                 {/* The deliberate act, and the only way to mark on a phone — where a tap opens the
                     word and nothing else. On a pointer device the click still marks, so this is the
                     explicit alternative rather than the only route. */}
-                <div className="flex items-center gap-2 mt-3 pt-3 border-t border-zinc-100">
+                <div className="flex items-center gap-2 mt-4 pt-4 border-t border-zinc-100">
                   {isActiveMarked ? (
                     <button
                       onClick={() => void recordConfirmed(active.span)}
-                      className="h-8 px-3 text-xs font-medium rounded-lg bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+                      className="h-8 px-4 text-xs font-medium rounded-none bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
                     >
                       {t.iKnowThis}
                     </button>
@@ -1639,13 +1638,13 @@ export default function Home() {
                     <>
                       <button
                         onClick={() => void toggleMark(active.ownerStart)}
-                        className="h-8 px-3 text-xs font-medium rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
+                        className="h-8 px-4 text-xs font-medium rounded-none bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors"
                       >
                         {t.dontKnow}
                       </button>
                       <button
                         onClick={() => void recordConfirmed(active.span)}
-                        className="h-8 px-3 text-xs font-medium rounded-lg border border-zinc-200 text-zinc-600 hover:bg-zinc-100 transition-colors"
+                        className="h-8 px-4 text-xs font-medium rounded-none border border-zinc-200 text-zinc-600 hover:bg-zinc-100 transition-colors"
                       >
                         {t.iKnowThis}
                       </button>
@@ -1657,16 +1656,16 @@ export default function Home() {
           </div>
         </div>
 
-        <aside className="hidden md:flex md:w-1/5 bg-white border-l border-zinc-200 flex-col shrink-0">
-          <div className="h-1/2 flex flex-col items-center justify-center gap-3 p-4 border-b border-zinc-200">
-            <div className="w-16 h-16 rounded-full bg-zinc-200 flex items-center justify-center text-zinc-400 text-2xl">
+        <aside className="hidden md:flex md:w-1/5 bg-white border-l fv-hairline flex-col shrink-0">
+          <div className="h-1/2 flex flex-col items-center justify-center gap-4 p-4 border-b border-zinc-200">
+            <div className="w-16 h-16 rounded-none bg-zinc-200 flex items-center justify-center text-zinc-400 text-2xl">
               ?
             </div>
             <span className="text-sm text-zinc-500">
               {me ? `${me.track}` : "…"}
             </span>
-            <div className="flex items-center gap-1 mt-2">
-              <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600 font-medium">
+            <div className="flex items-center gap-2 mt-2">
+              <span className="text-xs px-2 py-0.5 rounded-none bg-zinc-100 text-zinc-600 font-medium">
                 {me?.targetLang ?? "…"}
               </span>
               <span className="text-xs text-zinc-400">→</span>
@@ -1677,7 +1676,7 @@ export default function Home() {
             <button
               onClick={() => setHistoryOpen(true)}
               disabled={!me}
-              className="mt-3 h-9 px-4 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+              className="mt-4 h-9 px-4 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-50 transition-colors"
             >
               {t.history} {history.length > 0 && <span className="text-zinc-400">{history.length}</span>}
             </button>
@@ -1687,7 +1686,7 @@ export default function Home() {
               <button
                 onClick={() => void startPlacement()}
                 disabled={placementBusy || generating || !me}
-                className="mt-2 h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+                className="mt-2 h-8 px-4 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-50 transition-colors"
               >
                 {t.placement}
               </button>
@@ -1717,7 +1716,7 @@ export default function Home() {
               </h2>
               <button
                 onClick={() => setHistoryOpen(false)}
-                className="h-8 px-3 text-sm text-zinc-500 hover:text-zinc-700"
+                className="h-8 px-4 text-sm text-zinc-500 hover:text-zinc-700"
               >
                 {t.placementClose}
               </button>
@@ -1735,7 +1734,7 @@ export default function Home() {
                           void openHistoryPassage(item._id);
                           setHistoryOpen(false);
                         }}
-                        className="w-full text-left flex items-center justify-between gap-4 px-3 py-2 rounded-lg hover:bg-zinc-100 transition-colors"
+                        className="w-full text-left flex items-center justify-between gap-4 px-4 py-2 rounded-none hover:bg-zinc-100 transition-colors"
                       >
                         <span className="text-sm text-zinc-700 truncate">{item.title}</span>
                         <span className="text-xs text-zinc-400 shrink-0 flex items-center gap-2">
@@ -1783,7 +1782,7 @@ export default function Home() {
               <>
                 {/* One word at a time. The progress bar is the only ornament: it tells the learner
                     how much is left without inviting them to plan their answers. */}
-                <div className="h-1 bg-zinc-100 rounded-full mt-4 overflow-hidden">
+                <div className="h-1 bg-zinc-100 rounded-none mt-4 overflow-hidden">
                   <div
                     className="h-full bg-zinc-800 transition-all"
                     style={{
@@ -1797,21 +1796,21 @@ export default function Home() {
                   <p className="text-4xl font-semibold text-zinc-800 mt-4 mb-10">
                     {placement.items[placementIndex]?.text}
                   </p>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-4">
                     <button
                       onClick={() => answerPlacement(true)}
-                      className="h-11 px-8 text-sm font-medium bg-emerald-600 text-white rounded-lg hover:bg-emerald-700"
+                      className="h-11 px-8 text-sm font-medium bg-emerald-600 text-white rounded-none hover:bg-emerald-700"
                     >
                       {t.placementKnown}
                     </button>
                     <button
                       onClick={() => answerPlacement(false)}
-                      className="h-11 px-8 text-sm font-medium border border-zinc-300 text-zinc-600 rounded-lg hover:bg-zinc-100"
+                      className="h-11 px-8 text-sm font-medium border border-zinc-300 text-zinc-600 rounded-none hover:bg-zinc-100"
                     >
                       {t.placementUnknown}
                     </button>
                   </div>
-                  <p className="text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2 mt-10 max-w-md text-center">
+                  <p className="text-xs text-amber-700 bg-amber-50 rounded-none px-4 py-2 mt-10 max-w-md text-center">
                     {t.placementWarn}
                   </p>
                 </div>
@@ -1874,7 +1873,7 @@ export default function Home() {
                   <div className="flex items-center gap-2 mt-6">
                     <button
                       onClick={() => setPlacementResult(null)}
-                      className="h-9 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800"
+                      className="h-9 px-4 text-sm font-medium bg-zinc-900 text-white rounded-none hover:bg-zinc-800"
                     >
                       {t.placementClose}
                     </button>

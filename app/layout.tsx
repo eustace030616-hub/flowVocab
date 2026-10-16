@@ -27,7 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" className="h-full antialiased" suppressHydrationWarning>
-      <body className="min-h-full flex flex-col font-sans">
+      <body className="min-h-full flex flex-col font-sans bg-white text-zinc-900">
         {/* If the client never runs, the reader shows an empty shell and looks broken — which is
             exactly how a blocked JavaScript bundle presents on a phone. Say so instead of leaving a
             blank page to interpret. */}

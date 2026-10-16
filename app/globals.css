@@ -76,3 +76,68 @@ html {
     display: none;
   }
 }
+
+/*
+ * ── Swiss / International Typographic Style ───────────────────────────────────────────────────
+ *
+ * Helvetica Neue, an 8px unit grid, label and content columns, hairlines and 2px rules doing the
+ * dividing, one accent reserved for the star. The two deliberate exceptions are the docked
+ * navigation bar's 44px touch targets (iOS ergonomics) and the cyan/magenta fringe on the hero
+ * course name — the only two places the system is broken on purpose.
+ */
+
+@theme {
+  /* One family. Weight and size do the ranking. */
+  --font-sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-mono: "SF Mono", Menlo, Consolas, monospace;
+
+  /* Swiss red, the single accent. Used for the star and nothing else. */
+  --color-swiss: #da291c;
+  /* The hairline that divides rows, and the rule that divides sections. */
+  --color-hairline: #e4e4e7;
+}
+
+/*
+ * Hairlines and rules.
+ *
+ * A rule does the separating that a shadow would otherwise fake, so nothing in this interface has a
+ * shadow and nothing has a rounded corner. `fv-rule` is the heavier line that marks a new section.
+ */
+.fv-hairline {
+  border-color: var(--color-hairline);
+}
+.fv-rule {
+  border-top: 2px solid #18181b;
+}
+.fv-rule-bottom {
+  border-bottom: 2px solid #18181b;
+}
+
+/*
+ * iOS wants a 44px touch target; Swiss wants a 32px control. Both, by extending the hit area past
+ * the visible box with a pseudo-element, so the ergonomics cost nothing on screen.
+ */
+.fv-touch {
+  position: relative;
+}
+.fv-touch::after {
+  content: "";
+  position: absolute;
+  inset: -6px -4px;
+}
+
+/*
+ * The hero course name, with a print-misregistration fringe: cyan to the left, magenta to the
+ * right. The style's second deliberate exception, and it belongs on the hero name only.
+ */
+.fv-hero {
+  text-shadow:
+    -1px 0 #00e5ff,
+    1px 0 #ff00a0;
+}
+
+/* Reading text keeps a comfortable measure and leading; ragged right throughout. */
+.fv-reading {
+  text-align: left;
+  hyphens: none;
+}
