@@ -126,6 +126,7 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     exposures: "seen",
     noGloss: "No translation yet.",
     current: "Current",
+    words: "words",
     older: "Older",
     newer: "Newer",
     star: "Keep this passage",
@@ -192,6 +193,7 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     exposures: "扫过",
     noGloss: "暂无译文。",
     current: "当前",
+    words: "词",
     older: "更早",
     newer: "更新",
     star: "收藏这段",
@@ -405,9 +407,9 @@ export default function Home() {
   const [generating, setGenerating] = useState(false);
 
   const t = UI[me?.uiLocale ?? "en"];
-  // Ability is per target language, so show the one for the content on screen.
-  const activeAbility =
-    me?.ability?.find((a) => a.targetLang === (paragraph?.targetLang ?? me?.targetLang)) ?? null;
+  // The ability estimate is deliberately not read here. It still runs the app — it chooses the level
+  // of the next passage and scores coverage — but it is not displayed: the header shows the band, and
+  // the one place a level is named is the placement test's own result, which is what the test is for.
 
   /**
    * Open one passage by id.
@@ -420,6 +422,19 @@ export default function Home() {
     () => history.filter((item) => item._id !== currentId),
     [history, currentId],
   );
+
+  /**
+   * Where the open passage sits in the browsable list, counted from the newest.
+   *
+   * Null at the live passage, which is not in the list, and null if the list has moved on without it
+   * (a passage pruned between the list being fetched and a row being clicked).
+   */
+  const historyPosition = useMemo(() => {
+    if (!browsing || !paragraph) return null;
+    const index = browsableHistory.findIndex((item) => item._id === paragraph._id);
+    if (index === -1) return null;
+    return { index, total: browsableHistory.length };
+  }, [browsing, paragraph, browsableHistory]);
 
   /** Open a stored passage, and remember that the reader is in history rather than at the live one. */
   const openHistoryPassage = useCallback(
@@ -1155,13 +1170,17 @@ export default function Home() {
             {t.history}
             {history.length > 0 && <span className="ml-1 text-zinc-400">{history.length}</span>}
           </button>
-          <button
-            onClick={() => void startPlacement()}
-            disabled={placementBusy || generating || !me}
-            className="md:hidden h-8 px-2.5 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
-          >
-            {t.test}
-          </button>
+          {/* Not in history. A placement test is something you sit down to from the live passage,
+              and its result would arrive while you are looking at something else. */}
+          {!browsing && (
+            <button
+              onClick={() => void startPlacement()}
+              disabled={placementBusy || generating || !me}
+              className="md:hidden h-8 px-2.5 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+            >
+              {t.test}
+            </button>
+          )}
           {/* In history the language control gives way to the way back: switching track while
               browsing a stored passage would leave the reader nowhere. One tap returns to the live
               passage, which is the one thing you want from here. */}
@@ -1198,25 +1217,40 @@ export default function Home() {
 
       <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
         <div className="w-full md:w-4/5 flex flex-col min-h-0 p-3 sm:p-4 md:p-6">
-          <div className="flex items-center justify-between h-10 mb-3">
-            <div className="flex items-center gap-3">
-              <span className="text-sm text-zinc-500 font-medium">
-                {paragraph ? (paragraph.topic ?? paragraph.title) : t.empty}
-              </span>
-              {browsing && (
-                <span className="text-[10px] uppercase tracking-wide text-zinc-400">
-                  {t.history}
+          {/*
+            Two rows, because the reader is doing two different things.
+
+            Row one says what you are looking at and where you are: the topic, and — in history — how
+            far through the list you have walked. Row two is the metadata on the left and the actions
+            on the right, with room to be tapped on a phone. The level is gone from both, and the space
+            it and the test button used is what this format is made of.
+          */}
+          <div className="flex flex-col gap-2 mb-3 shrink-0">
+            <div className="flex items-center justify-between gap-3 min-w-0">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-base font-medium text-zinc-700 truncate">
+                  {paragraph ? (paragraph.topic ?? paragraph.title) : t.empty}
+                </span>
+                {browsing && (
+                  <span className="shrink-0 text-[10px] uppercase tracking-wide text-zinc-500 border border-zinc-200 rounded px-1.5 py-0.5">
+                    {t.history}
+                  </span>
+                )}
+              </div>
+
+              {/* Where you are in the list. Navigating history by memory with no position is how you
+                  lose your place, and the count is the one thing the list view cannot tell you once
+                  it is closed. */}
+              {browsing && historyPosition && (
+                <span className="shrink-0 text-xs tabular-nums text-zinc-400">
+                  {historyPosition.index + 1} / {historyPosition.total}
                 </span>
               )}
-              {paragraph && (
-                <span className="hidden sm:inline text-xs text-zinc-400">
-                  {paragraph.wordCount} words
-                  {paragraph.level ? ` · ${paragraph.level}` : ""}
-                </span>
-              )}
-{coverage && (
+
+              {/* The band, at the live passage: the one measurement a reader acts on. */}
+              {!browsing && coverage && (
                 <span
-                  className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                  className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${
                     !coverage.measured
                       ? "bg-zinc-100 text-zinc-500"
                       : coverage.unknown.band === "easy"
@@ -1226,9 +1260,6 @@ export default function Home() {
                           : "bg-rose-50 text-rose-700"
                   }`}
                   title={
-                    // Everything measured is still here, one hover (or long press) away — the share
-                    // of words the reader knows, the ratio, the verdict, the count behind the band,
-                    // and the estimate it came from. The badge carries the one word a reader acts on.
                     `${t.coverageHelp}\n` +
                     (coverage.measured
                       ? `${t.coverage} ${coverage.percent}%` +
@@ -1242,10 +1273,7 @@ export default function Home() {
                               ? t.verdictSupported
                               : t.verdictComfortable
                         }` +
-                        ` · ${coverage.unknown.count} ${t.newWords}` +
-                        (coverage.basis
-                          ? `\n${t.levelBasis} θ=${coverage.basis.theta.toFixed(2)} ± ${coverage.basis.se.toFixed(2)} · n=${coverage.basis.n.toFixed(0)}`
-                          : "")
+                        ` · ${coverage.unknown.count} ${t.newWords}`
                       : t.coverageUnmeasured)
                   }
                 >
@@ -1258,83 +1286,62 @@ export default function Home() {
                     : t.coverageUnmeasured}
                 </span>
               )}
-
-              {/* The level, beside the band it explains: "B2" and "easy" are the same judgement
-                  seen from two sides, so they belong in one place and one glance. The interval and
-                  the standard error stay in the tooltip. */}
-              {activeAbility && (
-                <span
-                  className="text-sm font-medium text-zinc-600"
-                  title={
-                    `${t.level}: θ=${activeAbility.theta.toFixed(2)} ± ${activeAbility.se.toFixed(2)}` +
-                    ` · n=${activeAbility.n.toFixed(1)} (${activeAbility.levelLow}–${activeAbility.levelHigh})` +
-                    `${me ? ` · ${me.track} · ${me.targetLang}` : ""}` +
-                    `${activeAbility.fromTransfer ? ` · ${t.levelFromOther}` : ""}`
-                  }
-                >
-                  {activeAbility.n === 0
-                    ? t.levelUnknown
-                    : (activeAbility.level ?? activeAbility.levelPoint)}
-                </span>
-              )}
             </div>
-            <div className="flex items-center gap-2">
-              {/* Keep this one. The only thing here that is about the passage rather than the words
-                  in it, and the only exemption from being forgotten once it is old and unmarked. */}
-              {paragraph && (
-                <button
-                  onClick={() => void toggleStar()}
-                  disabled={!me}
-                  aria-pressed={starred}
-                  title={starred ? t.unstar : t.star}
-                  className={`h-8 w-8 text-base leading-none rounded-lg border transition-colors disabled:opacity-50 ${
-                    starred
-                      ? "border-amber-200 bg-amber-50 text-amber-500"
-                      : "border-zinc-200 text-zinc-400 hover:bg-zinc-100"
-                  }`}
-                >
-                  {starred ? "★" : "☆"}
-                </button>
-              )}
-              {/* Two modes, one button position. At the live passage this generates — forward is
-                  still the only direction there — and in history it walks the stored ones instead,
-                  because generating from inside history would strand you somewhere you did not
-                  choose to be. */}
-              {browsing ? (
-                <>
-                  {(() => {
-                    const index = browsableHistory.findIndex((item) => item._id === paragraph?._id);
-                    const atOldest = index === -1 || index >= browsableHistory.length - 1;
-                    const atNewest = index <= 0;
-                    return (
-                      <>
-                        <button
-                          onClick={() => void stepHistory(1)}
-                          disabled={atOldest}
-                          className="h-8 px-3 text-sm font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-40 transition-colors"
-                        >
-                          ‹ {t.older}
-                        </button>
-                        <button
-                          onClick={() => void stepHistory(-1)}
-                          disabled={atNewest}
-                          className="h-8 px-3 text-sm font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-40 transition-colors"
-                        >
-                          {t.newer} ›
-                        </button>
-                      </>
-                    );
-                  })()}
-                </>
-              ) : (
-                <button
-                  onClick={() => void generateParagraph()}
-                  disabled={generating || !me}
-                  className="h-8 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition-colors"
-                >
-                  {generating ? t.generating : t.generate}
-                </button>
-              )}
+
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-xs text-zinc-400 truncate">
+                {paragraph ? `${paragraph.wordCount} ${t.words}` : ""}
+              </span>
+              <div className="flex items-center gap-2 shrink-0">
+                {/* Keep this one. The only thing here that is about the passage rather than the words
+                    in it, and the only exemption from being forgotten once it is old and unmarked. */}
+                {paragraph && (
+                  <button
+                    onClick={() => void toggleStar()}
+                    disabled={!me}
+                    aria-pressed={starred}
+                    title={starred ? t.unstar : t.star}
+                    className={`h-9 w-9 text-base leading-none rounded-lg border transition-colors disabled:opacity-50 ${
+                      starred
+                        ? "border-amber-200 bg-amber-50 text-amber-500"
+                        : "border-zinc-200 text-zinc-400 hover:bg-zinc-100"
+                    }`}
+                  >
+                    {starred ? "★" : "☆"}
+                  </button>
+                )}
+
+                {/* Two modes, one button position. At the live passage this generates — forward is
+                    still the only direction there — and in history it walks the stored ones instead,
+                    because generating from inside history would strand you somewhere you did not
+                    choose to be. */}
+                {browsing ? (
+                  <>
+                    <button
+                      onClick={() => void stepHistory(1)}
+                      disabled={!historyPosition || historyPosition.index >= historyPosition.total - 1}
+                      className="h-9 px-3 text-sm font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-40 transition-colors"
+                    >
+                      ‹ {t.older}
+                    </button>
+                    <button
+                      onClick={() => void stepHistory(-1)}
+                      disabled={!historyPosition || historyPosition.index <= 0}
+                      className="h-9 px-3 text-sm font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-40 transition-colors"
+                    >
+                      {t.newer} ›
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => void generateParagraph()}
+                    disabled={generating || !me}
+                    className="h-9 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition-colors"
+                  >
+                    {generating ? t.generating : t.generate}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -1675,13 +1682,17 @@ export default function Home() {
             >
               {t.history} {history.length > 0 && <span className="text-zinc-400">{history.length}</span>}
             </button>
-            <button
-              onClick={() => void startPlacement()}
-              disabled={placementBusy || generating || !me}
-              className="mt-2 h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
-            >
-              {t.placement}
-            </button>
+            {/* Hidden while browsing, for the same reason as the header's: the test belongs to the
+                live passage, not to the archive. */}
+            {!browsing && (
+              <button
+                onClick={() => void startPlacement()}
+                disabled={placementBusy || generating || !me}
+                className="mt-2 h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-50 transition-colors"
+              >
+                {t.placement}
+              </button>
+            )}
           </div>
 
           <div className="h-1/2 flex flex-col items-center justify-center p-4 gap-2">
