@@ -63,7 +63,11 @@ import {
   upsertMark,
   countEvents,
 } from "@/src/lib/store/learner";
-import { createPlacementSession, submitPlacement } from "@/src/lib/learner/placement-service";
+import {
+  answerPlacement,
+  createPlacementSession,
+  submitPlacement,
+} from "@/src/lib/learner/placement-service";
 import { generateOne, importParagraph } from "@/src/scripts/generate/generate";
 import { onDemandBrief } from "@/src/scripts/generate/briefs";
 import { refillBuffer } from "@/src/scripts/generate/pregenerate";
@@ -806,6 +810,31 @@ app.post("/placement", async (c) => {
  * The answers are checked against the stored session rather than trusted from the body, so the
  * pseudoword correction cannot be side-stepped by omitting items.
  */
+/**
+ * Answer one item.
+ *
+ * The reveal comes back only here, after the decision: a translation before the answer would make
+ * this a reading test. The estimate comes back too, because the test has no length — the reader
+ * decides when it has said enough, and needs to see what it is saying.
+ */
+app.post("/placement/answer", async (c) => {
+  const user = c.get("user");
+  const body = (await c.req.json()) as {
+    targetLang?: unknown;
+    sessionId?: string;
+    itemId?: string;
+    yes?: unknown;
+  };
+  const targetLang = targetLangFor(c, body);
+  if (!body.sessionId || !body.itemId || typeof body.yes !== "boolean") {
+    return c.json({ error: "sessionId, itemId and yes are required" }, 400);
+  }
+
+  const answer = await answerPlacement(user.userId, targetLang, body.sessionId, body.itemId, body.yes);
+  if (!answer) return c.json({ error: "no such session or item" }, 404);
+  return c.json({ ok: true, ...answer });
+});
+
 app.post("/placement/submit", async (c) => {
   const user = c.get("user");
   const body = (await c.req.json()) as {

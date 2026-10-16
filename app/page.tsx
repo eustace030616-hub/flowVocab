@@ -130,6 +130,12 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     words: "words",
     partOfSpeech: "POS",
     form: "Form",
+    placementNext: "Next",
+    placementFinish: "Finish",
+    placementWasFake: "Not a real word",
+    placementFakeHint: "Invented for this test — claiming it lowers your result.",
+    placementNoGloss: "No translation yet.",
+    placementKeepGoing: "Keep going for a more accurate estimate",
     older: "Older",
     newer: "Newer",
     star: "Keep this passage",
@@ -202,6 +208,12 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     words: "词",
     partOfSpeech: "词性",
     form: "形式",
+    placementNext: "下一个",
+    placementFinish: "结束",
+    placementWasFake: "这不是一个真实的词",
+    placementFakeHint: "为本次测试编造 — 声称认识会降低结果。",
+    placementNoGloss: "暂无译文。",
+    placementKeepGoing: "继续作答，结果会更准确",
     older: "更早",
     newer: "更新",
     star: "收藏这段",
@@ -419,6 +431,26 @@ export default function Home() {
     total: number;
   } | null>(null);
   const [placementBusy, setPlacementBusy] = useState(false);
+  /**
+   * What the item turned out to be, shown only after it has been answered.
+   *
+   * The reveal is the second half of the question: a word the reader admitted not knowing is worth
+   * more to them translated than counted, and a fake word is worth naming as one — the protocol is
+   * easier to trust when it shows its work.
+   */
+  const [placementReveal, setPlacementReveal] = useState<{
+    gloss: string | null;
+    isPseudoword: boolean;
+  } | null>(null);
+  /** The estimate as it moves. The test has no length; this is what it is saying so far. */
+  const [placementEstimate, setPlacementEstimate] = useState<{
+    theta: number;
+    se: number;
+    level: string | null;
+    levelLow: string;
+    levelHigh: string;
+    answered: number;
+  } | null>(null);
   /** True while the generator is writing; it makes one to four model calls, so it is not instant. */
   const [generating, setGenerating] = useState(false);
 
@@ -930,22 +962,56 @@ export default function Home() {
    * instinctive, and the protocol warns against over-claiming precisely because deliberation invites
    * it. The last answer submits rather than leaving a finished test waiting on a button.
    */
+  /**
+   * Answer the current word, then show what it was.
+   *
+   * The server is asked rather than the answer being recorded locally, because two things come back
+   * that only the server knows: the translation (or that the word is fake), and the estimate so far.
+   * It may also return more items — the queue is topped up around wherever the estimate has moved,
+   * which is what makes the test open-ended.
+   */
   const answerPlacement = useCallback(
-    (yes: boolean) => {
-      if (!placement) return;
+    async (yes: boolean) => {
+      if (!placement || placementReveal) return;
       const item = placement.items[placementIndex];
       if (!item) return;
 
-      const answers = { ...placementAnswers, [item.id]: yes };
-      setPlacementAnswers(answers);
-      if (placementIndex + 1 >= placement.items.length) {
-        void submitPlacement(answers);
-      } else {
-        setPlacementIndex(placementIndex + 1);
+      setPlacementAnswers((prev) => ({ ...prev, [item.id]: yes }));
+      const res = await fetch("/api/placement/answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId: placement.sessionId, itemId: item.id, yes }),
+      });
+      const data = await readJson<{
+        gloss: string | null;
+        isPseudoword: boolean;
+        answered: number;
+        served: number;
+        items: Array<{ id: string; text: string }>;
+        estimate?: { theta: number; se: number; level: string | null; levelLow: string; levelHigh: string };
+      }>(res);
+      if (!data) {
+        setError(describeFailure("/api/placement/answer", res));
+        return;
+      }
+      setPlacementReveal({ gloss: data.gloss, isPseudoword: data.isPseudoword });
+      if (data.estimate) {
+        setPlacementEstimate({ ...data.estimate, answered: data.answered });
+      }
+      if (data.items?.length) {
+        setPlacement((prev) =>
+          prev ? { ...prev, items: [...prev.items, ...data.items] } : prev,
+        );
       }
     },
-    [placement, placementIndex, placementAnswers, submitPlacement],
+    [placement, placementIndex, placementReveal],
   );
+
+  /** Move to the next word, clearing the reveal. */
+  const nextPlacementItem = useCallback(() => {
+    setPlacementReveal(null);
+    setPlacementIndex((index) => index + 1);
+  }, []);
 
   /**
    * Leave the test. Whatever was answered is scored; nothing answered simply closes it.
@@ -1832,48 +1898,62 @@ export default function Home() {
           <div className="w-full max-w-5xl mx-auto flex flex-col flex-1 overflow-hidden px-8 py-6">
             <div className="flex items-baseline justify-between">
               <h2 className="text-lg font-medium tracking-tight text-zinc-900">{t.placement}</h2>
-              {placement && (
-                <span className="text-xs text-zinc-400">
-                  {Object.keys(placementAnswers).length}/{placement.items.length} {t.placementAnswered}
-                </span>
-              )}
             </div>
 
             {placement && (
               <>
-                {/* One word at a time. The progress bar is the only ornament: it tells the learner
-                    how much is left without inviting them to plan their answers. */}
-                <div className="h-2 bg-zinc-100 rounded-sm mt-4 overflow-hidden">
-                  <div
-                    className="h-full bg-zinc-800 transition-all"
-                    style={{
-                      width: `${((placementIndex + 1) / Math.max(placement.items.length, 1)) * 100}%`,
-                    }}
-                  />
-                </div>
-
+                {/* One word at a time, and the space under it is the reveal: the translation if the
+                    word has one, or the admission that it was never a word. The gap is reserved from
+                    the start so the word does not jump up the page when the answer lands. */}
                 <div className="flex-1 flex flex-col items-center justify-center">
-                  <p className="text-sm text-zinc-400">{t.placementOneAtATime}</p>
-                  <p className="text-4xl font-medium tracking-tight text-zinc-900 mt-4 mb-10">
-                    {placement.items[placementIndex]?.text}
+                  <p className="text-4xl font-medium tracking-tight text-zinc-900">
+                    {placement.items[placementIndex]?.text ?? ""}
                   </p>
-                  <div className="flex items-center gap-4">
-                    <button
-                      onClick={() => answerPlacement(true)}
-                      className="h-11 px-8 text-sm font-medium bg-emerald-600 text-white rounded-sm hover:bg-emerald-700"
-                    >
-                      {t.placementKnown}
-                    </button>
-                    <button
-                      onClick={() => answerPlacement(false)}
-                      className="h-11 px-8 text-sm font-medium border border-zinc-300 text-zinc-600 rounded-sm hover:bg-zinc-100"
-                    >
-                      {t.placementUnknown}
-                    </button>
+
+                  <div className="h-40 flex flex-col items-center justify-center gap-2">
+                    {placementReveal ? (
+                      <>
+                        <p
+                          className={`text-lg ${
+                            placementReveal.isPseudoword ? "text-zinc-400" : "text-zinc-700"
+                          }`}
+                        >
+                          {placementReveal.isPseudoword
+                            ? t.placementWasFake
+                            : (placementReveal.gloss ?? t.placementNoGloss)}
+                        </p>
+                        {placementReveal.isPseudoword && (
+                          <p className="text-xs text-zinc-400">{t.placementFakeHint}</p>
+                        )}
+                      </>
+                    ) : (
+                      <p className="text-sm text-zinc-400">{t.placementOneAtATime}</p>
+                    )}
                   </div>
-                  <p className="text-xs text-amber-700 border-l-2 border-amber-400 pl-4 mt-10 max-w-md text-left">
-                    {t.placementWarn}
-                  </p>
+
+                  {placementReveal ? (
+                    <button
+                      onClick={nextPlacementItem}
+                      className="h-11 w-full max-w-md text-sm font-medium bg-zinc-900 text-white rounded-sm hover:bg-zinc-800"
+                    >
+                      {t.placementNext}
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-4">
+                      <button
+                        onClick={() => void answerPlacement(true)}
+                        className="h-11 px-8 text-sm font-medium bg-zinc-900 text-white rounded-sm hover:bg-zinc-800"
+                      >
+                        {t.placementKnown}
+                      </button>
+                      <button
+                        onClick={() => void answerPlacement(false)}
+                        className="h-11 px-8 text-sm font-medium border border-zinc-300 text-zinc-600 rounded-sm hover:bg-zinc-100"
+                      >
+                        {t.placementUnknown}
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between pt-4">
@@ -1882,49 +1962,26 @@ export default function Home() {
                     disabled={placementBusy}
                     className="fv-touch h-8 px-2 text-xs font-medium text-zinc-500 hover:text-zinc-700 disabled:opacity-50"
                   >
-                    {t.placementExit}
+                    {t.placementFinish}
                   </button>
-                  <span className="text-xs text-zinc-400">
-                    {placementIndex + 1}/{placement.items.length} · {Object.keys(placementAnswers).length}{" "}
-                    {t.placementAnswered}
-                  </span>
-                </div>
-              </>
-            )}
 
-            {placementBusy && !placement && !placementResult && (
-              <>
-                <div className="h-2 bg-zinc-100 rounded-sm mt-4 overflow-hidden">
-                  <div className="h-full w-0 bg-zinc-800" />
-                </div>
-                <div className="flex-1 flex flex-col items-center justify-center">
-                  <p className="text-sm text-zinc-400">{t.placementOneAtATime}</p>
-                  <span
-                    className="inline-block h-10 w-48 rounded-sm bg-zinc-100 animate-pulse mt-4 mb-10"
-                    aria-hidden="true"
-                  />
-                  <div className="flex items-center gap-4">
-                    <button
-                      disabled
-                      className="h-11 px-8 text-sm font-medium bg-emerald-600 text-white rounded-sm opacity-50"
-                    >
-                      {t.placementKnown}
-                    </button>
-                    <button
-                      disabled
-                      className="h-11 px-8 text-sm font-medium border border-zinc-300 text-zinc-600 rounded-sm opacity-50"
-                    >
-                      {t.placementUnknown}
-                    </button>
+                  {/* What the test is concluding, as it concludes it — and a nudge once it has
+                      enough to be worth something. There is no end, so the reader needs a reason to
+                      keep going and a way to stop. */}
+                  <div className="flex items-center gap-4 text-xs">
+                    {placementEstimate && placementEstimate.answered >= 3 && (
+                      <span className="tabular-nums text-zinc-500">
+                        {t.level}{" "}
+                        <span className="font-medium text-zinc-800">
+                          {placementEstimate.level ??
+                            `${placementEstimate.levelLow}–${placementEstimate.levelHigh}`}
+                        </span>
+                      </span>
+                    )}
+                    {placementEstimate && placementEstimate.answered >= 10 && (
+                      <span className="text-zinc-400">{t.placementKeepGoing}</span>
+                    )}
                   </div>
-                </div>
-                <div className="flex items-center justify-between pt-4">
-                  <button
-                    onClick={exitPlacement}
-                    className="fv-touch h-8 px-2 text-xs font-medium text-zinc-500 hover:text-zinc-700"
-                  >
-                    {t.placementExit}
-                  </button>
                 </div>
               </>
             )}

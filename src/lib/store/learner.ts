@@ -454,6 +454,27 @@ export function latestCompletedPlacement(userId: string, targetLang: string): Pl
   };
 }
 
+/**
+ * Save progress on a running test, without completing it.
+ *
+ * `completePlacementSession` stamps `completedAt`, which is what marks a test as finished and lets
+ * the estimate fold it in. An answer is not a finish: stamping it on every answer would have the
+ * ability fold read a half-finished test as a measurement, and the next `latestCompletedPlacement`
+ * would return it.
+ */
+export function savePlacementProgress(id: string, responses: unknown[], items?: unknown[]): void {
+  if (items) {
+    run(
+      "UPDATE placement_sessions SET responses = ?, items = ? WHERE id = ?",
+      JSON.stringify(responses),
+      JSON.stringify(items),
+      id,
+    );
+    return;
+  }
+  run("UPDATE placement_sessions SET responses = ? WHERE id = ?", JSON.stringify(responses), id);
+}
+
 export function completePlacementSession(
   id: string,
   responses: unknown[],

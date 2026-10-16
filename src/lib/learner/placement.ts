@@ -43,6 +43,13 @@ export interface PlacementItem {
   isPseudoword: boolean;
   /** Difficulty of a real word; pseudowords carry none. */
   difficulty?: number;
+  /**
+   * The headword a real item came from, so its translation can be looked up *after* the answer.
+   *
+   * Server-side only, like `isPseudoword`: a reveal available before the decision would make the
+   * test measure reading rather than knowledge.
+   */
+  lemmaKey?: string;
 }
 
 export interface PlacementResponse {
