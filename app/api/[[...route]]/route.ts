@@ -2,7 +2,6 @@ import { Hono } from "hono";
 import { handle } from "hono/vercel";
 import { getCookie, setCookie } from "hono/cookie";
 
-import { connectDB } from "@/src/lib/db";
 import { Paragraph } from "@/src/models/Paragraph";
 import { Word } from "@/src/models/Word";
 import { Mark } from "@/src/models/Mark";
@@ -29,8 +28,38 @@ import { abilitiesFor, recomputeAllAbilities } from "@/src/lib/learner/profile";
 import { knownProbabilities } from "@/src/lib/learner/reading";
 import { coverageOf } from "@/src/lib/learner/coverage";
 import { candidatesFor } from "@/src/lib/tokenize/rules";
-import { Inflection } from "@/src/models/Inflection";
-import { Gloss } from "@/src/models/Gloss";
+import {
+  addSurfaceForm,
+  allProvenance,
+  ensureWord,
+  glossesByKeys,
+  inflectionsByForm,
+  wordsByKeys,
+  wordsByLemma,
+} from "@/src/lib/store/dictionary";
+import {
+  type ParagraphRecord,
+  paragraphById,
+  paragraphSummaries,
+  paragraphsFor,
+  nextBufferedParagraph,
+  clearBuffered,
+  upsertParagraphByBrief,
+  countBuffered,
+} from "@/src/lib/store/content";
+import {
+  abilitiesFor as abilitiesForStore,
+  abilityFor,
+  ensureUser,
+  insertEvent,
+  markCount,
+  marksForParagraph,
+  setMarkStatus,
+  wordStatesByStatus,
+  setUserTrack,
+  upsertMark,
+  countEvents,
+} from "@/src/lib/store/learner";
 import { createPlacementSession, submitPlacement } from "@/src/lib/learner/placement-service";
 import { generateOne, importParagraph } from "@/src/scripts/generate/generate";
 import { onDemandBrief } from "@/src/scripts/generate/briefs";
@@ -65,7 +94,8 @@ const EVENT_TYPES = [
  * `resolveUser` only.
  */
 app.use("*", async (c, next) => {
-  await connectDB();
+  // No database handshake: SQLite is a file, opened on first use by the store. The middleware that
+  // used to connect to MongoDB on every request is gone with the server it connected to.
   const existing = getCookie(c, USER_COOKIE);
   const { user, created } = await resolveUser(existing);
   if (created) {
@@ -131,37 +161,11 @@ app.get("/paragraphs", async (c) => {
   if (wantsSummary) {
     // The history list. Deliberately light: spans and vocabulary for every passage would grow without
     // bound as the reader generates more, and the list needs none of it.
-    const rows = await Paragraph.find({ targetLang })
-      .sort({ createdAt: -1 })
-      .select("title level wordCount source createdAt briefId")
-      .lean();
-    const counts = await Mark.aggregate([
-      { $match: { userId: user.userId, targetLang } },
-      { $group: { _id: { paragraphId: "$paragraphId", status: "$status" }, n: { $sum: 1 } } },
-    ]);
-    const markedByParagraph = new Map<string, number>();
-    for (const row of counts) {
-      if (row._id.status !== "marked") continue;
-      const key = String(row._id.paragraphId);
-      markedByParagraph.set(key, (markedByParagraph.get(key) ?? 0) + row.n);
-    }
-
-    return c.json(
-      rows.map((row) => ({
-        _id: String(row._id),
-        title: row.title,
-        level: row.level ?? null,
-        wordCount: row.wordCount ?? 0,
-        source: row.source,
-        createdAt: row.createdAt,
-        markedCount: markedByParagraph.get(String(row._id)) ?? 0,
-      })),
-    );
+    // The mark count per passage is a join, not a second query plus a fold in JavaScript.
+    return c.json(paragraphSummaries(targetLang, user.userId));
   }
 
-  const paragraphs = await Paragraph.find({ targetLang })
-    .sort({ difficulty: 1, createdAt: 1 })
-    .lean();
+  const paragraphs = paragraphsFor(targetLang);
 
   const out = [];
   for (const paragraph of paragraphs) {
@@ -180,7 +184,7 @@ app.get("/paragraphs", async (c) => {
  */
 async function readerPayload(
   userId: string,
-  paragraph: { _id: unknown; content: string } & Record<string, unknown>,
+  paragraph: ParagraphRecord,
   targetLang: TargetLang,
   glossLang: GlossLang,
 ) {
@@ -188,9 +192,7 @@ async function readerPayload(
     const spans = await tokenizeWithLexicon(paragraph.content, targetLang);
 
     // Marks this learner has already made, keyed by where they made them.
-    const marks = await Mark.find({ userId, paragraphId: paragraph._id }).lean();
-    const marked: Record<string, string> = {};
-    for (const mark of marks) marked[`${mark.charStart}`] = mark.status;
+    const marked = marksForParagraph(userId, String(paragraph._id));
 
     // Vocabulary records behind the spans, so the popover has a gloss without a second round trip.
     const lexicon = await wordsForSpans(targetLang, spans);
@@ -198,11 +200,8 @@ async function readerPayload(
     // what makes a compound understandable. Add them to the keys so both lookups cover them.
     const partKeys = spans.flatMap((span) => span.compoundParts ?? []);
     const keys = [...new Set([...lexicon.keys(), ...partKeys])];
-    const words = keys.length
-      ? await Word.find({ targetLang, lemmaKey: { $in: keys } })
-          .select("lemmaKey lemma pos level levelEstimated difficulty frequency article plural cognateWithEn falseFriend")
-          .lean()
-      : [];
+    // Every entry for the key, across parts of speech: the reader shows each reading it has.
+    const words = keys.length ? wordsByKeys(targetLang, keys, { origin: null }) : [];
 
     // This learner's own state, which lives in WordState rather than on the shared Word.
     const states = await statesFor(userId, targetLang, keys);
@@ -285,9 +284,7 @@ async function readerPayload(
       .map(([key]) => key);
 
     if (withoutGloss.length > 0) {
-      const stated = await Inflection.find({ targetLang, form: { $in: withoutGloss } })
-        .select("form baseLemmaKey")
-        .lean();
+      const stated = inflectionsByForm(targetLang, withoutGloss);
       const baseOf = new Map(stated.map((row) => [row.form, row.baseLemmaKey]));
 
       // Preference order per key: stated base first, then the lemmatiser's candidates.
@@ -303,14 +300,7 @@ async function readerPayload(
       }
 
       if (wanted.size > 0) {
-        const borrowed = await Gloss.find({
-          targetLang,
-          lang: glossLang,
-          lemmaKey: { $in: [...wanted] },
-        })
-          .sort({ rank: 1, source: 1, text: 1 })
-          .select("lemmaKey text source termPos generated")
-          .lean();
+        const borrowed = glossesByKeys(targetLang, glossLang, [...wanted]);
         const best = new Map<string, (typeof borrowed)[number]>();
         for (const row of borrowed) if (!best.has(row.lemmaKey)) best.set(row.lemmaKey, row);
 
@@ -359,7 +349,7 @@ async function readerPayload(
  */
 app.get("/paragraphs/:id", async (c) => {
   const user = c.get("user");
-  const paragraph = await Paragraph.findById(c.req.param("id")).lean();
+  const paragraph = paragraphById(c.req.param("id"));
   if (!paragraph) return c.json({ error: "Not found" }, 404);
   const targetLang = (paragraph.targetLang ?? targetLangFor(c)) as TargetLang;
   return c.json(await readerPayload(user.userId, paragraph, targetLang, glossLangFor(targetLang)));
@@ -373,16 +363,10 @@ app.get("/words", async (c) => {
   const targetLang = targetLangFor(c);
   const status = c.req.query("status") || "unfamiliar";
 
-  const states = await WordState.find({ userId: user.userId, targetLang, status })
-    .sort({ unfamiliarity: -1 })
-    .limit(500)
-    .lean();
+  const states = wordStatesByStatus(user.userId, targetLang, status, 500);
   if (states.length === 0) return c.json([]);
 
-  const words = await Word.find({
-    targetLang,
-    lemmaKey: { $in: states.map((s) => s.lemmaKey) },
-  }).lean();
+  const words = wordsByKeys(targetLang, states.map((state) => state.lemmaKey), { origin: null });
   const byKey = new Map(words.map((w) => [w.lemmaKey, w]));
 
   return c.json(
@@ -400,7 +384,7 @@ app.get("/words/:lemmaKey", async (c) => {
   const targetLang = targetLangFor(c);
   const lemmaKey = c.req.param("lemmaKey").toLowerCase();
 
-  const word = await Word.findOne({ targetLang, lemmaKey }).lean();
+  const word = wordsByLemma(targetLang, lemmaKey)[0];
   if (!word) return c.json({ error: "Not found" }, 404);
 
   const states = await statesFor(user.userId, targetLang, [lemmaKey]);
@@ -446,58 +430,42 @@ app.post("/words/mark", async (c) => {
   //
   // Preference order: the exact (lemma, pos) if the caller supplied one, otherwise any entry for
   // this lemma that already carries a part of speech, otherwise whatever exists.
-  const candidates = await Word.find({ targetLang, lemmaKey }).limit(5);
-  let word = pickExistingWord(candidates, pos);
+  const candidates = wordsByLemma(targetLang, lemmaKey);
+  const existing = pickExistingWord(candidates, pos);
+  let word = existing;
 
   if (!word) {
-    try {
-      word = await Word.create({
-        targetLang,
-        lemmaKey,
-        pos,
-        lemma: body.lemma || body.surface || lemmaKey,
-        frequency: {},
-        level: null,
-        levelEstimated: false,
-        levelSource: null,
-        difficulty: -1,
-      });
-    } catch (err) {
-      // Lost a race with a concurrent mark for the same item; reuse the winner.
-      const existing = await Word.findOne({ targetLang, lemmaKey, pos });
-      if (!existing) throw err;
-      word = existing;
-    }
-  }
-
-  // `surfaceForms` is written by $addToSet alone — naming it in $setOnInsert too makes Mongo
-  // reject the update with ConflictingUpdateOperators.
-  if (body.surface) {
-    await Word.updateOne({ _id: word._id }, { $addToSet: { surfaceForms: body.surface } });
-  }
-
-  await Mark.findOneAndUpdate(
-    {
-      userId: user.userId,
-      paragraphId: body.paragraphId,
-      charStart: body.charStart,
-      charEnd: body.charEnd,
-    },
-    {
-      userId: user.userId,
+    // Insert-unless-present, which is the same race-safe shape the upsert had: a concurrent mark for
+    // the same item finds the winner rather than creating a second row.
+    word = ensureWord({
       targetLang,
-      paragraphId: body.paragraphId,
-      wordId: word._id,
-      surface: body.surface ?? word.lemma,
       lemmaKey,
-      charStart: body.charStart,
-      charEnd: body.charEnd,
-      tokenizerVersion: TOKENIZER_VERSION,
-      status: "marked",
-      markedAt: new Date(),
-    },
-    { upsert: true, returnDocument: "after" },
-  );
+      pos,
+      lemma: body.lemma || body.surface || lemmaKey,
+      origin: "learner",
+      surfaceForms: body.surface ? [body.surface] : [],
+      level: null,
+      levelEstimated: false,
+      levelSource: null,
+      difficulty: -1,
+      frequency: {},
+    });
+  } else if (body.surface && !word.surfaceForms.includes(body.surface)) {
+    addSurfaceForm(word._id, body.surface);
+  }
+
+  upsertMark({
+    userId: user.userId,
+    targetLang,
+    paragraphId: body.paragraphId,
+    wordId: word._id,
+    surface: body.surface ?? word.lemma,
+    lemmaKey,
+    charStart: body.charStart,
+    charEnd: body.charEnd,
+    tokenizerVersion: TOKENIZER_VERSION,
+    status: "marked",
+  });
 
   await appendEvent({
     userId: user.userId,
@@ -541,15 +509,7 @@ app.post("/words/ignore", async (c) => {
   if (!lemmaKey) return c.json({ error: "lemmaKey is required" }, 400);
 
   if (body.paragraphId && typeof body.charStart === "number" && typeof body.charEnd === "number") {
-    await Mark.findOneAndUpdate(
-      {
-        userId: user.userId,
-        paragraphId: body.paragraphId,
-        charStart: body.charStart,
-        charEnd: body.charEnd,
-      },
-      { status: "ignored" },
-    );
+    setMarkStatus(user.userId, body.paragraphId, body.charStart, body.charEnd, "ignored");
   }
 
   await appendEvent({
@@ -575,10 +535,7 @@ app.post("/words/batch", async (c) => {
   const targetLang = targetLangFor(c, body);
   const keys = (body.lemmaKeys ?? body.words ?? []).map((k) => k.toLowerCase());
 
-  const words = await Word.find({ targetLang, lemmaKey: { $in: keys } })
-    .select("lemma lemmaKey pos level levelEstimated difficulty article plural")
-    .lean();
-  return c.json(words);
+  return c.json(wordsByKeys(targetLang, keys, { origin: null }));
 });
 
 // ── Marks ─────────────────────────────────────────────────────────────────────
@@ -589,10 +546,7 @@ app.post("/marks/batch", async (c) => {
   const body = (await c.req.json()) as { paragraphId?: string; targetLang?: unknown };
   if (!body.paragraphId) return c.json({ error: "paragraphId is required" }, 400);
 
-  const marks = await Mark.find({ userId: user.userId, paragraphId: body.paragraphId }).lean();
-  const result: Record<string, string> = {};
-  for (const mark of marks) result[`${mark.charStart}`] = mark.status;
-  return c.json(result);
+  return c.json(marksForParagraph(user.userId, body.paragraphId));
 });
 
 /** Removed in Phase 0: occurrence identity is a character span, not an array index. */
@@ -647,7 +601,7 @@ app.post("/events", async (c) => {
     // Exposures are the bulk of the evidence, so the estimate is refreshed here as well.
     const ability = await recomputeAllAbilities(user.userId);
     return c.json(
-      { ok: true, appended: body.items.length, event: event?._id ?? null, ability },
+      { ok: true, appended: body.items.length, event: event ?? null, ability },
       201,
     );
   }
@@ -676,7 +630,7 @@ app.post("/events", async (c) => {
   const state = await recomputeWordState(user.userId, targetLang, body.lemmaKey);
   // Both languages: an English event can change the prior German is using.
   const ability = await recomputeAllAbilities(user.userId);
-  return c.json({ ok: true, event: event._id, state, ability }, 201);
+  return c.json({ ok: true, event, state, ability }, 201);
 });
 
 // ── Generation ────────────────────────────────────────────────────────────────
@@ -707,7 +661,7 @@ app.post("/paragraphs/generate", async (c) => {
   // The level comes from the learner's own estimate, so the text arrives pitched at them. Clamped to
   // the range the briefs cover: below A2 the vocabulary is too thin to build a scene, and above B2 a
   // generated text is not what this reader is for.
-  const ability = await AbilityState.findOne({ userId: user.userId, targetLang }).select("theta").lean();
+  const ability = abilityFor(user.userId, targetLang);
   const point = levelFromDifficulty(ability?.theta ?? 0.25);
   const level: CefrLevel = point === "B1" || point === "B2" ? point : "A2";
   const spec = {
@@ -720,16 +674,16 @@ app.post("/paragraphs/generate", async (c) => {
   // A pregenerated passage is served immediately, and the stock is topped up afterwards without the
   // caller waiting for it. Generation is seconds rather than minutes now, but a request should still
   // never be the thing that waits.
-  const buffered = await Paragraph.findOne({ targetLang, buffered: true }).sort({ createdAt: 1 });
+  const buffered = nextBufferedParagraph(targetLang);
   if (buffered) {
-    await Paragraph.updateOne({ _id: buffered._id }, { $set: { buffered: false } });
+    clearBuffered(buffered._id);
     void refillBuffer(user.userId, targetLang).catch(() => {
       // A failed top-up is not worth failing the request over; the next press will try again.
     });
     return c.json(
       {
         ok: true,
-        paragraphId: String(buffered._id),
+        paragraphId: buffered._id,
         title: buffered.title,
         level: buffered.level,
         topic: buffered.topic,
@@ -844,7 +798,7 @@ app.post("/placement/submit", async (c) => {
 
 /** Data sources, so the attribution screen is generated from data rather than maintained by hand. */
 app.get("/provenance", async (c) => {
-  const datasets = await Provenance.find().sort({ dataset: 1 }).lean();
+  const datasets = allProvenance();
   return c.json(datasets);
 });
 

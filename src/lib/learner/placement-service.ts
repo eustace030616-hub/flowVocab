@@ -5,8 +5,17 @@
  * the payload measures nothing, so the client receives opaque ids and words only.
  */
 
-import { Word } from "../../models/Word";
-import { PlacementSession } from "../../models/PlacementSession";
+import {
+  difficultyBandCounts,
+  realWordsMatching,
+  sampleWords,
+  sampleWordsBetween,
+} from "../store/dictionary";
+import {
+  completePlacementSession,
+  insertPlacementSession,
+  placementSessionById,
+} from "../store/learner";
 import type { TargetLang } from "../lang";
 import {
   PSEUDOWORDS,
@@ -39,18 +48,7 @@ async function sampleRealItems(targetLang: TargetLang, count: number): Promise<P
   // What identification needs is items spread evenly across the axis, so the quota goes evenly to
   // the bands that have words in them, whatever their size.
   const boundaries = [...Array.from({ length: BANDS }, (_, i) => i / BANDS), 1.0001];
-  const buckets = await Word.aggregate([
-    {
-      $match: {
-        targetLang,
-        origin: "import",
-        difficulty: { $gte: 0, $lt: 1.0001 },
-      },
-    },
-    { $bucket: { groupBy: "$difficulty", boundaries, output: { n: { $sum: 1 } } } },
-  ]);
-
-  const populated = buckets.filter((bucket) => bucket.n > 0);
+  const populated = difficultyBandCounts(targetLang, BANDS);
   if (populated.length === 0) return [];
 
   const quota = Math.max(1, Math.floor(count / populated.length));
@@ -60,17 +58,7 @@ async function sampleRealItems(targetLang: TargetLang, count: number): Promise<P
 
   const take = async (min: number, max: number, size: number) => {
     if (size <= 0) return;
-    const rows = await Word.aggregate([
-      {
-        $match: {
-          targetLang,
-          origin: "import",
-          difficulty: { $gte: min, $lt: max },
-        },
-      },
-      { $sample: { size } },
-      { $project: { lemmaKey: 1, lemma: 1, difficulty: 1 } },
-    ]);
+    const rows = sampleWordsBetween(targetLang, min, max, size);
     for (const row of rows) {
       if (seen.has(row.lemmaKey)) continue;
       seen.add(row.lemmaKey);
@@ -84,17 +72,13 @@ async function sampleRealItems(targetLang: TargetLang, count: number): Promise<P
   };
 
   for (const bucket of populated) {
-    await take(bucket._id, bucket._id + 1 / BANDS, quota);
+    await take(bucket.band, bucket.band + 1 / BANDS, quota);
   }
 
   // Top up if a band held fewer words than its quota, so the test is always the full length. The
   // top-up widens the existing coverage rather than concentrating it: it samples the whole axis.
   if (items.length < count) {
-    const rows = await Word.aggregate([
-      { $match: { targetLang, origin: "import", difficulty: { $gte: 0, $lt: 1.0001 } } },
-      { $sample: { size: count - items.length + 40 } },
-      { $project: { lemmaKey: 1, lemma: 1, difficulty: 1 } },
-    ]);
+    const rows = sampleWords(targetLang, count - items.length + 40);
     for (const row of rows) {
       if (items.length >= count) break;
       if (seen.has(row.lemmaKey)) continue;
@@ -120,12 +104,7 @@ async function sampleRealItems(targetLang: TargetLang, count: number): Promise<P
  */
 async function realWordSet(targetLang: TargetLang, candidates: string[]): Promise<Set<string>> {
   if (candidates.length === 0) return new Set();
-  const rows = await Word.find({
-    targetLang,
-    $or: [{ lemmaKey: { $in: candidates } }, { surfaceForms: { $in: candidates } }],
-  })
-    .select("lemmaKey surfaceForms")
-    .lean();
+  const rows = realWordsMatching(targetLang, candidates);
 
   const real = new Set<string>();
   const wanted = new Set(candidates);
@@ -145,12 +124,9 @@ export async function createPlacementSession(
 ): Promise<{ sessionId: string; items: Array<{ id: string; text: string }>; warning: string }> {
   const real = await sampleRealItems(targetLang, REAL_WORDS);
 
-  const donors = await Word.aggregate([
-    { $match: { targetLang, origin: "import", difficulty: { $gte: 0 } } },
-    { $sample: { size: DONOR_POOL } },
-    { $project: { lemma: 1 } },
-  ]);
-  const donorWords = donors.map((d) => String(d.lemma).toLowerCase()).filter((w) => w.length >= 4);
+  const donorWords = sampleWords(targetLang, DONOR_POOL)
+    .map((row) => row.lemma.toLowerCase())
+    .filter((word) => word.length >= 4);
 
   // Generate in rounds: the generator rejects anything the lexicon knows, and a round may come back
   // short, so asking for a surplus and verifying in one query is cheaper than a query per candidate.
@@ -188,16 +164,15 @@ export async function createPlacementSession(
     [items[i], items[j]] = [items[j], items[i]];
   }
 
-  const session = await PlacementSession.create({
+  const sessionId = insertPlacementSession({
     userId,
     targetLang,
     seed: seedFrom(`${targetLang}:${userId}`),
     items,
-    responses: [],
   });
 
   return {
-    sessionId: String(session._id),
+    sessionId,
     // Deliberately without `isPseudoword` or `difficulty`: the client must not be able to tell.
     items: items.map((item) => ({ id: item.id, text: item.text })),
     warning:
@@ -223,13 +198,27 @@ export interface PlacementSubmitResult {
   levelHigh: string;
 }
 
+/** The score as it is stored, so a replay of a completed session reads the same shape. */
+interface StoredScore {
+  hits: number;
+  falseAlarms: number;
+  falseAlarmRate: number;
+  corrected: number;
+  dPrime: number;
+  theta: number;
+  se: number;
+  level: string | null;
+  levelLow: string;
+  levelHigh: string;
+}
+
 /** Score a submitted test, record it, and hand the numbers back. */
 export async function submitPlacement(
   userId: string,
   sessionId: string,
   responses: PlacementResponse[],
 ): Promise<PlacementSubmitResult | null> {
-  const session = await PlacementSession.findOne({ _id: sessionId, userId });
+  const session = placementSessionById(userId, sessionId);
   if (!session) return null;
 
   // Mongoose's inference through a subdocument array loses the shape, so the item set is read once
@@ -242,8 +231,9 @@ export async function submitPlacement(
     (item) => !item.isPseudoword && answeredIds.has(item.id),
   ).length;
   if (session.completedAt) {
-    // Already scored: return the stored result rather than folding the test in twice.
-    const stored = session.score;
+    // Already scored: return the stored result rather than folding the test in twice. A retake
+    // replaces the previous evidence instead of averaging with it, so this is a genuine replay.
+    const stored = session.score as StoredScore | null;
     if (stored) {
       return {
         hits: stored.hits,
@@ -266,9 +256,7 @@ export async function submitPlacement(
   const score = scorePlacement(items, responses);
   const levels = placementLevels(score);
 
-  session.responses = responses;
-  session.completedAt = new Date();
-  session.score = {
+  completePlacementSession(sessionId, responses, {
     hits: score.hits,
     falseAlarms: score.falseAlarms,
     falseAlarmRate: score.falseAlarmRate,
@@ -279,8 +267,7 @@ export async function submitPlacement(
     level: levels.level,
     levelLow: levels.levelLow,
     levelHigh: levels.levelHigh,
-  };
-  await session.save();
+  } satisfies StoredScore);
 
   return {
     hits: score.hits,

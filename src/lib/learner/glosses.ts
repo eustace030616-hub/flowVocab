@@ -12,7 +12,7 @@
  * 火车 (railway train). A part of speech is part of the identity of a meaning.
  */
 
-import { Gloss } from "../../models/Gloss";
+import { glossesByKeys } from "../store/dictionary";
 import type { GlossLang, TargetLang } from "../lang";
 
 export interface GlossView {
@@ -61,11 +61,9 @@ export async function glossesFor(
   if (queries.length === 0) return map;
 
   const lemmaKeys = [...new Set(queries.map((q) => q.lemmaKey))];
-  const rows = await Gloss.find({ targetLang, lang, lemmaKey: { $in: lemmaKeys } })
-    // Deterministic on ties: a stable source order beats whatever Mongo happens to return.
-    .sort({ rank: 1, source: 1, text: 1 })
-    .select("lemmaKey pos termPos text source license generated rank")
-    .lean();
+  // Sorted by rank, source, text in SQL — deterministic on ties, which beats whatever order a
+  // storage engine happens to return.
+  const rows = glossesByKeys(targetLang, lang, lemmaKeys);
 
   for (const row of rows) {
     // Sorted by rank, so the first row for a key is the preferred gloss.
@@ -100,9 +98,7 @@ export async function glossesByLemma(
   const map = new Map<string, GlossView[]>();
   if (lemmaKeys.length === 0) return map;
 
-  const rows = await Gloss.find({ targetLang, lang, lemmaKey: { $in: lemmaKeys } })
-    .select("lemmaKey pos termPos text source license generated rank")
-    .lean();
+  const rows = glossesByKeys(targetLang, lang, lemmaKeys);
 
   for (const row of rows) {
     const view: GlossView = {
@@ -137,10 +133,13 @@ export async function allGlossesFor(
   targetLang: TargetLang,
   lemmaKey: string,
 ): Promise<Array<GlossView & { lang: GlossLang }>> {
-  const rows = await Gloss.find({ targetLang, lemmaKey })
-    .sort({ pos: 1, lang: 1, rank: 1 })
-    .select("lang pos termPos text source license generated rank")
-    .lean();
+  // Every part of speech and both gloss languages, so disagreements stay visible.
+  const rows = [
+    ...glossesByKeys(targetLang, "en", [lemmaKey]),
+    ...glossesByKeys(targetLang, "zh", [lemmaKey]),
+  ].sort(
+    (a, b) => a.pos.localeCompare(b.pos) || a.lang.localeCompare(b.lang) || a.rank - b.rank,
+  );
 
   return rows.map((row) => ({
     lang: row.lang,

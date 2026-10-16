@@ -11,8 +11,12 @@
  *      German evidence has to be able to move it, and with enough of it the prior stops mattering.
  */
 
-import { AbilityState } from "../../models/AbilityState";
-import { PlacementSession } from "../../models/PlacementSession";
+import {
+  abilityFor,
+  abilitiesFor as abilitiesForStore,
+  latestCompletedPlacement,
+  upsertAbility,
+} from "../store/learner";
 import type { CefrLevel, TargetLang } from "../lang";
 import {
   fitAbility,
@@ -91,20 +95,19 @@ export async function recomputeAbility(
   // The placement test is evidence like any other, folded into the same fit — its observations carry
   // the test's own false-alarm rate as a guessing floor, so a learner who claims pseudowords is
   // corrected rather than believed. This is why the cold start is a measurement and not a guess.
-  const placement = await PlacementSession.findOne({
-    userId,
-    targetLang,
-    completedAt: { $ne: null },
-  })
-    .sort({ createdAt: -1 })
-    .select("items responses score")
-    .lean();
+  const placement = latestCompletedPlacement(userId, targetLang);
 
   // A completed session carries both the item set and the answers, so the evidence is exact rather
   // than reconstructed from a summary.
   const withPlacement =
     placement?.items?.length && placement.responses?.length
-      ? [...observations, ...placementObservations(placement.items, placement.responses)]
+      ? [
+          ...observations,
+          ...placementObservations(
+            placement.items as Parameters<typeof placementObservations>[0],
+            placement.responses as Parameters<typeof placementObservations>[1],
+          ),
+        ]
       : observations;
 
   // A prior is only needed when the language has little to say for itself. Once there is real
@@ -121,7 +124,7 @@ export async function recomputeAbility(
   if (withPlacement.length < TRANSFER_PRIOR_WEIGHT) {
     const source = PRIOR_SOURCE[targetLang];
     if (source) {
-      const donor = await AbilityState.findOne({ userId, targetLang: source }).lean();
+      const donor = abilityFor(userId, source);
       // Only a donor that is itself reasonably certain is worth borrowing from. Transferring a
       // degenerate estimate — every word "known", interval the whole scale — just spreads one
       // unreliable number into a second language.
@@ -134,22 +137,17 @@ export async function recomputeAbility(
 
   const estimate = fitAbility(withPlacement, prior);
 
-  await AbilityState.updateOne(
-    { userId, targetLang },
-    {
-      $set: {
-        theta: estimate.theta,
-        se: estimate.se,
-        n: estimate.n,
-        level: estimate.level,
-        levelLow: estimate.levelLow,
-        levelHigh: estimate.levelHigh,
-        // Only a borrowed centre is recorded as such; the neutral regulariser is not a claim.
-        priorTheta: transferred ? prior.theta : null,
-      },
-    },
-    { upsert: true },
-  );
+  upsertAbility(userId, {
+    targetLang,
+    theta: estimate.theta,
+    se: estimate.se,
+    n: estimate.n,
+    level: estimate.level,
+    levelLow: estimate.levelLow,
+    levelHigh: estimate.levelHigh,
+    // Only a borrowed centre is recorded as such; the neutral regulariser is not a claim.
+    priorTheta: transferred ? prior.theta : null,
+  });
 
   // With a prior and no evidence of its own, the estimate is another language's number wearing
   // this language's name. It may say where to start; it may not report a range as though this
@@ -179,22 +177,22 @@ export async function recomputeAbility(
  */
 export async function abilitiesFor(userId: string): Promise<AbilityView[]> {
   const langs: TargetLang[] = ["en", "de"];
-  let rows = await AbilityState.find({ userId }).sort({ targetLang: 1 }).lean();
+  let rows = abilitiesForStore(userId);
   if (rows.length < langs.length) {
     await recomputeAllAbilities(userId);
-    rows = await AbilityState.find({ userId }).sort({ targetLang: 1 }).lean();
+    rows = abilitiesForStore(userId);
   }
 
   return rows.map((row) =>
     toView(
-      row.targetLang,
+      row.targetLang as TargetLang,
       {
         theta: row.theta,
         se: row.se,
         n: row.n,
-        level: row.level ?? null,
-        levelLow: row.levelLow,
-        levelHigh: row.levelHigh,
+        level: (row.level ?? null) as CefrLevel | null,
+        levelLow: row.levelLow as CefrLevel,
+        levelHigh: row.levelHigh as CefrLevel,
       },
       row.n === 0 && row.priorTheta !== null,
     ),

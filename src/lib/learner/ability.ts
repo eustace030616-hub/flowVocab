@@ -26,8 +26,8 @@
 
 import { levelFromDifficulty } from "../difficulty";
 import type { CefrLevel } from "../lang";
-import { Event } from "../../models/Event";
-import { Word } from "../../models/Word";
+import { eventsFor } from "../store/learner";
+import { wordsByKeys } from "../store/dictionary";
 import { EVIDENCE_WINDOW_MS, MAX_EVENTS_FOLDED } from "./known";
 
 /** Slope of the logistic. A 0.15 difficulty gap is roughly 73% expected success. */
@@ -468,15 +468,7 @@ export async function observationsFor(
 ): Promise<Observation[]> {
   // The same time bound as the read path, for the same reason: evidence beyond four half-lives is
   // 6% of its weight, and reading it made the estimate cost grow with the whole history.
-  const events = await Event.find({
-    userId,
-    targetLang,
-    ts: { $gte: new Date(Date.now() - EVIDENCE_WINDOW_MS) },
-  })
-    .sort({ ts: -1 })
-    .limit(MAX_EVENTS_FOLDED)
-    .select("type lemmaKey items difficulty sessionId ts")
-    .lean();
+  const events = eventsFor(userId, targetLang, Date.now() - EVIDENCE_WINDOW_MS, MAX_EVENTS_FOLDED);
 
   const perWord = new Map<string, WordEvidence>();
   /** Sessions in which each word has been on screen, so repeats within one sitting collapse. */
@@ -495,8 +487,8 @@ export async function observationsFor(
       // One session key per event: the recorded session, or the calendar day when a client did not
       // send one. A batch covers many words and says the same thing about each of them.
       const session =
-        (event as { sessionId?: string }).sessionId ||
-        `day:${new Date((event as { ts?: Date }).ts ?? Date.now()).toISOString().slice(0, 10)}`;
+        event.sessionId ||
+        `day:${new Date(event.ts ?? Date.now()).toISOString().slice(0, 10)}`;
 
       for (const item of event.items ?? []) {
         const seen = sessions.get(item.lemmaKey) ?? new Set<string>();
@@ -529,13 +521,7 @@ export async function observationsFor(
 
   if (perWord.size === 0) return [];
 
-  const words = await Word.find({
-    targetLang,
-    lemmaKey: { $in: [...perWord.keys()] },
-    origin: "import",
-  })
-    .select("lemmaKey pos difficulty")
-    .lean();
+  const words = wordsByKeys(targetLang, [...perWord.keys()], { origin: "import" });
 
   // Several entries can share a lemma key across parts of speech; the easiest reading is the one
   // the learner could have known, so take the lowest difficulty.
@@ -561,13 +547,7 @@ export async function observationsFor(
     const wanted = new Set<string>();
     for (const list of candidatesFor.values()) for (const head of list) wanted.add(head);
 
-    const heads = await Word.find({
-      targetLang,
-      lemmaKey: { $in: [...wanted] },
-      origin: "import",
-    })
-      .select("lemmaKey difficulty")
-      .lean();
+    const heads = wordsByKeys(targetLang, [...wanted], { origin: "import" });
     const headDifficulty = new Map(heads.map((w) => [w.lemmaKey, w.difficulty]));
 
     for (const [key, list] of candidatesFor) {

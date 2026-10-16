@@ -11,8 +11,8 @@
  */
 
 import { connectDB } from "../../lib/db";
-import { Paragraph } from "../../models/Paragraph";
-import { AbilityState } from "../../models/AbilityState";
+import { abilityFor, anyAbilityUser } from "../../lib/store/learner";
+import { countBuffered, markBufferedByBrief, paragraphByBrief } from "../../lib/store/content";
 import { levelFromDifficulty } from "../../lib/difficulty";
 import { briefIdOf, onDemandBrief } from "./briefs";
 import { deepseekProvider, describeProvider } from "./provider";
@@ -31,7 +31,7 @@ function argOf(flag: string): string | undefined {
 
 /** The level to write for: the learner's own if known, clamped to the range briefs cover. */
 export async function levelFor(userId: string, targetLang: TargetLang): Promise<CefrLevel> {
-  const ability = await AbilityState.findOne({ userId, targetLang }).select("theta").lean();
+  const ability = abilityFor(userId, targetLang);
   const point = levelFromDifficulty(ability?.theta ?? 0.25);
   return point === "B1" || point === "B2" ? point : "A2";
 }
@@ -47,7 +47,7 @@ export async function refillBuffer(
   targetLang: TargetLang,
   wanted = BUFFER_TARGET,
 ): Promise<number> {
-  const already = await Paragraph.countDocuments({ targetLang, buffered: true });
+  const already = countBuffered(targetLang);
   if (already >= wanted) return 0;
 
   const level = await levelFor(userId, targetLang);
@@ -65,7 +65,7 @@ export async function refillBuffer(
     });
     if (!outcome.passed) continue;
     await importParagraph(outcome);
-    await Paragraph.updateOne({ briefId: spec.briefId }, { $set: { buffered: true } });
+    markBufferedByBrief(targetLang, spec.briefId);
     written += 1;
   }
   return written;
@@ -84,12 +84,12 @@ async function main() {
 
   // Stock belongs to nobody in particular, so the level comes from the first learner who has one,
   // falling back to A2 — the same clamp the button uses.
-  const anyUser = (await AbilityState.findOne({}).select("userId").lean())?.userId ?? "";
+  const anyUser = anyAbilityUser();
 
   for (const lang of langs) {
     const explicitLevel = argOf("--level") as CefrLevel | undefined;
     const level = explicitLevel ?? (await levelFor(anyUser, lang));
-    const existing = await Paragraph.countDocuments({ targetLang: lang, buffered: true });
+    const existing = countBuffered(lang);
     let written = 0;
     for (let i = 0; i < count; i += 1) {
       const spec = {
@@ -102,7 +102,7 @@ async function main() {
         continue;
       }
       await importParagraph(outcome);
-      await Paragraph.updateOne({ briefId: spec.briefId }, { $set: { buffered: true } });
+      markBufferedByBrief(lang, spec.briefId);
       written += 1;
     }
     console.log(`  ${lang} ${level}: wrote ${written}, stock now ${existing + written}`);

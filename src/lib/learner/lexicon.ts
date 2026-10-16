@@ -24,12 +24,12 @@
  * anything new. The candidate set is then exact — no guessing, no combinatorial blow-up.
  */
 
-import type { Types } from "mongoose";
-
-import { Word } from "../../models/Word";
-import { Inflection } from "../../models/Inflection";
-import { Separation } from "../../models/Separation";
-import { Compound } from "../../models/Compound";
+import {
+  compoundsByForm,
+  inflectionsByForm,
+  separationsByParticle,
+  wordsByKeys,
+} from "../store/dictionary";
 import type { TargetLang } from "../lang";
 import { lemmaKeyOf, tokenize, wordSpans, type LemmaLookup, type Span } from "../tokenize";
 
@@ -161,15 +161,9 @@ export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
     const wanted = [...new Set([...candidates, ...surfaces])];
 
     if (wanted.length > 0) {
-      const found = await Word.find({
-        targetLang,
-        lemmaKey: { $in: wanted },
-        // Dataset entries only. A word the learner marked is created on the spot, and letting those
-        // in would make any marked word look like a dictionary headword to the tokenizer.
-        origin: "import",
-      })
-        .select("lemmaKey pos")
-        .lean();
+      // Dataset entries only (`origin: "import"`). A word the learner marked is created on the spot,
+      // and letting those in would make any marked word look like a dictionary headword.
+      const found = wordsByKeys(targetLang, wanted, { origin: "import" });
       for (const word of found) {
         const list = pos.get(word.lemmaKey);
         if (list) {
@@ -182,18 +176,16 @@ export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
 
     const forms = new Map<string, string>();
     if (surfaces.length > 0) {
-      const rows = await Inflection.find({ targetLang, form: { $in: surfaces } })
-        .select("form base baseLemmaKey")
-        .lean();
+      const rows = inflectionsByForm(targetLang, surfaces);
 
       // Only bases we actually hold, so every resolved word can still be looked up and glossed.
       const bases = [...new Set(rows.map((r) => r.baseLemmaKey))];
-      const baseWords = bases.length
-        ? await Word.find({ targetLang, lemmaKey: { $in: bases }, origin: "import" })
-            .select("lemmaKey pos")
-            .lean()
-        : [];
-      const basePos = new Map(baseWords.map((w) => [w.lemmaKey, w.pos ? [w.pos] : []]));
+      const basePos = new Map(
+        (bases.length ? wordsByKeys(targetLang, bases, { origin: "import" }) : []).map((w) => [
+          w.lemmaKey,
+          w.pos ? [w.pos] : [],
+        ]),
+      );
 
       for (const row of rows) {
         if (!basePos.has(row.baseLemmaKey)) continue;
@@ -209,14 +201,8 @@ export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
     const asked = [...new Set([...candidates, ...surfaces])];
     const particles = asked.filter((word) => word.length > 0 && word.length <= 12);
     if (particles.length > 0) {
-      const [separationRows, compoundRows] = await Promise.all([
-        Separation.find({ targetLang, particle: { $in: particles } })
-          .select("particle verb merged")
-          .lean(),
-        Compound.find({ targetLang, form: { $in: asked } })
-          .select("form parts")
-          .lean(),
-      ]);
+      const separationRows = separationsByParticle(targetLang, particles);
+      const compoundRows = compoundsByForm(targetLang, asked);
       for (const row of separationRows) {
         separations.set(`${row.particle}\u0000${row.verb}`, row.merged);
       }
@@ -243,7 +229,7 @@ export async function tokenizeWithLexicon(
 }
 
 export interface LexiconEntry {
-  _id: Types.ObjectId;
+  _id: string;
   lemma: string;
   lemmaKey: string;
 }
@@ -256,9 +242,8 @@ export async function wordsForSpans(
   const keys = [...new Set(wordSpans(spans).map((s) => s.lemmaKey))];
   if (keys.length === 0) return new Map();
 
-  const docs = await Word.find({ targetLang, lemmaKey: { $in: keys } })
-    .select("_id lemma lemmaKey")
-    .lean();
+  // No origin filter: a marked word needs a row to attach the mark to, even a learner-created stub.
+  const docs = wordsByKeys(targetLang, keys, { origin: null });
 
   const map = new Map<string, LexiconEntry>();
   for (const doc of docs) {

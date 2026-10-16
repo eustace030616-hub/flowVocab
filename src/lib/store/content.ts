@@ -211,6 +211,25 @@ export function countBuffered(targetLang: string): number {
   return Number(get<{ n: number }>("SELECT COUNT(*) AS n FROM paragraphs WHERE targetLang = ? AND buffered = 1", targetLang)?.n ?? 0);
 }
 
+/** Stored passages by where they came from — the set `--verify` re-measures. */
+export function paragraphsBySource(source: string): ParagraphRecord[] {
+  return all<ParagraphRow>("SELECT * FROM paragraphs WHERE source = ? ORDER BY createdAt ASC", source).map(toParagraph);
+}
+
+export function paragraphByBrief(targetLang: string, briefId: string): ParagraphRecord | null {
+  const row = get<ParagraphRow>(
+    "SELECT * FROM paragraphs WHERE targetLang = ? AND briefId = ?",
+    targetLang,
+    briefId,
+  );
+  return row ? toParagraph(row) : null;
+}
+
+/** Flag a passage as stock. The brief is the identity, not the title. */
+export function markBufferedByBrief(targetLang: string, briefId: string): void {
+  run("UPDATE paragraphs SET buffered = 1 WHERE targetLang = ? AND briefId = ?", targetLang, briefId);
+}
+
 export function countParagraphs(targetLang: string): number {
   return Number(get<{ n: number }>("SELECT COUNT(*) AS n FROM paragraphs WHERE targetLang = ?", targetLang)?.n ?? 0);
 }

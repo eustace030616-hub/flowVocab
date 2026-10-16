@@ -11,7 +11,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { User, trackFor } from "../../models/User";
+import { trackFor } from "../../models/User";
+import { ensureUser, setUserTrack, userByUserId } from "../store/learner";
 import type { TrackId } from "../lang";
 
 export const USER_COOKIE = "fv_uid";
@@ -27,21 +28,21 @@ export async function resolveUser(cookieUserId?: string): Promise<{
   created: boolean;
 }> {
   if (cookieUserId) {
-    const existing = await User.findOne({ userId: cookieUserId }).lean();
+    const existing = userByUserId(cookieUserId);
     if (existing) {
-      return { user: { userId: existing.userId, track: existing.track }, created: false };
+      return { user: { userId: existing.userId, track: existing.track as TrackId }, created: false };
     }
   }
 
   const userId = randomUUID();
-  const doc = await User.create({ userId });
-  return { user: { userId: doc.userId, track: doc.track }, created: true };
+  const doc = ensureUser(userId);
+  return { user: { userId: doc.userId, track: doc.track as TrackId }, created: true };
 }
 
 export async function setTrack(userId: string, track: TrackId): Promise<ResolvedUser> {
-  const doc = await User.findOneAndUpdate({ userId }, { track }, { returnDocument: "after" }).lean();
+  const doc = setUserTrack(userId, track);
   if (!doc) throw new Error(`unknown user ${userId}`);
-  return { userId: doc.userId, track: doc.track };
+  return { userId: doc.userId, track: doc.track as TrackId };
 }
 
 /** The full (targetLang, glossLang, uiLocale) triple for a user. */

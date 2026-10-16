@@ -298,6 +298,93 @@ export function countWords(targetLang: string, origin = "import"): number {
   return Number(get<{ n: number }>("SELECT COUNT(*) AS n FROM words WHERE targetLang = ? AND origin = ?", targetLang, origin)?.n ?? 0);
 }
 
+/**
+ * How many words sit in each equal band of the difficulty axis.
+ *
+ * The placement test spreads its quota evenly over the bands that have words in them, whatever their
+ * size — the identification requirement. `$bucket` did this over the documents; this is the same
+ * grouping in SQL, and the band index is derived from the axis rather than stored.
+ */
+export function difficultyBandCounts(
+  targetLang: string,
+  bands: number,
+): Array<{ band: number; n: number }> {
+  return all<{ band: number; n: number }>(
+    `SELECT CAST(difficulty * ? AS INTEGER) AS band, COUNT(*) AS n FROM words
+     WHERE targetLang = ? AND origin = 'import' AND difficulty >= 0 AND difficulty < 1.0001
+     GROUP BY band ORDER BY band ASC`,
+    bands,
+    targetLang,
+  );
+}
+
+export interface SampledWord {
+  lemmaKey: string;
+  lemma: string;
+  difficulty: number;
+}
+
+/**
+ * A random sample of words inside a difficulty range.
+ *
+ * `ORDER BY RANDOM()` where the documents used `$sample`. For a few dozen items out of a table of
+ * hundreds of thousands this is the same bargain the server was making.
+ */
+export function sampleWordsBetween(
+  targetLang: string,
+  min: number,
+  max: number,
+  size: number,
+): SampledWord[] {
+  if (size <= 0) return [];
+  return all<SampledWord>(
+    `SELECT lemmaKey, lemma, difficulty FROM words
+     WHERE targetLang = ? AND origin = 'import' AND difficulty >= ? AND difficulty < ?
+     ORDER BY RANDOM() LIMIT ?`,
+    targetLang,
+    min,
+    max,
+    size,
+  );
+}
+
+/** A random sample across the whole populated axis, for topping a short test up. */
+export function sampleWords(targetLang: string, size: number): SampledWord[] {
+  if (size <= 0) return [];
+  return all<SampledWord>(
+    `SELECT lemmaKey, lemma, difficulty FROM words
+     WHERE targetLang = ? AND origin = 'import' AND difficulty >= 0 AND difficulty < 1.0001
+     ORDER BY RANDOM() LIMIT ?`,
+    targetLang,
+    size,
+  );
+}
+
+/**
+ * Which of these strings are real words, in any form we hold.
+ *
+ * Surface forms are checked as well as headwords, because a "pseudoword" that happens to be an
+ * inflected form of a real word would be answered yes by a learner who knows it, and scored as
+ * over-claiming — testing the opposite of what the test is for. The documents asked for this with
+ * `surfaceForms: { $in: … }`; SQLite reaches into the JSON array.
+ */
+export function realWordsMatching(
+  targetLang: string,
+  candidates: string[],
+): Array<{ lemmaKey: string; surfaceForms: string[] }> {
+  if (candidates.length === 0) return [];
+  const marks = placeholders(candidates.length);
+  return all<{ lemmaKey: string; surfaceForms: string }>(
+    `SELECT lemmaKey, surfaceForms FROM words
+     WHERE targetLang = ?
+       AND (lemmaKey IN (${marks})
+            OR EXISTS (SELECT 1 FROM json_each(words.surfaceForms) WHERE value IN (${marks})))`,
+    targetLang,
+    ...candidates,
+    ...candidates,
+  ).map((row) => ({ lemmaKey: row.lemmaKey, surfaceForms: json<string[]>(row.surfaceForms, []) }));
+}
+
 // ── Glosses ───────────────────────────────────────────────────────────────────
 
 /**

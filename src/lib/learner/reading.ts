@@ -6,9 +6,8 @@
  * is trusted and nothing is written.
  */
 
-import { Event } from "../../models/Event";
-import { Word } from "../../models/Word";
-import { AbilityState } from "../../models/AbilityState";
+import { abilityFor, eventsFor } from "../store/learner";
+import { wordsByKeys } from "../store/dictionary";
 import type { TargetLang } from "../lang";
 import {
   EVIDENCE_WINDOW_MS,
@@ -66,22 +65,17 @@ export async function knownProbabilities(
   const basis = { probabilities: result, ability: null as KnownResult["ability"] };
   if (unique.length === 0) return basis;
 
-  const [abilityRow, events] = await Promise.all([
-    AbilityState.findOne({ userId, targetLang }).select("theta n se").lean(),
-    // Bounded by time: evidence older than four half-lives carries 6% of its weight and cannot
-    // change the answer, so reading it made every page load do work proportional to the learner's
-    // whole history for no effect. `ts` descending plus a ceiling keeps a pathological log from
-    // hanging the read; the index on (userId, targetLang, ts) serves exactly this query.
-    Event.find({
-      userId,
-      targetLang,
-      ts: { $gte: new Date(Date.now() - EVIDENCE_WINDOW_MS) },
-    })
-      .sort({ ts: -1 })
-      .limit(MAX_EVENTS_FOLDED)
-      .select("type lemmaKey items sessionId ts")
-      .lean(),
-  ]);
+  // Bounded by time: evidence older than four half-lives carries 6% of its weight and cannot change
+  // the answer, so reading it made every page load do work proportional to the learner's whole
+  // history for no effect. A ceiling on the row count keeps a pathological log from hanging the read,
+  // and the index on (userId, targetLang, ts) serves exactly this query.
+  const abilityRow = abilityFor(userId, targetLang);
+  const events = eventsFor(
+    userId,
+    targetLang,
+    Date.now() - EVIDENCE_WINDOW_MS,
+    MAX_EVENTS_FOLDED,
+  );
 
   if (events.length >= MAX_EVENTS_FOLDED) {
     console.warn(
@@ -94,15 +88,9 @@ export async function knownProbabilities(
   basis.ability = abilityRow
     ? { theta: abilityRow.theta, n: abilityRow.n ?? 0, se: abilityRow.se }
     : null;
-  const folded = foldWordEvidence(events as EventLike[]);
+  const folded = foldWordEvidence(events as unknown as EventLike[]);
 
-  const words = await Word.find({
-    targetLang,
-    lemmaKey: { $in: unique },
-    origin: "import",
-  })
-    .select("lemmaKey difficulty")
-    .lean();
+  const words = wordsByKeys(targetLang, unique, { origin: "import" });
 
   // A lemma may have several entries across parts of speech; the easiest reading is the one the
   // learner could plausibly know, so coverage is not depressed by a rare homograph.

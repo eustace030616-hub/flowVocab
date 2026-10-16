@@ -21,11 +21,18 @@
  * strongest evidence of knowing a word) and `lookup` (checked, but not marked).
  */
 
-import type { Types } from "mongoose";
-
 import { Event, type EventSource, type EventType, type EventItem } from "../../models/Event";
-import { Word } from "../../models/Word";
-import { WordState, type WordStatus } from "../../models/WordState";
+type IEvent = InstanceType<typeof Event>;
+import { type WordStatus } from "../../models/WordState";
+import {
+  countEvents,
+  countExposureItems,
+  insertEvent,
+  upsertWordState,
+  wordStatesFor,
+  eventsFor,
+} from "../store/learner";
+import { wordsByLemma } from "../store/dictionary";
 import type { TargetLang } from "../lang";
 
 export type { WordStatus } from "../../models/WordState";
@@ -131,39 +138,30 @@ export async function recomputeWordState(
   userId: string,
   targetLang: TargetLang,
   lemmaKey: string,
-  wordId?: Types.ObjectId | string,
+  wordId?: string,
 ): Promise<DerivedState> {
-  const single = await Event.find({ userId, targetLang, lemmaKey }).select("type").lean();
-  const counts = countsFromEvents(single);
+  // Exposures arrive batched, one row per paragraph view with an `items` array, so they are counted
+  // rather than unfolded — the log is the same, the read is cheaper.
+  const single = eventsFor(userId, targetLang, 0, 100_000).filter((e) => e.lemmaKey === lemmaKey);
+  const counts = countsFromEvents(single as unknown as Array<Pick<IEvent, "type">>);
 
-  counts.exposures += await Event.countDocuments({
-    userId,
-    targetLang,
-    type: "exposure",
-    "items.lemmaKey": lemmaKey,
-  });
+  counts.exposures += countExposureItems(userId, targetLang, lemmaKey);
 
   const state = deriveState(counts);
 
   // Attach to the shared vocabulary entry, so a state row can be joined to a gloss.
-  const resolvedWordId =
-    wordId ?? (await Word.findOne({ targetLang, lemmaKey }).select("_id").lean())?._id;
+  const resolvedWordId = wordId ?? wordsByLemma(targetLang, lemmaKey)[0]?._id;
 
   if (resolvedWordId) {
-    await WordState.findOneAndUpdate(
-      { userId, targetLang, lemmaKey },
-      {
-        $set: {
-          wordId: resolvedWordId,
-          status: state.status,
-          timesMet: state.timesMet,
-          unfamiliarity: state.unfamiliarity,
-          lookupCount: state.lookupCount,
-          exposureCount: state.exposureCount,
-        },
-      },
-      { upsert: true, returnDocument: "after" },
-    );
+    upsertWordState(userId, targetLang, {
+      wordId: resolvedWordId,
+      lemmaKey,
+      status: state.status,
+      timesMet: state.timesMet,
+      unfamiliarity: state.unfamiliarity,
+      lookupCount: state.lookupCount,
+      exposureCount: state.exposureCount,
+    });
   }
 
   return state;
@@ -178,14 +176,13 @@ export async function statesFor(
   const map = new Map<string, WordStateSummary>();
   if (lemmaKeys.length === 0) return map;
 
-  const rows = await WordState.find({ userId, targetLang, lemmaKey: { $in: lemmaKeys } }).lean();
-  for (const row of rows) {
-    map.set(row.lemmaKey, {
+  for (const [lemmaKey, row] of wordStatesFor(userId, targetLang, lemmaKeys)) {
+    map.set(lemmaKey, {
       timesMet: row.timesMet,
       unfamiliarity: row.unfamiliarity,
       lookupCount: row.lookupCount,
       exposureCount: row.exposureCount,
-      status: row.status,
+      status: row.status as WordStatus,
     });
   }
   return map;
@@ -197,8 +194,8 @@ export interface AppendEventArgs {
   type: EventType;
   source?: EventSource;
   sessionId?: string;
-  paragraphId?: Types.ObjectId | string;
-  wordId?: Types.ObjectId | string;
+  paragraphId?: string;
+  wordId?: string;
   surface?: string;
   lemmaKey?: string;
   charStart?: number;
@@ -208,7 +205,20 @@ export interface AppendEventArgs {
 
 /** Append one event. There is deliberately no update or delete counterpart. */
 export async function appendEvent(args: AppendEventArgs) {
-  return Event.create({ ...args, ts: new Date() });
+  return insertEvent({
+    userId: args.userId,
+    targetLang: args.targetLang,
+    type: args.type,
+    source: args.source,
+    sessionId: args.sessionId,
+    paragraphId: args.paragraphId,
+    wordId: args.wordId,
+    surface: args.surface,
+    lemmaKey: args.lemmaKey,
+    charStart: args.charStart,
+    charEnd: args.charEnd,
+    items: args.items as Array<{ lemmaKey: string }> | undefined,
+  });
 }
 
 /**
@@ -221,20 +231,19 @@ export async function appendEvent(args: AppendEventArgs) {
 export async function appendExposureBatch(args: {
   userId: string;
   targetLang: TargetLang;
-  paragraphId: Types.ObjectId | string;
+  paragraphId: string;
   sessionId?: string;
   items: EventItem[];
   source?: EventSource;
 }) {
   if (args.items.length === 0) return null;
-  return Event.create({
+  return insertEvent({
     userId: args.userId,
     targetLang: args.targetLang,
     type: "exposure",
     source: args.source ?? "web",
     sessionId: args.sessionId,
     paragraphId: args.paragraphId,
-    items: args.items,
-    ts: new Date(),
+    items: args.items as Array<{ lemmaKey: string }>,
   });
 }

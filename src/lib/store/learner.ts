@@ -61,6 +61,44 @@ export function marksForParagraph(userId: string, paragraphId: string): Record<s
   return marked;
 }
 
+/** Words in one state, most unfamiliar first — the list behind "words I have marked". */
+export function wordStatesByStatus(
+  userId: string,
+  targetLang: string,
+  status: string,
+  limit: number,
+): WordStateRecord[] {
+  return all<WordStateRecord & { lemmaKey: string }>(
+    `SELECT lemmaKey, status, timesMet, unfamiliarity, lookupCount, exposureCount FROM word_states
+     WHERE userId = ? AND targetLang = ? AND status = ?
+     ORDER BY unfamiliarity DESC LIMIT ?`,
+    userId,
+    targetLang,
+    status,
+    limit,
+  );
+}
+
+/** Change an existing mark's status without touching the ones that are not there. */
+export function setMarkStatus(
+  userId: string,
+  paragraphId: string,
+  charStart: number,
+  charEnd: number,
+  status: string,
+): void {
+  run(
+    `UPDATE marks SET status = ?, markedAt = ?
+     WHERE userId = ? AND paragraphId = ? AND charStart = ? AND charEnd = ?`,
+    status,
+    nowMs(),
+    userId,
+    paragraphId,
+    charStart,
+    charEnd,
+  );
+}
+
 export interface MarkInput {
   userId: string;
   targetLang: string;
@@ -187,6 +225,26 @@ export function eventsFor(
   }));
 }
 
+/**
+ * How many exposure batches carried this word.
+ *
+ * Exposures are stored one row per paragraph view with an `items` array, so this reaches inside the
+ * JSON rather than unfolding thousands of rows in JavaScript — the same question the documents
+ * answered with `"items.lemmaKey"`.
+ */
+export function countExposureItems(userId: string, targetLang: string, lemmaKey: string): number {
+  return Number(
+    get<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM events, json_each(events.items)
+       WHERE events.userId = ? AND events.targetLang = ? AND events.type = 'exposure'
+         AND json_extract(json_each.value, '$.lemmaKey') = ?`,
+      userId,
+      targetLang,
+      lemmaKey,
+    )?.n ?? 0,
+  );
+}
+
 export function countEvents(userId?: string): number {
   return userId
     ? Number(get<{ n: number }>("SELECT COUNT(*) AS n FROM events WHERE userId = ?", userId)?.n ?? 0)
@@ -291,6 +349,19 @@ export function upsertAbility(userId: string, ability: AbilityRecord): void {
     ability.levelHigh,
     ability.priorTheta,
     nowMs(),
+  );
+}
+
+/**
+ * Any learner who has an estimate, for work that belongs to nobody in particular.
+ *
+ * Pregenerated stock is written for the level of whoever is using the app rather than for a specific
+ * account, so it needs a representative estimate and not a user id.
+ */
+export function anyAbilityUser(): string {
+  return String(
+    get<{ userId: string }>("SELECT userId FROM ability_states WHERE n > 0 ORDER BY updatedAt DESC LIMIT 1")
+      ?.userId ?? "",
   );
 }
 

@@ -16,9 +16,13 @@
  */
 
 import { connectDB } from "../../lib/db";
-import { Paragraph } from "../../models/Paragraph";
-import { Word } from "../../models/Word";
-import { Gloss } from "../../models/Gloss";
+import {
+  glossKeys as glossKeySet,
+  glossesByKeys,
+  sampleWordsBetween,
+  wordsByKeys,
+} from "../../lib/store/dictionary";
+import { upsertParagraphByBrief, paragraphsBySource } from "../../lib/store/content";
 import { TOKENIZER_VERSION } from "../../lib/tokenize";
 import { assertShippable } from "../../lib/licence/datasets";
 import { levelMidpoint } from "../../lib/difficulty";
@@ -76,25 +80,12 @@ async function sampleVocabulary(targetLang: TargetLang, level: CefrLevel, size: 
   const { low, high } = bandFor(level);
   const floor = Math.max(0, low - 0.45);
 
-  const [coreRows, targetRows] = await Promise.all([
-    Word.aggregate([
-      { $match: { targetLang, origin: "import", difficulty: { $gte: floor, $lt: low - 0.02 } } },
-      { $sample: { size } },
-      { $project: { lemma: 1, lemmaKey: 1, difficulty: 1 } },
-    ]),
-    Word.aggregate([
-      { $match: { targetLang, origin: "import", difficulty: { $gte: low, $lte: high } } },
-      { $sample: { size: 8 } },
-      { $project: { lemma: 1, lemmaKey: 1, difficulty: 1 } },
-    ]),
-  ]);
+  const coreRows = sampleWordsBetween(targetLang, floor, low - 0.02, size);
+  const targetRows = sampleWordsBetween(targetLang, low, high + 0.0001, 8);
 
   const glossLang = glossLangFor(targetLang);
   const keys = [...coreRows, ...targetRows].map((r) => r.lemmaKey);
-  const glosses = await Gloss.find({ targetLang, lang: glossLang, lemmaKey: { $in: keys } })
-    .sort({ rank: 1 })
-    .select("lemmaKey text")
-    .lean();
+  const glosses = glossesByKeys(targetLang, glossLang, keys);
   const glossOf = new Map<string, string>();
   for (const g of glosses) if (!glossOf.has(g.lemmaKey)) glossOf.set(g.lemmaKey, g.text);
 
@@ -125,24 +116,12 @@ async function proposeTopicWords(
 
   const { high } = bandFor(spec.level);
   const keys = proposed.map((word) => word.toLowerCase().replace(/^(der|die|das|the|a|an)\s+/, "").trim());
-  const rows = await Word.find({
-    targetLang: spec.targetLang,
-    lemmaKey: { $in: keys },
-    origin: "import",
-    difficulty: { $gte: 0, $lte: high },
-  })
-    .select("lemma lemmaKey difficulty")
-    .lean();
+  const rows = wordsByKeys(spec.targetLang, keys, { origin: "import" }).filter(
+    (row) => row.difficulty >= 0 && row.difficulty <= high,
+  );
 
   const glossLang = glossLangFor(spec.targetLang);
-  const glosses = await Gloss.find({
-    targetLang: spec.targetLang,
-    lang: glossLang,
-    lemmaKey: { $in: rows.map((r) => r.lemmaKey) },
-  })
-    .sort({ rank: 1 })
-    .select("lemmaKey text")
-    .lean();
+  const glosses = glossesByKeys(spec.targetLang, glossLang, rows.map((r) => r.lemmaKey));
   const glossOf = new Map<string, string>();
   for (const g of glosses) if (!glossOf.has(g.lemmaKey)) glossOf.set(g.lemmaKey, g.text);
 
@@ -284,23 +263,14 @@ export async function generateOne(
     // Measured with the reader's tokenizer and the reader's thresholds — not a paraphrase of them.
     const spans = await tokenizeWithLexicon(parsed.content, spec.targetLang);
     const keys = [...new Set(spans.filter((s) => s.kind === "word").map((s) => s.lemmaKey))];
-    const words = await Word.find({ targetLang: spec.targetLang, lemmaKey: { $in: keys }, origin: "import" })
-      .select("lemmaKey difficulty")
-      .lean();
+    const words = wordsByKeys(spec.targetLang, keys, { origin: "import" });
     const difficultyOf = new Map<string, number>();
     for (const w of words) {
       const current = difficultyOf.get(w.lemmaKey);
       if (current === undefined || w.difficulty < current) difficultyOf.set(w.lemmaKey, w.difficulty);
     }
 
-    const glossRows = await Gloss.find({
-      targetLang: spec.targetLang,
-      lang: glossLangFor(spec.targetLang),
-      lemmaKey: { $in: keys },
-    })
-      .select("lemmaKey")
-      .lean();
-    const glossKeys = new Set(glossRows.map((g) => g.lemmaKey));
+    const glossKeys = glossKeySet(spec.targetLang, glossLangFor(spec.targetLang), keys);
 
     const verdict = checkParagraph(
       spans.map((s) => ({ lemmaKey: s.lemmaKey, kind: s.kind })),
@@ -450,28 +420,22 @@ export async function importParagraph(outcome: GenerationOutcome): Promise<strin
   // Identity is the brief. The title is model output and changes between runs; using it as the key
   // made every regeneration a new paragraph rather than a replacement.
   const identity = spec.briefId ?? briefIdOf(spec);
-  const result = await Paragraph.findOneAndUpdate(
-    { targetLang: spec.targetLang, briefId: identity },
-    {
-      $set: {
-        targetLang: spec.targetLang,
-        briefId: identity,
-        title: outcome.title,
-        content: outcome.content,
-        topic: spec.topic,
-        wordCount: outcome.content.split(/\s+/).filter(Boolean).length,
-        level: spec.level,
-        difficulty: levelMidpoint(spec.level),
-        difficultySource: "generated-target",
-        coverage: outcome.coverage,
-        tokenizerVersion: TOKENIZER_VERSION,
-        source: SOURCE,
-        promptSnapshot,
-      },
-    },
-    { upsert: true, returnDocument: "after" },
-  );
-  return String(result?._id ?? "?");
+  return upsertParagraphByBrief({
+    targetLang: spec.targetLang,
+    briefId: identity,
+    title: outcome.title,
+    content: outcome.content,
+    topic: spec.topic,
+    wordCount: outcome.content.split(/\s+/).filter(Boolean).length,
+    level: spec.level,
+    difficulty: levelMidpoint(spec.level),
+    difficultySource: "generated-target",
+    coverage: outcome.coverage,
+    tokenizerVersion: TOKENIZER_VERSION,
+    source: SOURCE,
+    buffered: false,
+    promptSnapshot,
+  });
 }
 
 /**
@@ -483,9 +447,7 @@ export async function importParagraph(outcome: GenerationOutcome): Promise<strin
  * exactly what happened when the function-word and irregular-verb imports landed.
  */
 async function verifyStored(): Promise<number> {
-  const stored = await Paragraph.find({ source: SOURCE })
-    .select("targetLang title content level")
-    .lean();
+  const stored = paragraphsBySource(SOURCE);
   if (stored.length === 0) {
     console.log("  no stored generated paragraphs to verify");
     return 0;
@@ -497,24 +459,16 @@ async function verifyStored(): Promise<number> {
     const spans = await tokenizeWithLexicon(paragraph.content, paragraph.targetLang as TargetLang);
     const keys = [...new Set(spans.filter((s) => s.kind === "word").map((s) => s.lemmaKey))];
 
-    const words = await Word.find({ targetLang: paragraph.targetLang, lemmaKey: { $in: keys }, origin: "import" })
-      .select("lemmaKey difficulty")
-      .lean();
+    const words = wordsByKeys(paragraph.targetLang, keys, { origin: "import" });
     const difficultyOf = new Map<string, number>();
     for (const w of words) {
       const current = difficultyOf.get(w.lemmaKey);
       if (current === undefined || w.difficulty < current) difficultyOf.set(w.lemmaKey, w.difficulty);
     }
-    const glossKeys = new Set(
-      (
-        await Gloss.find({
-          targetLang: paragraph.targetLang,
-          lang: glossLangFor(paragraph.targetLang as TargetLang),
-          lemmaKey: { $in: keys },
-        })
-          .select("lemmaKey")
-          .lean()
-      ).map((g) => g.lemmaKey),
+    const glossKeys = glossKeySet(
+      paragraph.targetLang,
+      glossLangFor(paragraph.targetLang as TargetLang),
+      keys,
     );
 
     const verdict = checkParagraph(
