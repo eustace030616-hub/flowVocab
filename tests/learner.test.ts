@@ -252,6 +252,9 @@ function memoryLexicon(...entries: string[]) {
   }
 
   const forms = new Map<string, string>();
+  /** Stated (particle, verb) → merged, and form → parts, as the compiled tables supply them. */
+  const separations = new Map<string, string>();
+  const compounds = new Map<string, string[]>();
   let queries = 0;
   let maxQuery = 0;
 
@@ -269,10 +272,25 @@ function memoryLexicon(...entries: string[]) {
         forms: new Map(
           surfaces.filter((f) => forms.has(f)).map((f) => [f, forms.get(f)!] as [string, string]),
         ),
+        // Stated morphology, when the fixture supplies it. An empty map is the signal to the
+        // tokenizer that nothing has been compiled and the rules still apply.
+        separations: new Map(
+          [...separations.entries()].filter(([pair]) =>
+            asked.some((word) => pair.startsWith(`${word}\u0000`)),
+          ),
+        ),
+        compounds: new Map(
+          [...compounds.entries()].filter(([form]) => asked.includes(form)),
+        ),
       };
     },
     /** State that a surface is an inflection of a base, as Wiktionary does. */
     addForm: (form: string, base: string) => forms.set(form.toLowerCase(), base),
+    /** State a separable verb, as Wiktionary's `auf.stehen` notation does. */
+    addSeparation: (particle: string, verb: string, merged: string) =>
+      separations.set(`${particle}\u0000${verb}`, merged),
+    /** State a compound's parts, as the compiled table does. */
+    addCompound: (form: string, parts: string[]) => compounds.set(form, parts),
     stats: () => ({ queries, maxQuery }),
   };
 }
@@ -527,4 +545,40 @@ test("an unclassified same-spelling entry still defers to the stated inflection"
 
   const spans = await tokenizeAgainst("sie liest", "de", lex.query);
   assert.equal(spans.find((s) => s.surface === "liest")?.lemmaKey, "lesen");
+});
+
+test("a stated separation table replaces the proximity heuristic", async () => {
+  // The heuristic's three failures all came from guessing with distance and word lists. With a table,
+  // a pair the table does not list is not a pair — however close the words sit.
+  const lex = memoryLexicon("stehen:verb", "aufstehen:verb", "setzen:verb", "gegenübersetzen:verb", "auf", "gegenüber");
+  lex.addForm("steht", "stehen");
+  lex.addForm("setzte", "setzen");
+  lex.addSeparation("auf", "stehen", "aufstehen");
+  // Deliberately NOT stating gegenüber + setzen: Wiktionary has it, but its merged verb has no
+  // translation, so the compiler dropped it — and the merge must not happen.
+
+  const spans = await tokenizeAgainst("sie steht auf und er setzte sich gegenüber", "de", lex.query);
+  assert.equal(spans.find((s) => s.surface === "steht")?.lemmaKey, "aufstehen", "a stated pair merges");
+  assert.equal(
+    spans.find((s) => s.surface === "setzte")?.lemmaKey,
+    "setzen",
+    "an unstated pair does not, even though both words are known",
+  );
+});
+
+test("without a compiled table the heuristic still runs", async () => {
+  // A fresh clone has no tables; the app must still work, just less well.
+  const lex = memoryLexicon("stehen:verb", "aufstehen:verb", "auf");
+  const spans = await tokenizeAgainst("sie steht auf", "de", lex.query);
+  assert.equal(spans.find((s) => s.surface === "steht")?.lemmaKey, "aufstehen");
+});
+
+test("a stated compound split replaces the lexicon splitter", async () => {
+  // The compound itself is deliberately *not* in the lexicon: decomposition applies to words the
+  // vocabulary does not hold, which is the only case where parts are the way in.
+  const lex = memoryLexicon("wortschatz:noun", "aufbau:noun");
+  lex.addCompound("wortschatzaufbau", ["wortschatz", "aufbau"]);
+  const spans = await tokenizeAgainst("Der Wortschatzaufbau", "de", lex.query);
+  const compound = spans.find((s) => s.surface === "Wortschatzaufbau")!;
+  assert.deepEqual(compound.compoundParts, ["wortschatz", "aufbau"]);
 });

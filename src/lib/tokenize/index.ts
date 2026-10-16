@@ -79,6 +79,20 @@ export interface TokenizeOptions {
    * (kurzarbeiten) and *Kurztext* happens to exist.
    */
   posOf?: (candidate: string) => string[];
+  /**
+   * Stated separable verbs: `("auf", "stehen")` → `"aufstehen"`.
+   *
+   * With `hasSeparations` set, this is authoritative and the proximity heuristic does not run at all.
+   * That heuristic produced *einwachsen* from "wächst eine", *Kurztext* from "kurzen Text" and
+   * *gegenübersetzen* from "setzte … gegenüber" — whether a word is a particle is a syntactic fact,
+   * and Wiktionary states it (`auf.stehen`) while proximity cannot.
+   */
+  separationOf?: (particle: string, verb: string) => string | null;
+  /** Whether a separation table has been compiled. Empty means fall back to the heuristic. */
+  hasSeparations?: boolean;
+  /** Stated compound parts for a form, when a compound table has been compiled. */
+  compoundPartsOf?: (form: string) => string[] | undefined;
+  hasCompounds?: boolean;
   /** Detect separable verbs (German only, on by default). */
   separable?: boolean;
   /** Split compounds into parts when every part resolves (German only, on by default). */
@@ -185,6 +199,7 @@ function attachSeparableParticles(
   spans: Span[],
   lookup?: LemmaLookup,
   posOf?: (candidate: string) => string[],
+  options: TokenizeOptions = {},
 ): void {
   const WINDOW = 8;
 
@@ -206,7 +221,7 @@ function attachSeparableParticles(
       if (verb.absorbedInto !== undefined || verb.detached?.length) continue;
       if (verb.lemmaKey.startsWith("zu") && j === i) continue;
 
-      const merged = mergedInfinitive(particle.lemmaKey, verb, lookup, posOf);
+      const merged = mergedInfinitive(particle.lemmaKey, verb, lookup, posOf, options);
       if (!merged) continue;
 
       verb.lemma = merged.lemma;
@@ -238,7 +253,18 @@ function mergedInfinitive(
   verb: Span,
   lookup?: LemmaLookup,
   posOf?: (candidate: string) => string[],
+  options: TokenizeOptions = {},
 ): { lemma: string; lemmaKey: string; matched: boolean } | null {
+  // A compiled table is the answer, not a suggestion: if it has no pair for this particle and verb,
+  // they do not belong together, however close they happen to sit on the page.
+  if (options.hasSeparations && options.separationOf) {
+    const stated = options.separationOf(particleKey, verb.lemmaKey);
+    if (stated && (!lookup || lookup(stated))) {
+      return { lemma: stated, lemmaKey: stated, matched: true };
+    }
+    return null;
+  }
+
   // The host has to be able to be a verb at all.
   if (!isVerbLike(verb.lemmaKey, posOf)) return null;
 
@@ -330,14 +356,21 @@ export function tokenize(
     // Decompose only an unknown word. A word the lexicon already resolved is not a compound
     // problem — it is an inflection, a known compound, or an ordinary word.
     if (compounds && kind === "word" && !resolved.matched) {
-      const parts = splitCompound(part.segment, lookup);
-      if (parts.length) span.compoundParts = parts;
+      const form = lemmaKeyOf(part.segment);
+      const stated = options.compoundPartsOf?.(form);
+      if (options.hasCompounds) {
+        // Authoritative: a compiled table says which forms split and how. No guessing.
+        if (stated?.length) span.compoundParts = stated;
+      } else {
+        const parts = splitCompound(part.segment, lookup);
+        if (parts.length) span.compoundParts = parts;
+      }
     }
 
     spans.push(span);
   }
 
-  if (separable) attachSeparableParticles(spans, lookup, posOf);
+  if (separable) attachSeparableParticles(spans, lookup, posOf, options);
 
   return spans;
 }

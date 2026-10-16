@@ -28,6 +28,8 @@ import type { Types } from "mongoose";
 
 import { Word } from "../../models/Word";
 import { Inflection } from "../../models/Inflection";
+import { Separation } from "../../models/Separation";
+import { Compound } from "../../models/Compound";
 import type { TargetLang } from "../lang";
 import { lemmaKeyOf, tokenize, wordSpans, type LemmaLookup, type Span } from "../tokenize";
 
@@ -41,6 +43,20 @@ export interface LexiconData {
   pos: Map<string, string[]>;
   /** Surface form → citation form, as stated by a morphological source. */
   forms: Map<string, string>;
+  /**
+   * `particle\0verb` → the merged infinitive, as stated rather than inferred.
+   *
+   * Empty when the morphology has not been compiled, which is how the tokenizer knows whether to
+   * trust a syntax table or fall back to its own heuristics.
+   */
+  separations: Map<string, string>;
+  /** Whole form → its parts, for compounds the lexicon can vouch for. */
+  compounds: Map<string, string[]>;
+}
+
+/** Key for a (particle, verb) pair. */
+export function separationKey(particle: string, verb: string): string {
+  return `${particle}\u0000${verb}`;
 }
 
 /**
@@ -72,6 +88,9 @@ export async function tokenizeAgainst(
   /** lemma key → parts of speech, accumulated across passes. */
   const pos = new Map<string, string[]>();
 
+  const separations = new Map<string, string>();
+  const compounds = new Map<string, string[]>();
+
   const absorb = (data: LexiconData) => {
     for (const [key, value] of data.pos) {
       const existing = pos.get(key);
@@ -82,6 +101,8 @@ export async function tokenizeAgainst(
       }
     }
     for (const [form, base] of data.forms) forms.set(form, base);
+    for (const [pair, merged] of data.separations) separations.set(pair, merged);
+    for (const [form, parts] of data.compounds) compounds.set(form, parts);
   };
 
   absorb(await query([], surfaces));
@@ -90,6 +111,13 @@ export async function tokenizeAgainst(
     lookup: (candidate: string) => pos.has(candidate),
     posOf: (candidate: string) => pos.get(candidate) ?? [],
     resolveForm: (form: string) => forms.get(form) ?? null,
+    // Stated morphology, when compiled. The tokenizer treats a non-empty table as authoritative and
+    // stops guessing; an empty one means the compile step has not been run, and the rules apply.
+    separationOf: (particle: string, verb: string) =>
+      separations.get(separationKey(particle, verb)) ?? null,
+    hasSeparations: separations.size > 0,
+    compoundPartsOf: (form: string) => compounds.get(form),
+    hasCompounds: compounds.size > 0,
   });
 
   for (let pass = 0; pass < maxPasses; pass += 1) {
@@ -123,6 +151,8 @@ export async function tokenizeAgainst(
 export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
   return async (candidates, surfaces) => {
     const pos = new Map<string, string[]>();
+    const separations = new Map<string, string>();
+    const compounds = new Map<string, string[]>();
 
     // Surfaces are asked about as well as candidates, and they need the same answer about their
     // part of speech: the tokenizer decides whether to defer to a stated inflection by asking
@@ -174,7 +204,28 @@ export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
       }
     }
 
-    return { pos, forms };
+    // Stated separations for the particles in this text, and stated splits for its forms. Both are
+    // keyed by things already in the batch, so neither costs a query of its own scale.
+    const asked = [...new Set([...candidates, ...surfaces])];
+    const particles = asked.filter((word) => word.length > 0 && word.length <= 12);
+    if (particles.length > 0) {
+      const [separationRows, compoundRows] = await Promise.all([
+        Separation.find({ targetLang, particle: { $in: particles } })
+          .select("particle verb merged")
+          .lean(),
+        Compound.find({ targetLang, form: { $in: asked } })
+          .select("form parts")
+          .lean(),
+      ]);
+      for (const row of separationRows) {
+        separations.set(`${row.particle}\u0000${row.verb}`, row.merged);
+      }
+      for (const row of compoundRows) {
+        if (row.parts?.length) compounds.set(row.form, row.parts);
+      }
+    }
+
+    return { pos, forms, separations, compounds };
   };
 }
 
