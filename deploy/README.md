@@ -34,6 +34,17 @@ The alternative is rebuilding it there, which needs MongoDB and Docker: run the 
 in order, then `npm run migrate:mongo-to-sqlite`. That path exists but it is a long one, and
 the file is already built.
 
+## How it is reached
+
+Every project on `berry` is served directly on its own port and reached at `http://berry:<port>/`
+— Timetable answers on 80 and 8000, Notes on 8080. Flowwing takes **3100**, which is what the
+serve script already binds, so the address is:
+
+    http://berry:3100
+
+No reverse proxy and no path prefix, which is the point: a port per project is one less thing to
+configure and one less thing to break.
+
 ## Development mode is not the way to serve it
 
 `next dev` blocks its own client resources when the page is loaded from another origin, which
