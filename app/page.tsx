@@ -1226,10 +1226,10 @@ export default function Home() {
             on the right, with room to be tapped on a phone. The level is gone from both, and the space
             it and the test button used is what this format is made of.
           */}
-          <div className="flex flex-col gap-2 mb-3 shrink-0">
+          <div className="flex flex-col gap-1 mb-2 shrink-0">
             <div className="flex items-center justify-between gap-3 min-w-0">
               <span
-                className="text-base font-medium text-zinc-700 truncate"
+                className="text-sm font-medium text-zinc-700 truncate"
                 title={paragraph ? (paragraph.topic ?? paragraph.title) : undefined}
               >
                 {paragraph ? truncateWords(paragraph.topic ?? paragraph.title) : t.empty}
@@ -1300,7 +1300,7 @@ export default function Home() {
                     disabled={!me}
                     aria-pressed={starred}
                     title={starred ? t.unstar : t.star}
-                    className={`h-9 w-9 text-base leading-none rounded-lg border transition-colors disabled:opacity-50 ${
+                    className={`h-8 w-8 text-sm leading-none rounded-lg border transition-colors disabled:opacity-50 ${
                       starred
                         ? "border-amber-200 bg-amber-50 text-amber-500"
                         : "border-zinc-200 text-zinc-400 hover:bg-zinc-100"
@@ -1319,14 +1319,14 @@ export default function Home() {
                     <button
                       onClick={() => void stepHistory(1)}
                       disabled={!historyPosition || historyPosition.index >= historyPosition.total - 1}
-                      className="h-9 px-3 text-sm font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-40 transition-colors"
+                      className="h-8 px-2.5 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-40 transition-colors"
                     >
                       ‹ {t.older}
                     </button>
                     <button
                       onClick={() => void stepHistory(-1)}
                       disabled={!historyPosition || historyPosition.index <= 0}
-                      className="h-9 px-3 text-sm font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-40 transition-colors"
+                      className="h-8 px-2.5 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-40 transition-colors"
                     >
                       {t.newer} ›
                     </button>
@@ -1335,7 +1335,7 @@ export default function Home() {
                   <button
                     onClick={() => void generateParagraph()}
                     disabled={generating || !me}
-                    className="h-9 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition-colors"
+                    className="h-8 px-3 text-xs font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition-colors"
                   >
                     {generating ? t.generating : t.generate}
                   </button>
