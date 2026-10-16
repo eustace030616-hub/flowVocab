@@ -27,6 +27,7 @@ import { allGlossesFor, glossesByLemma, pickGloss } from "@/src/lib/learner/glos
 import { abilitiesFor, recomputeAllAbilities } from "@/src/lib/learner/profile";
 import { knownProbabilities } from "@/src/lib/learner/reading";
 import { coverageOf } from "@/src/lib/learner/coverage";
+import { passageBand, unknownWords } from "@/src/lib/learner/band";
 import { candidatesFor } from "@/src/lib/tokenize/rules";
 import {
   addSurfaceForm,
@@ -226,6 +227,19 @@ async function readerPayload(
     });
     const probabilities = known.probabilities;
 
+    // The count a reader can act on, next to the share they can read. Marked words count whatever
+    // the model thinks; the rest are counted by prediction, which is what lets an unread passage be
+    // graded at all.
+    const markedLemmas = new Set(
+      spans
+        .filter((span) => span.kind === "word" && marked[`${span.start}`] === "marked")
+        .map((span) => span.lemmaKey),
+    );
+    const unknown = unknownWords(spans, {
+      pKnownOf: (key) => probabilities.get(key),
+      isMarked: (key) => markedLemmas.has(key),
+    });
+
     const vocabulary: Record<string, unknown> = {};
     for (const word of words) {
       if (vocabulary[word.lemmaKey]) continue;
@@ -334,6 +348,14 @@ async function readerPayload(
       spans,
       marked,
       vocabulary,
+      // How many words are new to this reader, and the band that implies: the legible form of the
+      // same judgement coverage makes as a percentage.
+      unknown: {
+        count: unknown.count,
+        band: passageBand(unknown.count),
+        markedCount: unknown.markedCount,
+        lemmas: unknown.lemmas,
+      },
       coverage,
       tokenizerVersion: TOKENIZER_VERSION,
     };

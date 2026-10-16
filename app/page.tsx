@@ -5,6 +5,7 @@ import type { Span } from "@/src/lib/tokenize";
 import { DEFAULT_POPOVER, placePopover } from "@/src/lib/ui/popover";
 import { groupMeanings, meaningLabel } from "@/src/lib/ui/meanings";
 import { liveCoverage } from "@/src/lib/ui/coverage-label";
+import { passageBand, unknownWords } from "@/src/lib/learner/band";
 
 interface VocabularyEntry {
   lemma: string;
@@ -147,6 +148,10 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     estimated: "estimated",
     coverage: "known",
     coverageUnmeasured: "not measured yet",
+    newWords: "new words",
+    bandEasy: "easy",
+    bandHard: "hard",
+    bandVeryHard: "very hard",
     coverageUnmeasuredHint: "take the placement test",
     oneIn: "1 in",
     unfamiliarWords: "unfamiliar",
@@ -200,6 +205,10 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     estimated: "估算",
     coverage: "已知",
     coverageUnmeasured: "尚未测量",
+    newWords: "个生词",
+    bandEasy: "简单",
+    bandHard: "偏难",
+    bandVeryHard: "很难",
     coverageUnmeasuredHint: "去做定级测试",
     oneIn: "每",
     unfamiliarWords: "词 1 个生词",
@@ -864,13 +873,19 @@ export default function Home() {
     const units = paragraph.spans.filter((s) => s.kind === "word");
     if (units.length === 0) return null;
 
+    const pKnownOf = (lemmaKey: string) => paragraph.vocabulary[lemmaKey]?.pKnown ?? undefined;
+
+    // The same count the server computes, recomputed as the reader marks: the share they can read,
+    // and how many words are actually new to them.
+    const unknown = unknownWords(paragraph.spans, {
+      pKnownOf,
+      isMarked: (lemmaKey) => markedLemmas.has(lemmaKey),
+    });
+
     return {
       total: units.length,
-      ...liveCoverage(
-        units,
-        (lemmaKey) => paragraph.vocabulary[lemmaKey]?.pKnown ?? undefined,
-        markedLemmas,
-      ),
+      ...liveCoverage(units, pKnownOf, markedLemmas),
+      unknown: { count: unknown.count, band: passageBand(unknown.count) },
       measured: server.measured,
       basis: server.basis,
     };
@@ -1029,6 +1044,14 @@ export default function Home() {
                         : coverage.verdict === "supported"
                           ? t.verdictSupported
                           : t.verdictComfortable}
+                      {" · "}
+                      {coverage.unknown.count} {t.newWords}
+                      {" → "}
+                      {coverage.unknown.band === "easy"
+                        ? t.bandEasy
+                        : coverage.unknown.band === "hard"
+                          ? t.bandHard
+                          : t.bandVeryHard}
                     </>
                   ) : (
                     <>
