@@ -73,6 +73,45 @@ Restart=always
 RestartSec=2
 ```
 
+## Maintaining it
+
+```bash
+deploy/deploy.sh          # sync source, install if the lockfile moved, build there, restart, verify
+```
+
+The Pi **builds its own copy**: it is arm64 and this Mac is not, so a build made here would not run
+there. What travels is source. Three things are deliberately never touched, because they are state
+rather than code — `data/flowwing.sqlite3` (the vocabulary and every mark the reader has made),
+`.env.local` (the credential) and `node_modules` (platform-specific). A deploy that overwrote the
+database would throw away the learner.
+
+`npm ci` is skipped when `package-lock.json` is unchanged, which is most deploys: the build is
+about 40 seconds on the Pi and the install is longer than that.
+
+So the workflow is: edit on the Mac, run `deploy/deploy.sh`, and the change is live at
+`http://berry:3100` about a minute later. Nothing needs to be copied by hand, and the database
+stays where it is.
+
+## Why a passage takes as long as it does
+
+It is not the Pi. Every component was measured on both machines:
+
+| | Mac | Pi |
+|---|---|---|
+| one writing call (≈400 tokens) | 3.7s | **3.3s** |
+| tokenising 776 spans | 141ms | **116ms** |
+| lexicon and glossary lookups | 22ms | **6ms** |
+| DeepSeek round trip | — | **1.2s** |
+
+The app's own work is a fifth of a second; the model is the rest. A generation makes one call for
+topic vocabulary, one to four attempts at the passage, and three coherence samples — five to eleven
+calls — so it takes between about six seconds and half a minute, and **which of those it is depends
+on how many attempts the rubric and the judge reject, not on the host**. The 24.5s measured on the
+Pi was a multi-attempt run; the 6s runs on the Mac were single-attempt ones.
+
+What makes it feel instant is the stock: pressed while the buffer is full, the passage is already
+written and the queue refills in the background afterwards.
+
 ## Two things that differ from the other projects
 
 **Generation is slower there.** One passage took 24.5s on the Pi against 6-16s on the Mac — the
