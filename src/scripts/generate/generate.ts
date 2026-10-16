@@ -28,7 +28,7 @@ import { assertShippable } from "../../lib/licence/datasets";
 import { levelMidpoint } from "../../lib/difficulty";
 import { glossLangFor, type CefrLevel, type TargetLang } from "../../lib/lang";
 import { tokenizeWithLexicon } from "../../lib/learner/lexicon";
-import { checkParagraph, measureParagraph, RUBRIC_LIMITS } from "../../lib/content/rubric";
+import { RUBRIC_LIMITS, UNKNOWN_TARGET, checkParagraph, measureParagraph } from "../../lib/content/rubric";
 import { BRIEFS, briefIdOf, type BriefSpec } from "./briefs";
 import { deepseekProvider, describeProvider, type Provider } from "./provider";
 import {
@@ -378,6 +378,22 @@ export async function generateOne(
       feedback.push(
         `These words are above ${spec.level} and are what makes the passage too hard — replace each ` +
           `with a simpler everyday word: ${tooHard.slice(0, 15).join(", ")}`,
+      );
+    }
+
+    // A passage with almost nothing new in it is revision. The count is not a gate — it was tried as
+    // one and cannot serve (see `checkParagraph`) — but it is a useful nudge for the retry, and it
+    // names the words to use, which "coverage is 99%" never did.
+    if (
+      verdict.metrics.unknownCount < UNKNOWN_TARGET.min &&
+      verdict.metrics.coverage > RUBRIC_LIMITS.maxCoverage - 0.005 &&
+      vocabulary.target.length
+    ) {
+      feedback.push(
+        `This passage may be too easy: a ${spec.level} reader should meet about ` +
+          `${UNKNOWN_TARGET.min}-${UNKNOWN_TARGET.max} words they do not know, and this has ` +
+          `${verdict.metrics.unknownCount}. Consider working in some of these ${spec.level} words in ` +
+          `place of the easiest ones you used: ${vocabulary.target.slice(0, 10).map((w) => w.word).join(", ")}`,
       );
     }
 

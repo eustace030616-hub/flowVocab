@@ -9,7 +9,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { RUBRIC_LIMITS, checkParagraph, measureParagraph } from "../src/lib/content/rubric";
+import { RUBRIC_LIMITS, bandFor, checkParagraph, measureParagraph } from "../src/lib/content/rubric";
+import type { CefrLevel } from "../src/lib/lang";
 
 /** A candidate of `count` distinct words, all at one difficulty. */
 function words(count: number, difficulty: number, prefix = "w") {
@@ -19,15 +20,24 @@ const at = (difficulty: number) => () => difficulty;
 const glossed = () => true;
 
 test("a text aimed at a level passes at that level", () => {
-  // Fifty words at difficulty 0.25 is A2: a reader at A2 knows nearly all of them, which is i+1.
-  const result = checkParagraph(words(50, 0.25), {
+  // A text with *no* new words is revision, not i+1: the count band rejects it, deliberately (§ the
+  // "too few unknown words" case below). This is the shape a real passage has — mostly at the level,
+  // with a handful just above it — and the length matters: five unknown words in fifty would drop
+  // coverage under the floor, which is why real passages run 90-130 words.
+  const { centre } = bandFor("A2");
+  const tokens = [
+    ...words(95, centre, "known"),
+    ...words(5, centre + 0.25, "hard"), // pKnown ~0.78, just under the unknown threshold
+  ];
+  const result = checkParagraph(tokens, {
     level: "A2",
-    difficultyOf: at(0.25),
+    difficultyOf: (key) => (key.startsWith("known") ? centre : centre + 0.25),
     hasGloss: glossed,
   });
+  assert.equal(result.metrics.unknownCount, 5, "five words the reader does not know");
   assert.ok(result.passed, result.issues.join("; "));
   assert.equal(result.metrics.measuredLevel, "A2");
-  assert.ok(result.metrics.coverage > 0.9, "a reader at the level should know most of it");
+  assert.ok(result.metrics.coverage >= RUBRIC_LIMITS.minCoverage, "and it stays readable");
 });
 
 test("the same text fails at a level it is not written for", () => {
@@ -48,17 +58,24 @@ test("a text may be pitched well below the level it is read at", () => {
   // How real texts are built: a B1 text is mostly A1–A2 vocabulary with a minority of B1 words. The
   // rubric must accept that rather than demanding the median word sit at the level, which would
   // reject every natural text ever written.
-  // 35 common words and 15 at the level: the proportion a real text has, and enough new material
-  // that the text is not pure revision for the reader.
-  const tokens = [...words(35, 0.1, "easy"), ...words(15, 0.6, "hard")];
+  // 95 common words and 5 above the reader: the proportion a real text has, and enough new material
+  // that the text is not pure revision.
+  //
+  // Note *how far* above the reader those five have to be for a B2 reader not to know them: with
+  // `KNOWN_AT_LEVEL = 0.95`, the unknown threshold sits about 1.4 bands above the reader, so a B2
+  // text can only carry unknown words near the top of the axis. That is a property of the model, and
+  // it is why the count band is easy to satisfy at A2 and demanding at B2.
+  const { centre } = bandFor("B2");
+  const tokens = [...words(95, 0.1, "easy"), ...words(5, 1.0, "hard")];
   const result = checkParagraph(tokens, {
     level: "B2",
-    difficultyOf: (key) => (key.startsWith("easy") ? 0.1 : 0.6),
+    difficultyOf: (key) => (key.startsWith("easy") ? 0.1 : 1.0),
     hasGloss: glossed,
   });
+  assert.equal(result.metrics.unknownCount, 5);
   assert.ok(result.passed, result.issues.join("; "));
   assert.ok(result.metrics.medianDifficulty < 0.2, "the median word is far below the level");
-  assert.ok(result.metrics.coverage >= 0.95, "and a reader at the level still reads it comfortably");
+  void centre;
 });
 
 test("text the glossary cannot translate is rejected", () => {
@@ -202,4 +219,69 @@ test("escapes in a salvaged passage are decoded", () => {
   assert.ok(salvaged);
   assert.match(salvaged!.content, /^Er sagt: "Guten Morgen/);
   assert.ok(!salvaged!.content.includes('\\"'), "the escaped quotes are decoded, not left in");
+});
+
+test("the i+1 check counts unknown words, and reports the band in words", () => {
+  // A reader at the band centre meets 5-10 unknown words. Coverage is the floor beneath that, not
+  // the target: this is the same judgement stated as a count the reader can act on.
+  const level: CefrLevel = "A2";
+  const { centre } = bandFor(level);
+  // Difficulty exactly at the centre → pKnown 0.95 → known. Above it, unknown.
+  const known = centre;
+  const unknown = centre + 0.35; // comfortably under pKnown 0.8
+
+  const tokens = [
+    ...Array.from({ length: 96 }, () => ({ lemmaKey: "known", kind: "word" })),
+    ...Array.from({ length: 6 }, (_, i) => ({ lemmaKey: `hard${i}`, kind: "word" })),
+  ];
+  const difficultyOf = (key: string) => (key === "known" ? known : unknown);
+  // 96 known + 6 unknown in a 102-word passage measures ~94.1% coverage — in the band and above the
+  // floor at the same time, which is the narrow window this rule lives in.
+  const verdict = checkParagraph(tokens, { level, difficultyOf, hasGloss: () => true });
+  assert.equal(verdict.metrics.unknownCount, 6, "six distinct unknown lemmas");
+  assert.ok(
+    verdict.issues.every((issue) => !issue.includes("unknown words")),
+    `a passage in the band should not be rejected for its count: ${verdict.issues.join("; ")}`,
+  );
+});
+
+test("the unknown count is reported rather than gated", () => {
+  const level: CefrLevel = "B1";
+  const { centre } = bandFor(level);
+  // 100 tokens, none above the reader's level: the B1/B2 case that measured 0-2 unknown words.
+  const tokens = Array.from({ length: 100 }, (_, i) => ({ lemmaKey: `w${i}`, kind: "word" }));
+  const verdict = checkParagraph(tokens, {
+    level,
+    difficultyOf: () => centre,
+    hasGloss: () => true,
+  });
+  assert.equal(verdict.metrics.unknownCount, 0);
+  assert.equal(
+    verdict.passed,
+    true,
+    "the count is reported, not gated: as a gate it rejected every level (see checkParagraph)",
+  );
+  assert.ok(
+    verdict.issues.every((issue) => !issue.includes("unknown words")),
+    "and it must not appear as an issue",
+  );
+});
+
+test("a high unknown count is still reported", () => {
+  const level: CefrLevel = "A2";
+  const { centre } = bandFor(level);
+  const tokens = [
+    ...Array.from({ length: 80 }, (_, i) => ({ lemmaKey: `k${i}`, kind: "word" })),
+    ...Array.from({ length: 12 }, (_, i) => ({ lemmaKey: `h${i}`, kind: "word" })),
+  ];
+  const verdict = checkParagraph(tokens, {
+    level,
+    difficultyOf: (key) => (key.startsWith("h") ? centre + 0.35 : centre),
+    hasGloss: () => true,
+  });
+  assert.equal(verdict.metrics.unknownCount, 12, "the count is measured");
+  assert.ok(
+    verdict.issues.every((issue) => !issue.includes("unknown words")),
+    "but a high count alone does not reject a passage — only coverage does",
+  );
 });

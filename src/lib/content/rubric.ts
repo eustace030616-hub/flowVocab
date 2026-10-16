@@ -8,8 +8,9 @@
  * So the rubric measures the text rather than trusting its label. It is deliberately about
  * properties a reader would notice:
  *
- *   i+1            at the target level, coverage lands where reading is supported rather than
- *                  effortless or impossible — the same thresholds the reader shows
+ *   i+1            at the target level, the reader meets 5-10 words they do not know — the same
+ *                  count the reader's badge shows, and the same band edges. Coverage is the floor
+ *                  below it: a text has to be readable *and* contain something to learn.
  *   level          the text's median word difficulty falls in the band it claims
  *   translatable   most word tokens have a gloss, or the reader cannot help with what it cannot say
  *   length         long enough to be a text, short enough to read in one sitting
@@ -21,6 +22,7 @@
 import { levelMidpoint } from "../difficulty";
 import { CEFR_LEVELS, type CefrLevel } from "../lang";
 import { probabilityKnown } from "../learner/ability";
+import { BAND_EDGES, UNKNOWN_THRESHOLD, unknownWords } from "../learner/band";
 import { COMFORTABLE_COVERAGE, MINIMAL_COVERAGE } from "../learner/coverage";
 
 /** One half-band either side of the level's midpoint is "at that level". */
@@ -50,8 +52,16 @@ export interface RubricMetrics {
   medianDifficulty: number;
   /** Band implied by the median, which is what the text actually is. */
   measuredLevel: CefrLevel | null;
-  /** Coverage for a reader exactly at the claimed level — the i+1 check. */
+  /** Coverage for a reader exactly at the claimed level. */
   coverage: number;
+  /**
+   * How many words a reader exactly at the claimed level does not know — the i+1 check.
+   *
+   * Distinct lemmas, so a hard word repeated eight times is one word, and words the vocabulary
+   * cannot place count as unknown for the same reason they count as unknown in coverage: a word the
+   * app cannot place is a word the reader is on their own with.
+   */
+  unknownCount: number;
   /** Tokens the vocabulary has no difficulty for: compounds and names, mostly. */
   unresolved: number;
 }
@@ -94,7 +104,20 @@ export const RUBRIC_LIMITS = {
   maxCoverage: COMFORTABLE_COVERAGE + 0.01,
 } as const;
 
-function bandFor(level: CefrLevel): { low: number; high: number; centre: number } {
+/**
+ * The unknown-word band a passage *aims* at, as a reported target rather than a gate.
+ *
+ * Attempted as an acceptance test and withdrawn — see the note in `checkParagraph`. It stays here
+ * because it is the number the reader's badge shows and the one the QA harness reports, and because
+ * a smoothed version of it (a share of above-level words, rather than a count) is the obvious next
+ * thing to try.
+ */
+export const UNKNOWN_TARGET = {
+  min: BAND_EDGES.easyMax + 1,
+  max: BAND_EDGES.hardMax,
+} as const;
+
+export function bandFor(level: CefrLevel): { low: number; high: number; centre: number } {
   const centre = levelMidpoint(level);
   return { low: centre - BAND_HALF_WIDTH, high: centre + BAND_HALF_WIDTH, centre };
 }
@@ -145,6 +168,18 @@ export function measureParagraph(tokens: RubricToken[], options: RubricOptions):
     covered += probabilityKnown(centre, difficulty);
   }
 
+  // The same count the reader's badge shows, by the same rule: predicted below the threshold, or
+  // unplaced. There are no marks to consider here.
+  const unknownLemmas = unknownWords(
+    words.map((token) => ({ ...token, kind: "word" }) as Parameters<typeof unknownWords>[0][number]),
+    {
+      pKnownOf: (key) => {
+        const difficulty = options.difficultyOf(key);
+        return difficulty === undefined || difficulty < 0 ? 0 : probabilityKnown(centre, difficulty);
+      },
+    },
+  ).count;
+
   const wordTokens = words.length;
   const medianDifficulty = median(difficulties);
 
@@ -155,6 +190,7 @@ export function measureParagraph(tokens: RubricToken[], options: RubricOptions):
     medianDifficulty,
     measuredLevel: levelForDifficulty(medianDifficulty),
     coverage: wordTokens === 0 ? 0 : covered / wordTokens,
+    unknownCount: unknownLemmas,
     unresolved,
   };
 }
@@ -185,6 +221,28 @@ export function checkParagraph(tokens: RubricToken[], options: RubricOptions): R
     );
   }
 
+  if (metrics.coverage < RUBRIC_LIMITS.minCoverage) {
+    issues.push(
+      `too hard at ${options.level}: coverage ${(metrics.coverage * 100).toFixed(1)}%, ` +
+        `minimum ${(RUBRIC_LIMITS.minCoverage * 100).toFixed(0)}%`,
+    );
+  }
+  // i+1 by count rather than by probability mass: the reader should meet a handful of new words,
+  // not none and not so many that the text stops being readable. This replaces a coverage *ceiling*,
+  // which was the same judgement made coarsely — a text with six unknown words cannot also have 99%
+  // coverage, so the count subsumes it and is legible to a reader ("5 new words").
+  // The unknown count is *reported*, not required. It was tried as the acceptance test and cannot
+  // serve as one: it is a knife-edge over a distribution the generator controls only weakly.
+  //
+  //   B1   4 attempts, 3/2/4/1 unknown — "too easy" every time, coverage 97-98%
+  //   B2   4 attempts, 0/1/2/1 unknown — "too easy" every time, coverage 98-99%
+  //   A2   with a level-edge rule, 20/20/19/19 unknown — "too hard" every time, coverage 95%
+  //
+  // B1 and B2 texts are written conservatively from easier vocabulary (median word 0.08-0.17), so
+  // almost nothing clears any sensible edge; A2 texts inevitably contain twenty words above the A2
+  // edge even at 95% coverage. Coverage is a *share* and moves smoothly with the text; a count of
+  // above-edge words does not. So the floor and ceiling below remain the gate, and the count goes to
+  // the metrics and the reader's badge, where it is a label rather than a threshold.
   if (metrics.coverage < RUBRIC_LIMITS.minCoverage) {
     issues.push(
       `too hard at ${options.level}: coverage ${(metrics.coverage * 100).toFixed(1)}%, ` +

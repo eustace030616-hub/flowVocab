@@ -26,6 +26,13 @@
  * passage whose coverage is 89%, because knowledge is spread across many 0.8s and 0.9s rather than
  * concentrated in a few words that are more likely unknown than known.
  *
+ * ## A level-edge rule was tried and rejected
+ *
+ * Counting words above the reader's level band instead — the other honest reading of "a word I do not
+ * know" — over-counts badly. On a readable A2 passage (median word 0.08, coverage 95%) it reports
+ * **20** unknown words, because an A2 text legitimately contains many words above the A2 edge. The
+ * probability rule reports 4-6 for the same passage, which is what a reader would say.
+ *
  * ## Counting words, not occurrences
  *
  * Distinct lemmas, so a hard word repeated eight times is one unknown word, not eight. The band is
@@ -50,6 +57,17 @@ export function passageBand(unknownCount: number): PassageBand {
   if (unknownCount <= BAND_EDGES.easyMax) return "easy";
   if (unknownCount <= BAND_EDGES.hardMax) return "hard";
   return "very_hard";
+}
+
+/**
+ * The top edge of the level band a given ability sits in.
+ *
+ * A word above this is above the reader's level, which is the condition that makes the count usable
+ * above A2. Nothing here needs the level *label*, only the edge, so it is computed from θ directly.
+ */
+export function bandHighFor(theta: number, bands = 6): number {
+  const index = Math.min(bands - 1, Math.max(0, Math.floor(theta * bands)));
+  return (index + 1) / bands;
 }
 
 export interface UnknownWordsResult {
