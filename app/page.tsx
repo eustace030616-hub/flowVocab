@@ -6,6 +6,7 @@ import { DEFAULT_POPOVER, placePopover } from "@/src/lib/ui/popover";
 import { groupMeanings, meaningLabel } from "@/src/lib/ui/meanings";
 import { liveCoverage } from "@/src/lib/ui/coverage-label";
 import { passageBand, unknownWords } from "@/src/lib/learner/band";
+import { truncateWords } from "@/src/lib/ui/truncate";
 
 interface VocabularyEntry {
   lemma: string;
@@ -1227,16 +1228,12 @@ export default function Home() {
           */}
           <div className="flex flex-col gap-2 mb-3 shrink-0">
             <div className="flex items-center justify-between gap-3 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="text-base font-medium text-zinc-700 truncate">
-                  {paragraph ? (paragraph.topic ?? paragraph.title) : t.empty}
-                </span>
-                {browsing && (
-                  <span className="shrink-0 text-[10px] uppercase tracking-wide text-zinc-500 border border-zinc-200 rounded px-1.5 py-0.5">
-                    {t.history}
-                  </span>
-                )}
-              </div>
+              <span
+                className="text-base font-medium text-zinc-700 truncate"
+                title={paragraph ? (paragraph.topic ?? paragraph.title) : undefined}
+              >
+                {paragraph ? truncateWords(paragraph.topic ?? paragraph.title) : t.empty}
+              </span>
 
               {/* Where you are in the list. Navigating history by memory with no position is how you
                   lose your place, and the count is the one thing the list view cannot tell you once
@@ -1246,52 +1243,54 @@ export default function Home() {
                   {historyPosition.index + 1} / {historyPosition.total}
                 </span>
               )}
-
-              {/* The band, at the live passage: the one measurement a reader acts on. */}
-              {!browsing && coverage && (
-                <span
-                  className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${
-                    !coverage.measured
-                      ? "bg-zinc-100 text-zinc-500"
-                      : coverage.unknown.band === "easy"
-                        ? "bg-emerald-50 text-emerald-700"
-                        : coverage.unknown.band === "hard"
-                          ? "bg-amber-50 text-amber-700"
-                          : "bg-rose-50 text-rose-700"
-                  }`}
-                  title={
-                    `${t.coverageHelp}\n` +
-                    (coverage.measured
-                      ? `${t.coverage} ${coverage.percent}%` +
-                        (coverage.oneIn !== null
-                          ? ` · ${t.oneIn} ${coverage.oneIn} ${t.unfamiliarWords}`
-                          : "") +
-                        ` · ${
-                          coverage.verdict === "too_hard"
-                            ? t.verdictTooHard
-                            : coverage.verdict === "supported"
-                              ? t.verdictSupported
-                              : t.verdictComfortable
-                        }` +
-                        ` · ${coverage.unknown.count} ${t.newWords}`
-                      : t.coverageUnmeasured)
-                  }
-                >
-                  {coverage.measured
-                    ? coverage.unknown.band === "easy"
-                      ? t.bandEasy
-                      : coverage.unknown.band === "hard"
-                        ? t.bandHard
-                        : t.bandVeryHard
-                    : t.coverageUnmeasured}
-                </span>
-              )}
             </div>
 
             <div className="flex items-center justify-between gap-2">
-              <span className="text-xs text-zinc-400 truncate">
-                {paragraph ? `${paragraph.wordCount} ${t.words}` : ""}
-              </span>
+              {/* The count and the band sit together on the action row, so the whole line reads
+                  left to right as one statement: how long it is, how hard it is, what you can do. */}
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="text-xs text-zinc-400 truncate">
+                  {paragraph ? `${paragraph.wordCount} ${t.words}` : ""}
+                </span>
+                {coverage && (
+                  <span
+                    className={`shrink-0 text-xs px-2 py-0.5 rounded-full font-medium ${
+                      !coverage.measured
+                        ? "bg-zinc-100 text-zinc-500"
+                        : coverage.unknown.band === "easy"
+                          ? "bg-emerald-50 text-emerald-700"
+                          : coverage.unknown.band === "hard"
+                            ? "bg-amber-50 text-amber-700"
+                            : "bg-rose-50 text-rose-700"
+                    }`}
+                    title={
+                      `${t.coverageHelp}\n` +
+                      (coverage.measured
+                        ? `${t.coverage} ${coverage.percent}%` +
+                          (coverage.oneIn !== null
+                            ? ` · ${t.oneIn} ${coverage.oneIn} ${t.unfamiliarWords}`
+                            : "") +
+                          ` · ${
+                            coverage.verdict === "too_hard"
+                              ? t.verdictTooHard
+                              : coverage.verdict === "supported"
+                                ? t.verdictSupported
+                                : t.verdictComfortable
+                          }` +
+                          ` · ${coverage.unknown.count} ${t.newWords}`
+                        : t.coverageUnmeasured)
+                    }
+                  >
+                    {coverage.measured
+                      ? coverage.unknown.band === "easy"
+                        ? t.bandEasy
+                        : coverage.unknown.band === "hard"
+                          ? t.bandHard
+                          : t.bandVeryHard
+                      : t.coverageUnmeasured}
+                  </span>
+                )}
+              </div>
               <div className="flex items-center gap-2 shrink-0">
                 {/* Keep this one. The only thing here that is about the passage rather than the words
                     in it, and the only exemption from being forgotten once it is old and unmarked. */}
