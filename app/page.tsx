@@ -52,6 +52,7 @@ interface AbilityView {
 interface ParagraphSummary {
   _id: string;
   title: string;
+  topic?: string | null;
   level: string | null;
   wordCount: number;
   source: string;
@@ -124,6 +125,9 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     lookups: "looked up",
     exposures: "seen",
     noGloss: "No translation yet.",
+    current: "Current",
+    older: "Older",
+    newer: "Newer",
     star: "Keep this passage",
     unstar: "Stop keeping this passage",
     dontKnow: "Don't know this",
@@ -187,6 +191,9 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     lookups: "查询",
     exposures: "扫过",
     noGloss: "暂无译文。",
+    current: "当前",
+    older: "更早",
+    newer: "更新",
     star: "收藏这段",
     unstar: "取消收藏",
     dontKnow: "不认识",
@@ -315,6 +322,20 @@ export default function Home() {
    * grows without limit cannot be shipped to the client in full.
    */
   const [history, setHistory] = useState<ParagraphSummary[]>([]);
+  /**
+   * The live passage, and whether the reader is looking at history instead.
+   *
+   * Two modes rather than one list, because they are used differently. The current passage is where
+   * reading happens — you generate, you mark, you move on. History is where you go back to something,
+   * and going back should not mean the app has forgotten which passage was live: you need a way back
+   * to it, and it is not in the list you are browsing.
+   *
+   * "Current" is the newest passage for the language, so it needs no flag in the database and there
+   * is nothing to keep in sync — generating makes the new one current and the previous one history,
+   * which is exactly the mental model.
+   */
+  const [currentId, setCurrentId] = useState<string | null>(null);
+  const [browsing, setBrowsing] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [ready, setReady] = useState(false);
   const [paragraph, setParagraph] = useState<Paragraph | null>(null);
@@ -394,6 +415,41 @@ export default function Home() {
    * One passage at a time, fetched in the shape the reader renders. `null` clears the view — a track
    * with nothing in it yet.
    */
+  /** History as the reader sees it: everything except the passage they are living in. */
+  const browsableHistory = useMemo(
+    () => history.filter((item) => item._id !== currentId),
+    [history, currentId],
+  );
+
+  /** Open a stored passage, and remember that the reader is in history rather than at the live one. */
+  const openHistoryPassage = useCallback(
+    async (id: string) => {
+      setBrowsing(true);
+      await openParagraph(id);
+    },
+    // `openParagraph` is stable; listing it keeps the lint honest.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  /**
+   * Step through history from whatever is open.
+   *
+   * The list is newest first, so a positive step is *older*. The ends are disabled rather than
+   * wrapping: wrapping in a list you are navigating by memory is how you lose your place.
+   */
+  const stepHistory = useCallback(
+    async (direction: 1 | -1) => {
+      const openId = paragraph?._id;
+      const index = browsableHistory.findIndex((item) => item._id === openId);
+      const next = browsableHistory[(index === -1 ? 0 : index) + direction];
+      if (!next) return;
+      await openParagraph(next._id);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [browsableHistory, paragraph?._id],
+  );
+
   const openParagraph = useCallback(async (id: string | null): Promise<Paragraph | null> => {
     if (!id) {
       setParagraph(null);
@@ -449,7 +505,9 @@ export default function Home() {
     setHistory(summaries);
 
     // Open the newest passage — the one just generated, or the last one read. The list is newest
-    // first, so index 0 is the most recent.
+    // first, so index 0 is the most recent, and it is "current" rather than history.
+    setCurrentId(summaries[0]?._id ?? null);
+    setBrowsing(false);
     const open = await openParagraph(summaries[0]?._id ?? null);
     setReady(true);
     return open;
@@ -499,6 +557,14 @@ export default function Home() {
    */
   useEffect(() => {
     if (!paragraph || !me) return;
+    // Not while browsing history.
+    //
+    // Exposure is the app's strongest passive signal — read past a word without marking it and it
+    // counts as known, at 0.9 against a mark's 2.0. That is right for a passage the reader was given
+    // to read and wrong for one they are stepping through: ten old passages visited in a minute would
+    // say "I know every word in all of these", and the estimate would climb on navigation. The two
+    // cannot be told apart from here, so the signal is only taken where the reading was intended.
+    if (browsing) return;
     if (exposed.current.has(paragraph._id)) return;
     exposed.current.add(paragraph._id);
 
@@ -729,6 +795,9 @@ export default function Home() {
         await fetch(`/api/paragraphs?targetLang=${paragraph?.targetLang ?? me.targetLang}&summary=1`),
       );
       if (summaries) setHistory(summaries);
+      // A generated passage is the live one; whatever was live before it joins history.
+      setCurrentId(data.paragraphId);
+      setBrowsing(false);
       await openParagraph(data.paragraphId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "generation failed");
@@ -1093,9 +1162,21 @@ export default function Home() {
           >
             {t.test}
           </button>
-          {/* One segmented control rather than one button per track: shared border, no gap, and it
-              stops growing the header each time a language is added. */}
-          {me?.tracks && me.tracks.length > 0 && (
+          {/* In history the language control gives way to the way back: switching track while
+              browsing a stored passage would leave the reader nowhere. One tap returns to the live
+              passage, which is the one thing you want from here. */}
+          {browsing && (
+            <button
+              onClick={() => {
+                if (currentId) void openParagraph(currentId);
+                setBrowsing(false);
+              }}
+              className="h-8 px-3 text-xs font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 transition-colors"
+            >
+              {t.current}
+            </button>
+          )}
+          {!browsing && me?.tracks && me.tracks.length > 0 && (
             <div className="flex h-8 rounded-lg border border-zinc-200 overflow-hidden">
               {me.tracks.map((track) => (
                 <button
@@ -1122,6 +1203,11 @@ export default function Home() {
               <span className="text-sm text-zinc-500 font-medium">
                 {paragraph ? (paragraph.topic ?? paragraph.title) : t.empty}
               </span>
+              {browsing && (
+                <span className="text-[10px] uppercase tracking-wide text-zinc-400">
+                  {t.history}
+                </span>
+              )}
               {paragraph && (
                 <span className="hidden sm:inline text-xs text-zinc-400">
                   {paragraph.wordCount} words
@@ -1210,15 +1296,45 @@ export default function Home() {
                   {starred ? "★" : "☆"}
                 </button>
               )}
-              {/* Forward is the only direction: the reader moves on by generating something new.
-                  Paging backwards was a development shortcut and is gone. */}
-              <button
-                onClick={() => void generateParagraph()}
-                disabled={generating || !me}
-                className="h-8 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition-colors"
-              >
-                {generating ? t.generating : t.generate}
-              </button>
+              {/* Two modes, one button position. At the live passage this generates — forward is
+                  still the only direction there — and in history it walks the stored ones instead,
+                  because generating from inside history would strand you somewhere you did not
+                  choose to be. */}
+              {browsing ? (
+                <>
+                  {(() => {
+                    const index = browsableHistory.findIndex((item) => item._id === paragraph?._id);
+                    const atOldest = index === -1 || index >= browsableHistory.length - 1;
+                    const atNewest = index <= 0;
+                    return (
+                      <>
+                        <button
+                          onClick={() => void stepHistory(1)}
+                          disabled={atOldest}
+                          className="h-8 px-3 text-sm font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-40 transition-colors"
+                        >
+                          ‹ {t.older}
+                        </button>
+                        <button
+                          onClick={() => void stepHistory(-1)}
+                          disabled={atNewest}
+                          className="h-8 px-3 text-sm font-medium border border-zinc-200 text-zinc-600 rounded-lg hover:bg-zinc-100 disabled:opacity-40 transition-colors"
+                        >
+                          {t.newer} ›
+                        </button>
+                      </>
+                    );
+                  })()}
+                </>
+              ) : (
+                <button
+                  onClick={() => void generateParagraph()}
+                  disabled={generating || !me}
+                  className="h-8 px-4 text-sm font-medium bg-zinc-900 text-white rounded-lg hover:bg-zinc-800 disabled:opacity-50 transition-colors"
+                >
+                  {generating ? t.generating : t.generate}
+                </button>
+              )}
             </div>
           </div>
 
@@ -1602,11 +1718,11 @@ export default function Home() {
                 <p className="text-sm text-zinc-400">{t.historyEmpty}</p>
               ) : (
                 <ul className="space-y-1">
-                  {history.map((item) => (
+                  {browsableHistory.map((item) => (
                     <li key={item._id}>
                       <button
                         onClick={() => {
-                          void openParagraph(item._id);
+                          void openHistoryPassage(item._id);
                           setHistoryOpen(false);
                         }}
                         className="w-full text-left flex items-center justify-between gap-4 px-3 py-2 rounded-lg hover:bg-zinc-100 transition-colors"

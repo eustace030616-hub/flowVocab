@@ -29,6 +29,8 @@ export interface ParagraphRecord {
 export interface ParagraphSummary {
   _id: string;
   title: string;
+  /** The domain the passage was written for, which is what the reader shows as its heading. */
+  topic: string | null;
   level: string | null;
   wordCount: number;
   source: string;
@@ -108,6 +110,7 @@ export function paragraphSummaries(targetLang: string, userId: string): Paragrap
   return all<{
     id: string;
     title: string;
+    topic: string | null;
     level: string | null;
     wordCount: number;
     source: string;
@@ -116,7 +119,7 @@ export function paragraphSummaries(targetLang: string, userId: string): Paragrap
     starred: number;
     markedCount: number;
   }>(
-    `SELECT p.id, p.title, p.level, p.wordCount, p.source, p.createdAt, p.briefId, p.starred,
+    `SELECT p.id, p.title, p.topic, p.level, p.wordCount, p.source, p.createdAt, p.briefId, p.starred,
             COALESCE(m.n, 0) AS markedCount
      FROM paragraphs p
      LEFT JOIN (
@@ -130,6 +133,7 @@ export function paragraphSummaries(targetLang: string, userId: string): Paragrap
   ).map((row) => ({
     _id: row.id,
     title: row.title,
+    topic: row.topic,
     level: row.level,
     wordCount: row.wordCount,
     source: row.source,
