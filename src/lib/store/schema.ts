@@ -252,4 +252,34 @@ CREATE TABLE IF NOT EXISTS placement_sessions (
   createdAt   INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS placement_recent ON placement_sessions (userId, targetLang, createdAt DESC);
+
+-- ── Calibration ──────────────────────────────────────────────────────────────
+
+-- What the reader said a passage's difficulty was, recorded beside what the app computed and what
+-- it believed about the reader at that moment. Three opinions of the same thing, kept together so
+-- they can be compared later: the app's band comes from per-word probabilities, the reader's comes
+-- from having read it, and the estimate comes from everything they have ever marked.
+CREATE TABLE IF NOT EXISTS difficulty_votes (
+  id           TEXT PRIMARY KEY,
+  userId       TEXT NOT NULL,
+  targetLang   TEXT NOT NULL,
+  paragraphId  TEXT NOT NULL,
+  -- The reader's verdict, in the same vocabulary as the computed band.
+  userBand     TEXT NOT NULL,
+  -- What the app computed, captured at the moment of the vote: recalibrating the model later must
+  -- not rewrite what it used to say.
+  computedBand TEXT NOT NULL,
+  unknownCount INTEGER NOT NULL DEFAULT 0,
+  coverage     REAL NOT NULL DEFAULT -1,
+  -- The ability estimate at the time, so a disagreement can be read against how sure the app was.
+  theta        REAL NOT NULL,
+  se           REAL NOT NULL,
+  n            REAL NOT NULL DEFAULT 0,
+  levelPoint   TEXT NOT NULL,
+  levelLow     TEXT NOT NULL,
+  levelHigh    TEXT NOT NULL,
+  createdAt    INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS difficulty_votes_recent ON difficulty_votes (userId, createdAt DESC);
+CREATE INDEX IF NOT EXISTS difficulty_votes_agreement ON difficulty_votes (computedBand, userBand);
 `;

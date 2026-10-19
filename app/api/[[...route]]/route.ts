@@ -28,6 +28,13 @@ import { abilitiesFor, recomputeAllAbilities } from "@/src/lib/learner/profile";
 import { knownProbabilities } from "@/src/lib/learner/reading";
 import { coverageOf } from "@/src/lib/learner/coverage";
 import { passageBand, targetBriefLevel, unknownWords } from "@/src/lib/learner/band";
+import { levelFromDifficulty } from "@/src/lib/difficulty";
+import {
+  calibrationSummary,
+  recentVotes,
+  recordDifficultyVote,
+  voteForParagraph,
+} from "@/src/lib/store/calibration";
 import { candidatesFor } from "@/src/lib/tokenize/rules";
 import {
   addSurfaceForm,
@@ -355,6 +362,9 @@ async function readerPayload(
       vocabulary,
       // How many words are new to this reader, and the band that implies: the legible form of the
       // same judgement coverage makes as a percentage.
+      // The reader's own verdict on this passage, if they have given one — so the control shows
+      // their answer rather than the app's when they revisit it.
+      difficultyVote: voteForParagraph(userId, String(paragraph._id)),
       unknown: {
         count: unknown.count,
         band: passageBand(unknown.count),
@@ -579,6 +589,50 @@ app.post("/paragraphs/:id/star", async (c) => {
   const starred = typeof body.starred === "boolean" ? body.starred : !paragraph.starred;
   setStarred(id, starred);
   return c.json({ ok: true, starred });
+});
+
+/**
+ * Record the reader's own verdict on how hard a passage was.
+ *
+ * A calibration control, not a feature: it stores their answer beside what the app computed and what
+ * it believed about them at that moment, so the three can be compared afterwards. The computed side
+ * is re-derived here rather than sent by the client, because the client's copy could be stale and the
+ * point of the record is what the app actually said.
+ */
+app.post("/paragraphs/:id/difficulty", async (c) => {
+  const user = c.get("user");
+  const body = (await c.req.json().catch(() => ({}))) as { band?: unknown };
+  const id = c.req.param("id");
+  const paragraph = paragraphById(id);
+  if (!paragraph) return c.json({ error: "no such paragraph" }, 404);
+  if (!["easy", "hard", "very_hard"].includes(String(body.band))) {
+    return c.json({ error: "band must be easy, hard or very_hard" }, 400);
+  }
+
+  const payload = await readerPayload(user.userId, paragraph, paragraph.targetLang, glossLangFor(paragraph.targetLang));
+  const ability = abilityFor(user.userId, paragraph.targetLang);
+  recordDifficultyVote({
+    userId: user.userId,
+    targetLang: paragraph.targetLang,
+    paragraphId: id,
+    userBand: String(body.band),
+    computedBand: payload.unknown.band,
+    unknownCount: payload.unknown.count,
+    coverage: payload.coverage.coverage,
+    theta: ability?.theta ?? 0.5,
+    se: ability?.se ?? 1,
+    n: ability?.n ?? 0,
+    levelPoint: levelFromDifficulty(ability?.theta ?? 0.5) ?? "A1",
+    levelLow: ability?.levelLow ?? "A1",
+    levelHigh: ability?.levelHigh ?? "C2",
+  });
+  return c.json({ ok: true, summary: calibrationSummary(user.userId) }, 201);
+});
+
+/** The three opinions, and how often they agree. The point of collecting them. */
+app.get("/calibration", async (c) => {
+  const user = c.get("user");
+  return c.json({ summary: calibrationSummary(user.userId), votes: recentVotes(user.userId, 50) });
 });
 
 // ── Marks ─────────────────────────────────────────────────────────────────────

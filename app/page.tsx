@@ -64,6 +64,8 @@ interface ParagraphSummary {
 
 interface Paragraph {
   starred?: boolean;
+  /** The reader's own difficulty verdict, when they have given one. */
+  difficultyVote?: string | null;
   _id: string;
   targetLang: "en" | "de";
   title: string;
@@ -137,6 +139,8 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     placementNoGloss: "No translation yet.",
     placementKeepGoing: "Keep going for a more accurate estimate",
     placementAnswerMore: "Answer more to get an estimate",
+    appSays: "app",
+    difficultyVote: "How hard was this for you? Stored beside the app's answer, to calibrate it.",
     older: "Older",
     newer: "Newer",
     star: "Keep this passage",
@@ -216,6 +220,8 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     placementNoGloss: "暂无译文。",
     placementKeepGoing: "继续作答，结果会更准确",
     placementAnswerMore: "继续作答以得到估算",
+    appSays: "应用",
+    difficultyVote: "这段对你来说有多难？你的回答会与应用的结果一起保存，用于校准。",
     older: "更早",
     newer: "更新",
     star: "收藏这段",
@@ -374,6 +380,14 @@ export default function Home() {
   const [marked, setMarked] = useState<Set<number>>(new Set());
   /** Whether the open passage is kept on purpose. Mirrors `paragraph.starred`, and moves on tap. */
   const [starred, setStarred] = useState(false);
+  /**
+   * The reader's own verdict on how hard this passage is.
+   *
+   * A calibration control: the app has two opinions (the band and the estimate) and the reader has a
+   * third, and the only way to find out which is wrong when they disagree is to write all three down.
+   * Nothing in the model reads it back yet.
+   */
+  const [difficultyVote, setDifficultyVote] = useState<string | null>(null);
   const [hoveredOwner, setHoveredOwner] = useState<number | null>(null);
   const [active, setActive] = useState<ActiveItem | null>(null);
   const [viewport, setViewport] = useState({ width: 0, height: 0 });
@@ -457,6 +471,10 @@ export default function Home() {
   const [generating, setGenerating] = useState(false);
 
   const t = UI[me?.uiLocale ?? "en"];
+  /** For the calibration line only: the app's estimate, beside the reader's verdict. */
+  const levelPoint =
+    me?.ability?.find((a) => a.targetLang === (paragraph?.targetLang ?? me?.targetLang))?.levelPoint ??
+    null;
   // The ability estimate is deliberately not read here. It still runs the app — it chooses the level
   // of the next passage and scores coverage — but it is not displayed: the header shows the band, and
   // the one place a level is named is the placement test's own result, which is what the test is for.
@@ -647,6 +665,7 @@ export default function Home() {
     }
     setMarked(next);
     setStarred(Boolean(paragraph.starred));
+    setDifficultyVote(paragraph.difficultyVote ?? null);
     setLiveState({});
     setActive(null);
     setHoveredOwner(null);
@@ -735,6 +754,24 @@ export default function Home() {
     query.addEventListener("change", apply);
     return () => query.removeEventListener("change", apply);
   }, []);
+
+  /** Record the reader's verdict beside what the app computed. */
+  const voteDifficulty = useCallback(
+    async (band: string) => {
+      if (!paragraph || !me) return;
+      setDifficultyVote(band);
+      const res = await fetch(`/api/paragraphs/${paragraph._id}/difficulty`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ band }),
+      });
+      if (!res.ok) {
+        setDifficultyVote(null);
+        setError(describeFailure(`/api/paragraphs/${paragraph._id}/difficulty`, res));
+      }
+    },
+    [paragraph, me],
+  );
 
   /**
    * Star the open passage, or unstar it.
@@ -1389,37 +1426,37 @@ export default function Home() {
                       : ""}
                 </span>
                 {loading && <span className="shrink-0">{skeletonLine("48px")}</span>}
+                {/* The reader's verdict, and the two things it is compared against.
+                    The band used to be a label; it is now the calibration control, because the one
+                    opinion the app cannot generate is the one from someone who read the passage. */}
                 {!loading && coverage && (
-                  // A label with a hairline, not a coloured pill: colour would compete with the one
-                  // accent the style allows, and the word already carries the verdict.
-                  <span
-                    className="shrink-0 text-xs px-2 py-0.5 font-medium border fv-hairline text-zinc-600"
-                    title={
-                      `${t.coverageHelp}\n` +
-                      (coverage.measured
-                        ? `${t.coverage} ${coverage.percent}%` +
-                          (coverage.oneIn !== null
-                            ? ` · ${t.oneIn} ${coverage.oneIn} ${t.unfamiliarWords}`
-                            : "") +
-                          ` · ${
-                            coverage.verdict === "too_hard"
-                              ? t.verdictTooHard
-                              : coverage.verdict === "supported"
-                                ? t.verdictSupported
-                                : t.verdictComfortable
-                          }` +
-                          ` · ${coverage.unknown.count} ${t.newWords}`
-                        : t.coverageUnmeasured)
-                    }
-                  >
-                    {coverage.measured
-                      ? coverage.unknown.band === "easy"
+                  <>
+                    <select
+                      value={difficultyVote ?? coverage.unknown.band}
+                      onChange={(e) => void voteDifficulty(e.target.value)}
+                      disabled={!me}
+                      title={
+                        `${t.difficultyVote}\n${t.appSays}: ` +
+                        `${coverage.unknown.band === "easy" ? t.bandEasy : coverage.unknown.band === "hard" ? t.bandHard : t.bandVeryHard}` +
+                        ` · ${t.level} ${levelPoint ?? t.levelUnknown}`
+                      }
+                      className="shrink-0 h-8 px-2 text-xs font-medium border fv-hairline bg-white text-zinc-700 disabled:opacity-50"
+                    >
+                      <option value="easy">{t.bandEasy}</option>
+                      <option value="hard">{t.bandHard}</option>
+                      <option value="very_hard">{t.bandVeryHard}</option>
+                    </select>
+                    <span className="hidden sm:inline shrink-0 text-[10px] text-zinc-400 tabular-nums">
+                      {t.appSays}:{" "}
+                      {coverage.unknown.band === "easy"
                         ? t.bandEasy
                         : coverage.unknown.band === "hard"
                           ? t.bandHard
-                          : t.bandVeryHard
-                      : t.coverageUnmeasured}
-                  </span>
+                          : t.bandVeryHard}
+                      {" · "}
+                      {t.level} {levelPoint ?? t.levelUnknown}
+                    </span>
+                  </>
                 )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
