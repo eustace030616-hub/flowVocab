@@ -364,7 +364,7 @@ async function readerPayload(
       // same judgement coverage makes as a percentage.
       // The reader's own verdict on this passage, if they have given one — so the control shows
       // their answer rather than the app's when they revisit it.
-      difficultyVote: voteForParagraph(userId, String(paragraph._id)),
+      difficultyVote: await voteForParagraph(userId, String(paragraph._id)),
       unknown: {
         count: unknown.count,
         band: passageBand(unknown.count),
@@ -613,7 +613,7 @@ app.post("/paragraphs/:id/difficulty", async (c) => {
 
   const payload = await readerPayload(user.userId, paragraph, paragraph.targetLang, glossLangFor(paragraph.targetLang));
   const ability = abilityFor(user.userId, paragraph.targetLang);
-  recordDifficultyVote({
+  await recordDifficultyVote({
     userId: user.userId,
     targetLang: paragraph.targetLang,
     paragraphId: id,
@@ -630,13 +630,16 @@ app.post("/paragraphs/:id/difficulty", async (c) => {
     levelLow: ability?.levelLow ?? "A1",
     levelHigh: ability?.levelHigh ?? "C2",
   });
-  return c.json({ ok: true, summary: calibrationSummary(user.userId) }, 201);
+  return c.json({ ok: true, summary: await calibrationSummary(user.userId) }, 201);
 });
 
 /** The three opinions, and how often they agree. The point of collecting them. */
 app.get("/calibration", async (c) => {
   const user = c.get("user");
-  return c.json({ summary: calibrationSummary(user.userId), votes: recentVotes(user.userId, 50) });
+  return c.json({
+    summary: await calibrationSummary(user.userId),
+    votes: await recentVotes(user.userId, 50),
+  });
 });
 
 // ── Marks ─────────────────────────────────────────────────────────────────────

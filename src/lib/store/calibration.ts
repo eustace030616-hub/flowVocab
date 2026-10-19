@@ -15,7 +15,9 @@
  * recalibration rewrite the history.
  */
 
-import { all, get, newId, nowMs, run } from "./db";
+import { newId, nowMs } from "./db";
+import { nodeDriver } from "./driver-node";
+import type { StoreDriver } from "./driver";
 
 export interface DifficultyVote {
   /** Whether the reader changed the app's band, as opposed to leaving it alone. */
@@ -47,11 +49,12 @@ export interface DifficultyVote {
  * reopening revises the opinion instead of adding another — the question "did they agree with the
  * app about this passage" has one answer, not one per visit.
  */
-export function recordDifficultyVote(
+export async function recordDifficultyVote(
   vote: Omit<DifficultyVote, "id" | "createdAt" | "explicit"> & { explicit?: boolean },
-): string {
+  store: StoreDriver = nodeDriver,
+): Promise<string> {
   const id = newId();
-  run(
+  await store.run(
     `INSERT INTO difficulty_votes (id, userId, targetLang, paragraphId, userBand, computedBand,
                                    unknownCount, coverage, theta, se, n, levelPoint, levelLow,
                                    levelHigh, explicit, createdAt)
@@ -95,8 +98,12 @@ export function recordDifficultyVote(
   return id;
 }
 
-export function recentVotes(userId: string, limit = 50): DifficultyVote[] {
-  return all<DifficultyVote>(
+export async function recentVotes(
+  userId: string,
+  limit = 50,
+  store: StoreDriver = nodeDriver,
+): Promise<DifficultyVote[]> {
+  return store.all<DifficultyVote>(
     "SELECT * FROM difficulty_votes WHERE userId = ? ORDER BY createdAt DESC LIMIT ?",
     userId,
     limit,
@@ -104,8 +111,12 @@ export function recentVotes(userId: string, limit = 50): DifficultyVote[] {
 }
 
 /** The reader's verdict for one passage, if they have given one. */
-export function voteForParagraph(userId: string, paragraphId: string): string | null {
-  const row = get<{ userBand: string }>(
+export async function voteForParagraph(
+  userId: string,
+  paragraphId: string,
+  store: StoreDriver = nodeDriver,
+): Promise<string | null> {
+  const row = await store.get<{ userBand: string }>(
     "SELECT userBand FROM difficulty_votes WHERE userId = ? AND paragraphId = ? ORDER BY createdAt DESC LIMIT 1",
     userId,
     paragraphId,
@@ -127,8 +138,11 @@ export interface CalibrationSummary {
   meanTheta: number;
 }
 
-export function calibrationSummary(userId: string): CalibrationSummary {
-  const rows = recentVotes(userId, 500);
+export async function calibrationSummary(
+  userId: string,
+  store: StoreDriver = nodeDriver,
+): Promise<CalibrationSummary> {
+  const rows = await recentVotes(userId, 500, store);
   const changed = rows.filter((row) => row.explicit).length;
   const byComputed = new Map<string, { votes: number; agreed: number }>();
   const byUser = new Map<string, number>();
