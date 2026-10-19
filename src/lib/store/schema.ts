@@ -278,8 +278,15 @@ CREATE TABLE IF NOT EXISTS difficulty_votes (
   levelPoint   TEXT NOT NULL,
   levelLow     TEXT NOT NULL,
   levelHigh    TEXT NOT NULL,
+  -- 0 when the reader left the app's own band alone, 1 when they changed it. Leaving it alone is
+  -- agreement, and it has to be recorded: a record of only the changed answers would report a
+  -- disagreement rate of 100% by construction.
+  explicit     INTEGER NOT NULL DEFAULT 0,
   createdAt    INTEGER NOT NULL
 );
+-- One opinion per passage per reader. Opening it again revises that opinion rather than adding a
+-- second, so the agreement rate is per passage and not per visit.
+CREATE UNIQUE INDEX IF NOT EXISTS difficulty_votes_identity ON difficulty_votes (userId, paragraphId);
 CREATE INDEX IF NOT EXISTS difficulty_votes_recent ON difficulty_votes (userId, createdAt DESC);
 CREATE INDEX IF NOT EXISTS difficulty_votes_agreement ON difficulty_votes (computedBand, userBand);
 `;

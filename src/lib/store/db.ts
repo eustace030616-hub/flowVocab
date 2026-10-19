@@ -48,6 +48,7 @@ export function nowMs(): number {
  */
 const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "paragraphs", column: "starred", ddl: "INTEGER NOT NULL DEFAULT 0" },
+  { table: "difficulty_votes", column: "explicit", ddl: "INTEGER NOT NULL DEFAULT 0" },
 ];
 
 function applyColumnMigrations(handle: DatabaseSync): void {

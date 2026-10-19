@@ -18,6 +18,8 @@
 import { all, get, newId, nowMs, run } from "./db";
 
 export interface DifficultyVote {
+  /** Whether the reader changed the app's band, as opposed to leaving it alone. */
+  explicit: boolean;
   id: string;
   userId: string;
   targetLang: string;
@@ -37,13 +39,42 @@ export interface DifficultyVote {
   createdAt: number;
 }
 
-export function recordDifficultyVote(vote: Omit<DifficultyVote, "id" | "createdAt">): string {
+/**
+ * Record or revise the reader's opinion of one passage.
+ *
+ * Leaving the dropdown alone is agreement, and that has to be written down as well as a change:
+ * storing only the changes would make the agreement rate 100% of nothing. One row per passage, so
+ * reopening revises the opinion instead of adding another — the question "did they agree with the
+ * app about this passage" has one answer, not one per visit.
+ */
+export function recordDifficultyVote(
+  vote: Omit<DifficultyVote, "id" | "createdAt" | "explicit"> & { explicit?: boolean },
+): string {
   const id = newId();
   run(
     `INSERT INTO difficulty_votes (id, userId, targetLang, paragraphId, userBand, computedBand,
                                    unknownCount, coverage, theta, se, n, levelPoint, levelLow,
-                                   levelHigh, createdAt)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                                   levelHigh, explicit, createdAt)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+     ON CONFLICT(userId, paragraphId) DO UPDATE SET
+       -- An opinion the reader stated is not overwritten by the default that arrives when they
+       -- reopen the passage: revisiting a text is not retracting an answer.
+       userBand = CASE
+         WHEN difficulty_votes.explicit = 1 AND excluded.explicit = 0 THEN difficulty_votes.userBand
+         ELSE excluded.userBand
+       END,
+       computedBand = excluded.computedBand,
+       unknownCount = excluded.unknownCount,
+       coverage = excluded.coverage,
+       theta = excluded.theta,
+       se = excluded.se,
+       n = excluded.n,
+       levelPoint = excluded.levelPoint,
+       levelLow = excluded.levelLow,
+       levelHigh = excluded.levelHigh,
+       -- Sticky: once they have disagreed explicitly, leaving it alone later does not un-say it.
+       explicit = MAX(difficulty_votes.explicit, excluded.explicit),
+       createdAt = excluded.createdAt`,
     id,
     vote.userId,
     vote.targetLang,
@@ -58,6 +89,7 @@ export function recordDifficultyVote(vote: Omit<DifficultyVote, "id" | "createdA
     vote.levelPoint,
     vote.levelLow,
     vote.levelHigh,
+    vote.explicit ? 1 : 0,
     nowMs(),
   );
   return id;
@@ -83,8 +115,10 @@ export function voteForParagraph(userId: string, paragraphId: string): string | 
 
 export interface CalibrationSummary {
   votes: number;
-  /** How often the reader agreed with the computed band. */
+  /** How often the reader agreed with the computed band, changed answers included. */
   agreement: number;
+  /** How many they actually changed — the disagreements that carry the most information. */
+  changed: number;
   /** Agreement broken down by what the app said, which is where a systematic bias shows. */
   byComputed: Array<{ computedBand: string; votes: number; agreed: number }>;
   /** And broken down by the reader's answer, which is where an optimistic reader shows. */
@@ -95,6 +129,7 @@ export interface CalibrationSummary {
 
 export function calibrationSummary(userId: string): CalibrationSummary {
   const rows = recentVotes(userId, 500);
+  const changed = rows.filter((row) => row.explicit).length;
   const byComputed = new Map<string, { votes: number; agreed: number }>();
   const byUser = new Map<string, number>();
   let agreed = 0;
@@ -114,6 +149,7 @@ export function calibrationSummary(userId: string): CalibrationSummary {
   return {
     votes: rows.length,
     agreement: rows.length === 0 ? 0 : agreed / rows.length,
+    changed,
     byComputed: [...byComputed.entries()].map(([computedBand, value]) => ({ computedBand, ...value })),
     byUser: [...byUser.entries()].map(([userBand, votes]) => ({ userBand, votes })),
     meanTheta: rows.length === 0 ? 0 : thetaSum / rows.length,

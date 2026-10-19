@@ -702,6 +702,17 @@ export default function Home() {
       }));
     if (items.length === 0) return;
 
+    // The app's band is the default opinion, and leaving it alone means agreeing with it — so the
+    // record is written on arrival rather than only when the reader changes something. Without this
+    // the calibration table would hold only disagreements and report a 100% disagreement rate.
+    void fetch(`/api/paragraphs/${paragraph._id}/difficulty`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    }).catch(() => {
+      // Best effort: a missed default vote costs one row of calibration data, not the reading.
+    });
+
     void fetch("/api/events", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -763,7 +774,7 @@ export default function Home() {
       const res = await fetch(`/api/paragraphs/${paragraph._id}/difficulty`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ band }),
+        body: JSON.stringify({ band, explicit: true }),
       });
       if (!res.ok) {
         setDifficultyVote(null);

@@ -601,11 +601,13 @@ app.post("/paragraphs/:id/star", async (c) => {
  */
 app.post("/paragraphs/:id/difficulty", async (c) => {
   const user = c.get("user");
-  const body = (await c.req.json().catch(() => ({}))) as { band?: unknown };
+  const body = (await c.req.json().catch(() => ({}))) as { band?: unknown; explicit?: unknown };
   const id = c.req.param("id");
   const paragraph = paragraphById(id);
   if (!paragraph) return c.json({ error: "no such paragraph" }, 404);
-  if (!["easy", "hard", "very_hard"].includes(String(body.band))) {
+  // No band means "the app's band, unchanged" — which is agreement, and the caller may omit it.
+  const band = body.band === undefined ? null : String(body.band);
+  if (band !== null && !["easy", "hard", "very_hard"].includes(band)) {
     return c.json({ error: "band must be easy, hard or very_hard" }, 400);
   }
 
@@ -615,7 +617,9 @@ app.post("/paragraphs/:id/difficulty", async (c) => {
     userId: user.userId,
     targetLang: paragraph.targetLang,
     paragraphId: id,
-    userBand: String(body.band),
+    // Leaving the dropdown alone is an opinion too: it is agreement with what the app said.
+    userBand: band ?? payload.unknown.band,
+    explicit: body.explicit === true || (band !== null && band !== payload.unknown.band),
     computedBand: payload.unknown.band,
     unknownCount: payload.unknown.count,
     coverage: payload.coverage.coverage,
