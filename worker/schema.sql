@@ -1,0 +1,309 @@
+
+-- ── Dictionary ────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS words (
+  id              TEXT PRIMARY KEY,
+  targetLang      TEXT NOT NULL,
+  lemmaKey        TEXT NOT NULL,
+  lemma           TEXT NOT NULL,
+  pos             TEXT NOT NULL DEFAULT '',
+  origin          TEXT NOT NULL DEFAULT 'learner',
+  surfaceForms    TEXT NOT NULL DEFAULT '[]',
+  level           TEXT,
+  levelEstimated  INTEGER NOT NULL DEFAULT 0,
+  levelSource     TEXT,
+  difficulty      REAL NOT NULL DEFAULT -1,
+  -- Frequency evidence, kept as JSON: it is a bag of named sources that grows with each import and
+  -- is never queried by name, only read whole.
+  frequency       TEXT NOT NULL DEFAULT '{}',
+  article         TEXT,
+  plural          TEXT,
+  cognateWithEn   INTEGER NOT NULL DEFAULT 0,
+  falseFriend     INTEGER NOT NULL DEFAULT 0,
+  createdAt       INTEGER NOT NULL
+);
+-- Identity is (language, lemma, part of speech): the same spelling as a noun and a verb are different
+-- vocabulary entries, and merging them split a learner's history across two rows.
+CREATE UNIQUE INDEX IF NOT EXISTS words_identity ON words (targetLang, lemmaKey, pos);
+CREATE INDEX IF NOT EXISTS words_lookup ON words (targetLang, origin, lemmaKey);
+CREATE INDEX IF NOT EXISTS words_difficulty ON words (targetLang, difficulty);
+
+CREATE TABLE IF NOT EXISTS glosses (
+  id          TEXT PRIMARY KEY,
+  targetLang  TEXT NOT NULL,
+  lemmaKey    TEXT NOT NULL,
+  wordId      TEXT,
+  lang        TEXT NOT NULL,
+  text        TEXT NOT NULL,
+  sense       TEXT,
+  pos         TEXT NOT NULL DEFAULT '',
+  termPos     TEXT,
+  source      TEXT NOT NULL,
+  license     TEXT NOT NULL,
+  generated   INTEGER NOT NULL DEFAULT 0,
+  rank        INTEGER NOT NULL DEFAULT 0,
+  weight      REAL,
+  createdAt   INTEGER NOT NULL
+);
+-- The licence seam: one row per translation per source, so share-alike text stays separable and a
+-- source can be dropped in one statement.
+CREATE UNIQUE INDEX IF NOT EXISTS glosses_identity ON glosses (targetLang, lemmaKey, pos, lang, source, text);
+CREATE INDEX IF NOT EXISTS glosses_read ON glosses (targetLang, lemmaKey, pos, lang, rank);
+CREATE INDEX IF NOT EXISTS glosses_source ON glosses (source);
+
+CREATE TABLE IF NOT EXISTS inflections (
+  id            TEXT PRIMARY KEY,
+  targetLang    TEXT NOT NULL,
+  form          TEXT NOT NULL,
+  base          TEXT NOT NULL,
+  baseLemmaKey  TEXT NOT NULL,
+  pos           TEXT NOT NULL DEFAULT '',
+  source        TEXT NOT NULL,
+  license       TEXT NOT NULL,
+  createdAt     INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS inflections_identity ON inflections (targetLang, form, baseLemmaKey, pos, source);
+CREATE INDEX IF NOT EXISTS inflections_read ON inflections (targetLang, form);
+
+CREATE TABLE IF NOT EXISTS separations (
+  id          TEXT PRIMARY KEY,
+  targetLang  TEXT NOT NULL,
+  particle    TEXT NOT NULL,
+  verb        TEXT NOT NULL,
+  merged      TEXT NOT NULL,
+  source      TEXT NOT NULL,
+  createdAt   INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS separations_identity ON separations (targetLang, particle, verb);
+CREATE INDEX IF NOT EXISTS separations_read ON separations (targetLang, particle);
+
+CREATE TABLE IF NOT EXISTS compounds (
+  id          TEXT PRIMARY KEY,
+  targetLang  TEXT NOT NULL,
+  form        TEXT NOT NULL,
+  parts       TEXT NOT NULL DEFAULT '[]',
+  source      TEXT NOT NULL,
+  createdAt   INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS compounds_identity ON compounds (targetLang, form);
+
+CREATE TABLE IF NOT EXISTS provenance (
+  id            TEXT PRIMARY KEY,
+  dataset       TEXT NOT NULL UNIQUE,
+  title         TEXT NOT NULL,
+  url           TEXT NOT NULL,
+  license       TEXT NOT NULL,
+  licenseUrl    TEXT,
+  attribution   TEXT NOT NULL,
+  commercialUse INTEGER NOT NULL,
+  shareAlike    INTEGER NOT NULL DEFAULT 0,
+  copyleft      INTEGER NOT NULL DEFAULT 0,
+  offlineOnly   INTEGER NOT NULL DEFAULT 0,
+  retrievedAt   INTEGER,
+  rowCount      INTEGER,
+  contributesTo TEXT NOT NULL DEFAULT '[]',
+  notes         TEXT
+);
+
+-- ── Content ───────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS paragraphs (
+  id               TEXT PRIMARY KEY,
+  targetLang       TEXT NOT NULL,
+  title            TEXT NOT NULL,
+  content          TEXT NOT NULL,
+  topic            TEXT,
+  wordCount        INTEGER NOT NULL DEFAULT 0,
+  level            TEXT,
+  difficulty       REAL NOT NULL DEFAULT -1,
+  difficultySource TEXT,
+  coverage         REAL NOT NULL DEFAULT -1,
+  tokenizerVersion INTEGER NOT NULL DEFAULT 1,
+  source           TEXT NOT NULL DEFAULT 'seed',
+  -- The brief a generated passage fulfils, and the prompt that produced it: provenance for text no
+  -- corpus supplied.
+  briefId          TEXT,
+  buffered         INTEGER NOT NULL DEFAULT 0,
+  starred          INTEGER NOT NULL DEFAULT 0,
+  promptSnapshot   TEXT,
+  createdAt        INTEGER NOT NULL,
+  updatedAt        INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS paragraphs_brief ON paragraphs (targetLang, briefId) WHERE briefId IS NOT NULL;
+CREATE INDEX IF NOT EXISTS paragraphs_read ON paragraphs (targetLang, difficulty, createdAt);
+CREATE INDEX IF NOT EXISTS paragraphs_recent ON paragraphs (targetLang, createdAt DESC);
+CREATE INDEX IF NOT EXISTS paragraphs_buffer ON paragraphs (targetLang, buffered);
+
+-- ── Learner ───────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id        TEXT PRIMARY KEY,
+  userId    TEXT NOT NULL,
+  -- The token itself is never stored: a leak of this table must not be a set of usable sessions.
+  tokenHash TEXT NOT NULL UNIQUE,
+  createdAt INTEGER NOT NULL,
+  expiresAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions (userId);
+
+CREATE TABLE IF NOT EXISTS users (
+  id         TEXT PRIMARY KEY,
+  userId     TEXT NOT NULL UNIQUE,
+  track      TEXT NOT NULL,
+  uiLocale   TEXT NOT NULL DEFAULT 'en',
+  -- Dev-stage auth: any string is a valid username, any string is a valid password. What is *not*
+  -- negotiable is how the password is stored — scrypt with a per-user salt, so a leaked file is not
+  -- a leaked set of passwords even in a dev database.
+  username     TEXT UNIQUE,
+  passwordHash TEXT,
+  passwordSalt TEXT,
+  createdAt  INTEGER NOT NULL,
+  updatedAt  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS marks (
+  id               TEXT PRIMARY KEY,
+  userId           TEXT NOT NULL,
+  targetLang       TEXT NOT NULL,
+  paragraphId      TEXT NOT NULL,
+  wordId           TEXT NOT NULL,
+  surface          TEXT NOT NULL,
+  lemmaKey         TEXT NOT NULL,
+  charStart        INTEGER NOT NULL,
+  charEnd          INTEGER NOT NULL,
+  tokenizerVersion INTEGER NOT NULL,
+  status           TEXT NOT NULL DEFAULT 'marked',
+  markedAt         INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS marks_identity ON marks (userId, paragraphId, charStart, charEnd);
+CREATE INDEX IF NOT EXISTS marks_paragraph ON marks (userId, paragraphId);
+CREATE INDEX IF NOT EXISTS marks_language ON marks (userId, targetLang, status);
+
+CREATE TABLE IF NOT EXISTS events (
+  id          TEXT PRIMARY KEY,
+  userId      TEXT NOT NULL,
+  targetLang  TEXT NOT NULL,
+  type        TEXT NOT NULL,
+  source      TEXT NOT NULL DEFAULT 'web',
+  sessionId   TEXT,
+  paragraphId TEXT,
+  wordId      TEXT,
+  surface     TEXT,
+  lemmaKey    TEXT,
+  charStart   INTEGER,
+  charEnd     INTEGER,
+  -- Exposure batches carry their words here; the append-only log is the truth for the learner model.
+  items       TEXT,
+  ts          INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS events_user_time ON events (userId, targetLang, ts DESC);
+CREATE INDEX IF NOT EXISTS events_user_word ON events (userId, targetLang, lemmaKey, ts DESC);
+
+CREATE TABLE IF NOT EXISTS word_states (
+  id             TEXT PRIMARY KEY,
+  userId         TEXT NOT NULL,
+  targetLang     TEXT NOT NULL,
+  lemmaKey       TEXT NOT NULL,
+  wordId         TEXT NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'unfamiliar',
+  timesMet       INTEGER NOT NULL DEFAULT 0,
+  unfamiliarity  INTEGER NOT NULL DEFAULT 0,
+  lookupCount    INTEGER NOT NULL DEFAULT 0,
+  exposureCount  INTEGER NOT NULL DEFAULT 0,
+  updatedAt      INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS word_states_identity ON word_states (userId, targetLang, lemmaKey);
+
+CREATE TABLE IF NOT EXISTS ability_states (
+  id          TEXT PRIMARY KEY,
+  userId      TEXT NOT NULL,
+  targetLang  TEXT NOT NULL,
+  theta       REAL NOT NULL,
+  se          REAL NOT NULL,
+  n           REAL NOT NULL DEFAULT 0,
+  level       TEXT,
+  levelLow    TEXT NOT NULL,
+  levelHigh   TEXT NOT NULL,
+  priorTheta  REAL,
+  updatedAt   INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ability_states_identity ON ability_states (userId, targetLang);
+
+CREATE TABLE IF NOT EXISTS placement_sessions (
+  id          TEXT PRIMARY KEY,
+  userId      TEXT NOT NULL,
+  targetLang  TEXT NOT NULL,
+  seed        INTEGER NOT NULL,
+  items       TEXT NOT NULL DEFAULT '[]',
+  responses   TEXT NOT NULL DEFAULT '[]',
+  completedAt INTEGER,
+  score       TEXT,
+  createdAt   INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS placement_recent ON placement_sessions (userId, targetLang, createdAt DESC);
+
+-- ── The pool ─────────────────────────────────────────────────────────────────
+
+-- Who has read what is in circulation.
+--
+-- A passage used to leave the pool the moment one reader took it, so the second reader cost a
+-- generation. Now a passage stays available until three people have read it: the pool is shared, and
+-- "depth" is per reader — what *you* have not read yet — so a new reader arrives to a full pool
+-- rather than to the wreckage of somebody else's press.
+CREATE TABLE IF NOT EXISTS pool_reads (
+  paragraphId TEXT NOT NULL,
+  userId      TEXT NOT NULL,
+  createdAt   INTEGER NOT NULL,
+  PRIMARY KEY (paragraphId, userId)
+);
+CREATE INDEX IF NOT EXISTS pool_reads_user ON pool_reads (userId);
+
+-- ── Stars ───────────────────────────────────────────────────────────────────
+
+-- A star belongs to a reader. It used to be a column on the passage, which was fine while there was
+-- one user and wrong the moment there were two: one person's star appeared on everyone's copy, and
+-- pruning treated a passage as protected for everybody because one person had kept it.
+CREATE TABLE IF NOT EXISTS paragraph_stars (
+  userId      TEXT NOT NULL,
+  paragraphId TEXT NOT NULL,
+  createdAt   INTEGER NOT NULL,
+  PRIMARY KEY (userId, paragraphId)
+);
+CREATE INDEX IF NOT EXISTS paragraph_stars_passage ON paragraph_stars (paragraphId);
+
+-- ── Calibration ──────────────────────────────────────────────────────────────
+
+-- What the reader said a passage's difficulty was, recorded beside what the app computed and what
+-- it believed about the reader at that moment. Three opinions of the same thing, kept together so
+-- they can be compared later: the app's band comes from per-word probabilities, the reader's comes
+-- from having read it, and the estimate comes from everything they have ever marked.
+CREATE TABLE IF NOT EXISTS difficulty_votes (
+  id           TEXT PRIMARY KEY,
+  userId       TEXT NOT NULL,
+  targetLang   TEXT NOT NULL,
+  paragraphId  TEXT NOT NULL,
+  -- The reader's verdict, in the same vocabulary as the computed band.
+  userBand     TEXT NOT NULL,
+  -- What the app computed, captured at the moment of the vote: recalibrating the model later must
+  -- not rewrite what it used to say.
+  computedBand TEXT NOT NULL,
+  unknownCount INTEGER NOT NULL DEFAULT 0,
+  coverage     REAL NOT NULL DEFAULT -1,
+  -- The ability estimate at the time, so a disagreement can be read against how sure the app was.
+  theta        REAL NOT NULL,
+  se           REAL NOT NULL,
+  n            REAL NOT NULL DEFAULT 0,
+  levelPoint   TEXT NOT NULL,
+  levelLow     TEXT NOT NULL,
+  levelHigh    TEXT NOT NULL,
+  -- 0 when the reader left the app's own band alone, 1 when they changed it. Leaving it alone is
+  -- agreement, and it has to be recorded: a record of only the changed answers would report a
+  -- disagreement rate of 100% by construction.
+  explicit     INTEGER NOT NULL DEFAULT 0,
+  createdAt    INTEGER NOT NULL
+);
+-- One opinion per passage per reader. Opening it again revises that opinion rather than adding a
+-- second, so the agreement rate is per passage and not per visit.
+CREATE UNIQUE INDEX IF NOT EXISTS difficulty_votes_identity ON difficulty_votes (userId, paragraphId);
+CREATE INDEX IF NOT EXISTS difficulty_votes_recent ON difficulty_votes (userId, createdAt DESC);
+CREATE INDEX IF NOT EXISTS difficulty_votes_agreement ON difficulty_votes (computedBand, userBand);

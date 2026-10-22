@@ -1,0 +1,14 @@
+# The API on Workers. Local development needs no account: `wrangler dev --local` runs a real D1
+# instance on disk, which is enough to prove the driver and the schema.
+name = "flowwing-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "flowwing-api"
+# Replaced by a real id after `wrangler d1 create flowwing-api`. Local dev ignores it.
+database_id = "00000000-0000-0000-0000-000000000000"
+
+[observability]
+enabled = false

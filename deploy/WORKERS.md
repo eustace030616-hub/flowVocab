@@ -62,6 +62,37 @@ passed into the driver per request. `wrangler.toml` with an `assets` binding for
 **D. Static export.** `output: "export"` in `next.config.ts`, the API route excluded from the export,
 and the page's fetches pointed at the Worker's URL. *Verifiable locally.*
 
+## What is already built and verified
+
+`worker/` holds the second half of the deployment:
+
+```
+  worker/wrangler.toml    the D1 binding and the assets slot
+  worker/schema.sql       the same schema, generated from SCHEMA_SQL (PRAGMA lines stripped)
+  worker/src/d1.ts        the four driver primitives over env.DB
+  worker/src/index.ts     Hono: /api/health and /api/pool, reading real tables
+```
+
+Verified locally with no Cloudflare account, `wrangler dev --local` against a local D1:
+
+    GET /api/health  → {"ok":true,"runtime":"workers","paragraphs":1}
+    GET /api/pool    → {"level":"B1","passages":[{"id":"p-d1-1",…}]}
+
+So the driver, the schema and the routing are proven. What is *not* portable yet is the rest of the
+store: 85 functions still call `node:sqlite` synchronously (stage A).
+
+### Two tooling traps, both hit
+
+**Wrangler does not run on this machine's `node`.** That binary is Electron-as-Node, and wrangler's
+argument parser reads the script path as a user argument — every command fails with
+`Unknown argument: …/wrangler-dist/cli.js`. Use `/opt/homebrew/bin/node` instead:
+
+    /opt/homebrew/bin/node ../node_modules/wrangler/bin/wrangler.js d1 execute flowwing-api --local --file=schema.sql
+
+**D1 refuses `PRAGMA`.** Applying the schema verbatim failed with `not authorized: SQLITE_AUTH`,
+because the dump included `PRAGMA journal_mode` and `foreign_keys` from `openDatabase`. The D1 copy
+of the schema has those lines stripped; D1 manages its own journal.
+
 ## Two things that will bite
 
 **Query count, not CPU.** The reader payload makes a handful of queries and the tokenizer looks up
