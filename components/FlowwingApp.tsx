@@ -1451,6 +1451,23 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                 {(me?.username ?? "?").slice(0, 1).toUpperCase()}
               </button>
 
+              {/* One button, and it names the other track rather than the current one: what a switch
+                  does is the only thing worth putting on it. */}
+              {me && me.tracks.length > 1 && (
+                <button
+                  onClick={() => {
+                    const other = me.tracks.find((track) => track.id !== me.track);
+                    if (!other) return;
+                    setUserOpen(false);
+                    void load(other.id);
+                  }}
+                  disabled={loading}
+                  className="self-start fv-touch h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 transition-colors rounded-none"
+                >
+                  ⇄ {me.tracks.find((track) => track.id !== me.track)?.label ?? t.tracks}
+                </button>
+              )}
+
               <section>
                 <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-1">{t.level}</p>
                 <p className="text-2xl font-medium text-zinc-900">

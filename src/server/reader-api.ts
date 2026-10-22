@@ -307,9 +307,10 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
       targetLang: track === "zh-en" ? "en" : "de",
       glossLang: track === "zh-en" ? "zh" : "en",
       uiLocale: user?.uiLocale ?? "en",
+      // `label` matches what the Pi sends, so the switch names the other track on both hosts.
       tracks: [
-        { id: "en-de", targetLang: "de", glossLang: "en" },
-        { id: "zh-en", targetLang: "en", glossLang: "zh" },
+        { id: "zh-en", targetLang: "en", glossLang: "zh", uiLocale: "zh", label: "English" },
+        { id: "en-de", targetLang: "de", glossLang: "en", uiLocale: "en", label: "German" },
       ],
       ability: ability.map((row) => ({
         ...row,
