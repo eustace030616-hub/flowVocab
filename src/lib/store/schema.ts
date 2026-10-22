@@ -269,6 +269,19 @@ CREATE TABLE IF NOT EXISTS placement_sessions (
 );
 CREATE INDEX IF NOT EXISTS placement_recent ON placement_sessions (userId, targetLang, createdAt DESC);
 
+-- ── Stars ───────────────────────────────────────────────────────────────────
+
+-- A star belongs to a reader. It used to be a column on the passage, which was fine while there was
+-- one user and wrong the moment there were two: one person's star appeared on everyone's copy, and
+-- pruning treated a passage as protected for everybody because one person had kept it.
+CREATE TABLE IF NOT EXISTS paragraph_stars (
+  userId      TEXT NOT NULL,
+  paragraphId TEXT NOT NULL,
+  createdAt   INTEGER NOT NULL,
+  PRIMARY KEY (userId, paragraphId)
+);
+CREATE INDEX IF NOT EXISTS paragraph_stars_passage ON paragraph_stars (paragraphId);
+
 -- ── Calibration ──────────────────────────────────────────────────────────────
 
 -- What the reader said a passage's difficulty was, recorded beside what the app computed and what

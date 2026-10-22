@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { isStarred, setStar, starredAmong } from "@/src/lib/store/stars";
 import { handle } from "hono/vercel";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 
@@ -64,7 +65,7 @@ import {
   type ParagraphRecord,
   paragraphById,
   pruneUnmarked,
-  setStarred,
+  legacyStarredIds,
   paragraphSummaries,
   paragraphsFor,
   nextBufferedParagraph,
@@ -429,6 +430,9 @@ async function readerPayload(
 
     return {
       ...paragraph,
+      // Overrides the legacy column of the same name: a star belongs to a reader, and spreading the
+      // row was what made one person's star visible to everybody.
+      starred: isStarred(userId, String(paragraph._id)),
       spans,
       marked,
       vocabulary,
@@ -654,12 +658,14 @@ app.post("/words/batch", async (c) => {
  * exempts a passage from being forgotten once it is old and unmarked.
  */
 app.post("/paragraphs/:id/star", async (c) => {
+  const user = c.get("user");
   const body = (await c.req.json().catch(() => ({}))) as { starred?: unknown };
   const id = c.req.param("id");
   const paragraph = paragraphById(id);
   if (!paragraph) return c.json({ error: "no such paragraph" }, 404);
-  const starred = typeof body.starred === "boolean" ? body.starred : !paragraph.starred;
-  setStarred(id, starred);
+  // A toggle is per reader now: "unstarred for me" is not a statement about anybody else.
+  const starred = typeof body.starred === "boolean" ? body.starred : !isStarred(user.userId, id);
+  setStar(user.userId, id, starred);
   return c.json({ ok: true, starred });
 });
 

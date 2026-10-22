@@ -76,7 +76,8 @@ export function toParagraph(row: ParagraphRow): ParagraphRecord {
     source: row.source as ParagraphRecord["source"],
     briefId: row.briefId,
     buffered: bool(row.buffered),
-    starred: bool(row.starred),
+    // Filled in by `paragraphSummaries`, which knows the reader.
+    starred: false,
     promptSnapshot: row.promptSnapshot,
     createdAt: row.createdAt,
   };
@@ -119,15 +120,19 @@ export function paragraphSummaries(targetLang: string, userId: string): Paragrap
     starred: number;
     markedCount: number;
   }>(
-    `SELECT p.id, p.title, p.topic, p.level, p.wordCount, p.source, p.createdAt, p.briefId, p.starred,
-            COALESCE(m.n, 0) AS markedCount
+    `SELECT p.id, p.title, p.topic, p.level, p.wordCount, p.source, p.createdAt, p.briefId,
+            COALESCE(m.n, 0) AS markedCount,
+            CASE WHEN s.paragraphId IS NULL THEN 0 ELSE 1 END AS starred
      FROM paragraphs p
      LEFT JOIN (
        SELECT paragraphId, COUNT(*) AS n FROM marks
        WHERE userId = ? AND status = 'marked' GROUP BY paragraphId
      ) m ON m.paragraphId = p.id
+     -- The reader's own stars, joined once for the whole list rather than per row.
+     LEFT JOIN paragraph_stars s ON s.paragraphId = p.id AND s.userId = ?
      WHERE p.targetLang = ?
      ORDER BY p.createdAt DESC`,
+    userId,
     userId,
     targetLang,
   ).map((row) => ({
@@ -265,8 +270,11 @@ export function countParagraphs(targetLang: string): number {
 
 // ── Starring, and what that is for ────────────────────────────────────────────────────────────
 
-export function setStarred(id: string, starred: boolean): void {
-  run("UPDATE paragraphs SET starred = ?, updatedAt = ? WHERE id = ?", flag(starred), nowMs(), id);
+/**
+ * Kept for the one-off migration of the old global column; new stars go through `stars.ts`.
+ */
+export function legacyStarredIds(): string[] {
+  return all<{ id: string }>("SELECT id FROM paragraphs WHERE starred = 1").map((row) => row.id);
 }
 
 /**
@@ -302,7 +310,8 @@ export const HISTORY_KEEP = 30;
 export function pruneUnmarked(targetLang: string, keep = HISTORY_KEEP): string[] {
   const candidates = all<{ id: string }>(
     `SELECT id FROM paragraphs
-     WHERE targetLang = ? AND starred = 0 AND buffered = 0
+     WHERE targetLang = ? AND buffered = 0
+       AND id NOT IN (SELECT paragraphId FROM paragraph_stars)
        AND id NOT IN (SELECT paragraphId FROM marks WHERE paragraphId IS NOT NULL)
        AND id NOT IN (
          SELECT id FROM paragraphs WHERE targetLang = ? ORDER BY createdAt DESC LIMIT ?
