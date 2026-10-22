@@ -22,6 +22,23 @@ const devOrigins = [
   .filter(Boolean);
 
 const nextConfig: NextConfig = {
+  /**
+   * The page must revalidate.
+   *
+   * Next prerenders the shell and marks it `s-maxage=31536000` — a year. A browser that honours
+   * that keeps the old HTML, which references old chunk hashes, which means a deploy is invisible
+   * on a device that has visited before. That is exactly how an auth gate shipped and did not
+   * appear: the phone was running last week's page.
+   */
+  async headers() {
+    return [
+      {
+        source: "/",
+        headers: [{ key: "Cache-Control", value: "no-store, must-revalidate" }],
+      },
+    ];
+  },
+
   // No `output: "standalone"`. It was set before the app was served from a checkout on the Pi, and it
   // makes `next start` refuse to run — "use node .next/standalone/server.js instead" — which then
   // needs `public/` and `.next/static` copied in by hand. The app runs from the repository on the Pi,
