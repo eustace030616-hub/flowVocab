@@ -130,6 +130,70 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
     return c.json({ ok: true });
   });
 
+  /**
+   * The pull side.
+   *
+   * The Pi cannot be called from here (it has no public endpoint), so it polls instead: it asks for
+   * evidence that has arrived since it last looked, folds it with its own estimator — the only place
+   * the full evidence model lives — and writes the resulting estimate back. Neither side depends on
+   * the other being awake: reading works with the Pi asleep, and the Pi catches up when it wakes.
+   *
+   * The cursor is D1's `rowid`, which is monotonic and immune to clock skew or back-dated events.
+   */
+  app.get("/service/events", async (c) => {
+    const since = Number(c.req.query("since") ?? 0);
+    const limit = Math.min(Number(c.req.query("limit") ?? 500), 1000);
+    const rows = await c.get("store").all<Record<string, unknown>>(
+      `SELECT rowid AS cursor, id, userId, targetLang, type, source, sessionId, paragraphId,
+              wordId, surface, lemmaKey, charStart, charEnd, items, ts
+         FROM events WHERE rowid > ? ORDER BY rowid ASC LIMIT ?`,
+      since,
+      limit,
+    );
+    return c.json({
+      events: rows,
+      cursor: rows.length ? Number(rows[rows.length - 1].cursor) : since,
+      more: rows.length === limit,
+    });
+  });
+
+  app.post("/service/ability", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      userId?: string;
+      targetLang?: string;
+      theta?: number;
+      se?: number;
+      n?: number;
+      level?: string | null;
+      levelLow?: string;
+      levelHigh?: string;
+      priorTheta?: number | null;
+    };
+    if (!body.userId || !body.targetLang || typeof body.theta !== "number") {
+      return c.json({ error: "userId, targetLang and theta are required" }, 400);
+    }
+    await c.get("store").run(
+      `INSERT INTO ability_states (id, userId, targetLang, theta, se, n, level, levelLow, levelHigh, priorTheta, updatedAt)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)
+       ON CONFLICT(userId, targetLang) DO UPDATE SET
+         theta = excluded.theta, se = excluded.se, n = excluded.n, level = excluded.level,
+         levelLow = excluded.levelLow, levelHigh = excluded.levelHigh,
+         priorTheta = excluded.priorTheta, updatedAt = excluded.updatedAt`,
+      `${body.userId}:${body.targetLang}`,
+      body.userId,
+      body.targetLang,
+      body.theta,
+      body.se ?? 1,
+      body.n ?? 0,
+      body.level ?? null,
+      body.levelLow ?? "A1",
+      body.levelHigh ?? "C2",
+      body.priorTheta ?? null,
+      Date.now(),
+    );
+    return c.json({ ok: true });
+  });
+
   app.use("*", async (c, next) => {
     const session = await sessionUser(getCookie(c, SESSION_COOKIE), c.get("store"));
     if (!session) return c.json({ error: "sign in required", signedIn: false }, 401);
@@ -326,6 +390,29 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
   app.post("/events", async (c) => {
     const store = c.get("store");
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+
+    // The evidence log, which is what the estimator folds — the mark row alone is the current state,
+    // not the history of how it got there.
+    await store.run(
+      `INSERT INTO events (id, userId, targetLang, type, source, sessionId, paragraphId, wordId,
+                           surface, lemmaKey, charStart, charEnd, items, ts)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      crypto.randomUUID(),
+      c.get("userId"),
+      String(body.targetLang ?? "de"),
+      String(body.type ?? "exposure"),
+      "web",
+      (body.sessionId as string | undefined) ?? null,
+      String(body.paragraphId ?? ""),
+      (body.wordId as string | undefined) ?? null,
+      (body.surface as string | undefined) ?? null,
+      (body.lemmaKey as string | undefined) ?? null,
+      body.charStart === undefined ? null : Number(body.charStart),
+      body.charEnd === undefined ? null : Number(body.charEnd),
+      body.items === undefined ? null : JSON.stringify(body.items),
+      Date.now(),
+    );
+
     if (body.type === "mark" || body.type === "unmark" || body.type === "lookup") {
       await store.run(
         `INSERT INTO marks (id, userId, targetLang, paragraphId, wordId, surface, lemmaKey, charStart, charEnd,
