@@ -1,0 +1,14 @@
+{
+  "name": "Flowwing",
+  "short_name": "Flowwing",
+  "description": "Read passages pitched at your level, and mark the words you do not know.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#fafafa",
+  "theme_color": "#fafafa",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

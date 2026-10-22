@@ -27,7 +27,8 @@
     "qa:paragraphs": "tsx src/scripts/qa/paragraphs.ts",
     "compile:german": "tsx src/scripts/morphology/compile-german.ts",
     "migrate:mongo-to-sqlite": "tsx src/scripts/migrate/mongo-to-sqlite.ts",
-    "serve": "next start -H 0.0.0.0 -p 3100"
+    "serve": "next start -H 0.0.0.0 -p 3100",
+    "build:web": "vite build --config web/vite.config.ts && node -e \"require('fs').cpSync('web/public','worker/public',{recursive:true})\""
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",
@@ -39,14 +40,17 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.1.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.12",
     "tailwindcss": "^4",
     "tsx": "^4.19.4",
     "typescript": "^5",
-    "wrangler": "^3.114.17"
+    "vite": "^8.3.5",
+    "wrangler": "^4.152.0"
   }
 }
