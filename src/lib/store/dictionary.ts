@@ -6,6 +6,7 @@
  * lookups and nothing more elaborate.
  */
 
+import type { StoreDriver } from "./driver";
 import { all, bool, flag, get, json, newId, nowMs, placeholders, run, transaction } from "./db";
 
 export interface WordRecord {
@@ -201,12 +202,12 @@ export function wordById(id: string): WordRecord | null {
 }
 
 /** Insert unless the identity already exists, in which case return what is there. */
-export function ensureWord(word: Omit<WordRecord, "_id"> & { _id?: string }): WordRecord {
+export async function ensureWord(word: Omit<WordRecord, "_id"> & { _id?: string }, store: StoreDriver): Promise<WordRecord> {
   const existing = wordByIdentity(word.targetLang, word.lemmaKey, word.pos);
   if (existing) return existing;
 
   const id = word._id ?? newId();
-  run(
+  await store.run(
     `INSERT INTO words (id, targetLang, lemmaKey, lemma, pos, origin, surfaceForms, level, levelEstimated,
                         levelSource, difficulty, frequency, article, plural, cognateWithEn, falseFriend, createdAt)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
@@ -237,9 +238,9 @@ export function ensureWord(word: Omit<WordRecord, "_id"> & { _id?: string }): Wo
  * `$setOnInsert` semantics for `surfaceForms`: forms accumulate across imports, they are not replaced
  * by whichever import ran last.
  */
-export function upsertImportedWord(word: Omit<WordRecord, "_id"> & { _id?: string }): string {
+export async function upsertImportedWord(word: Omit<WordRecord, "_id"> & { _id?: string }, store: StoreDriver): Promise<string> {
   const id = word._id ?? newId();
-  run(
+  await store.run(
     `INSERT INTO words (id, targetLang, lemmaKey, lemma, pos, origin, surfaceForms, level, levelEstimated,
                         levelSource, difficulty, frequency, article, plural, cognateWithEn, falseFriend, createdAt)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
@@ -282,8 +283,8 @@ export function upsertImportedWord(word: Omit<WordRecord, "_id"> & { _id?: strin
   return id;
 }
 
-export function addSurfaceForm(id: string, form: string): void {
-  run(
+export async function addSurfaceForm(id: string, form: string, store: StoreDriver): Promise<void> {
+  await store.run(
     `UPDATE words SET surfaceForms = (
        SELECT json_group_array(DISTINCT value) FROM (
          SELECT value FROM json_each(words.surfaceForms) UNION SELECT ?
@@ -422,8 +423,8 @@ export function countGlossedWords(targetLang: string, lang: string): number {
   );
 }
 
-export function upsertGloss(gloss: Omit<GlossRecord, "_id">): void {
-  run(
+export async function upsertGloss(gloss: Omit<GlossRecord, "_id">, store: StoreDriver): Promise<void> {
+  await store.run(
     `INSERT INTO glosses (id, targetLang, lemmaKey, pos, lang, text, sense, termPos, source, license, generated, rank, weight, createdAt)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON CONFLICT(targetLang, lemmaKey, pos, lang, source, text) DO UPDATE SET
@@ -445,15 +446,15 @@ export function upsertGloss(gloss: Omit<GlossRecord, "_id">): void {
   );
 }
 
-export function deleteGlossesBySource(source: string): number {
+export async function deleteGlossesBySource(source: string, store: StoreDriver): Promise<number> {
   const before = Number(get<{ n: number }>("SELECT COUNT(*) AS n FROM glosses WHERE source = ?", source)?.n ?? 0);
-  run("DELETE FROM glosses WHERE source = ?", source);
+  await store.run("DELETE FROM glosses WHERE source = ?", source);
   return before;
 }
 
-export function deleteWordsBySources(sources: string[]): void {
+export async function deleteWordsBySources(sources: string[], store: StoreDriver): Promise<void> {
   if (sources.length === 0) return;
-  run(`DELETE FROM glosses WHERE source IN (${placeholders(sources.length)})`, ...sources);
+  await store.run(`DELETE FROM glosses WHERE source IN (${placeholders(sources.length)})`, ...sources);
 }
 
 // ── Compiled morphology ───────────────────────────────────────────────────────
@@ -505,8 +506,8 @@ export function countInflections(targetLang: string): number {
   return Number(get<{ n: number }>("SELECT COUNT(*) AS n FROM inflections WHERE targetLang = ?", targetLang)?.n ?? 0);
 }
 
-export function upsertInflection(row: Omit<InflectionRecord, "_id">): void {
-  run(
+export async function upsertInflection(row: Omit<InflectionRecord, "_id">, store: StoreDriver): Promise<void> {
+  await store.run(
     `INSERT INTO inflections (id, targetLang, form, base, baseLemmaKey, pos, source, license)
      VALUES (?,?,?,?,?,?,?,?)
      ON CONFLICT(targetLang, form, baseLemmaKey, pos, source) DO UPDATE SET base = excluded.base`,
@@ -521,15 +522,15 @@ export function upsertInflection(row: Omit<InflectionRecord, "_id">): void {
   );
 }
 
-export function deleteInflectionsBySource(source: string): void {
-  run("DELETE FROM inflections WHERE source = ?", source);
+export async function deleteInflectionsBySource(source: string, store: StoreDriver): Promise<void> {
+  await store.run("DELETE FROM inflections WHERE source = ?", source);
 }
 
-export function replaceSeparations(targetLang: string, rows: Array<Omit<SeparationRecord, "_id">>): void {
-  transaction(() => {
-    run("DELETE FROM separations WHERE targetLang = ?", targetLang);
+export async function replaceSeparations(targetLang: string, rows: Array<Omit<SeparationRecord, "_id">>, store: StoreDriver): Promise<void> {
+  await store.transaction(async () => {
+    await store.run("DELETE FROM separations WHERE targetLang = ?", targetLang);
     for (const row of rows) {
-      run(
+      await store.run(
         `INSERT INTO separations (id, targetLang, particle, verb, merged, source) VALUES (?,?,?,?,?,?)
          ON CONFLICT(targetLang, particle, verb) DO UPDATE SET merged = excluded.merged`,
         newId(),
@@ -543,11 +544,11 @@ export function replaceSeparations(targetLang: string, rows: Array<Omit<Separati
   });
 }
 
-export function replaceCompounds(targetLang: string, rows: Array<Omit<CompoundRecord, "_id">>): void {
-  transaction(() => {
-    run("DELETE FROM compounds WHERE targetLang = ?", targetLang);
+export async function replaceCompounds(targetLang: string, rows: Array<Omit<CompoundRecord, "_id">>, store: StoreDriver): Promise<void> {
+  await store.transaction(async () => {
+    await store.run("DELETE FROM compounds WHERE targetLang = ?", targetLang);
     for (const row of rows) {
-      run(
+      await store.run(
         `INSERT INTO compounds (id, targetLang, form, parts, source) VALUES (?,?,?,?,?)
          ON CONFLICT(targetLang, form) DO UPDATE SET parts = excluded.parts`,
         newId(),
@@ -616,8 +617,8 @@ export function allProvenance(): ProvenanceRecord[] {
   }));
 }
 
-export function upsertProvenance(row: ProvenanceRecord): void {
-  run(
+export async function upsertProvenance(row: ProvenanceRecord, store: StoreDriver): Promise<void> {
+  await store.run(
     `INSERT INTO provenance (id, dataset, title, url, license, licenseUrl, attribution, commercialUse,
                              shareAlike, copyleft, offlineOnly, retrievedAt, rowCount, contributesTo, notes)
      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)

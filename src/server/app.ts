@@ -571,7 +571,7 @@ app.post("/words/mark", async (c) => {
   if (!word) {
     // Insert-unless-present, which is the same race-safe shape the upsert had: a concurrent mark for
     // the same item finds the winner rather than creating a second row.
-    word = ensureWord({
+    word = await ensureWord({
       targetLang,
       lemmaKey,
       pos,
@@ -583,9 +583,9 @@ app.post("/words/mark", async (c) => {
       levelSource: null,
       difficulty: -1,
       frequency: {},
-    });
+    }, c.get("store"));
   } else if (body.surface && !word.surfaceForms.includes(body.surface)) {
-    addSurfaceForm(word._id, body.surface);
+    await addSurfaceForm(word._id, body.surface, c.get("store"));
   }
 
   upsertMark({
