@@ -194,6 +194,79 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
     return c.json({ ok: true });
   });
 
+  app.post("/service/bands", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      rows?: Array<{ userId?: string; paragraphId?: string; targetLang?: string; unknownCount?: number; coverage?: number }>;
+    };
+    let written = 0;
+    for (const row of body.rows ?? []) {
+      if (!row.userId || !row.paragraphId || typeof row.unknownCount !== "number") continue;
+      await c.get("store").run(
+        `INSERT INTO reader_bands (userId, paragraphId, targetLang, unknownCount, coverage, computedAt)
+         VALUES (?,?,?,?,?,?)
+         ON CONFLICT(userId, paragraphId) DO UPDATE SET
+           unknownCount = excluded.unknownCount, coverage = excluded.coverage,
+           targetLang = excluded.targetLang, computedAt = excluded.computedAt`,
+        row.userId,
+        row.paragraphId,
+        row.targetLang ?? "de",
+        row.unknownCount,
+        row.coverage ?? 0,
+        Date.now(),
+      );
+      written += 1;
+    }
+    return c.json({ ok: true, written });
+  });
+
+  /** How deep the stock is per language and level — what the Pi asks before generating. */
+  app.get("/service/pool", async (c) => {
+    const rows = await c.get("store").all<{ targetLang: string; level: string | null; depth: number }>(
+      `SELECT p.targetLang AS targetLang, p.level AS level, COUNT(*) AS depth
+         FROM paragraphs p
+        WHERE p.buffered = 1
+          AND (SELECT COUNT(*) FROM pool_reads r WHERE r.paragraphId = p.id) < 3
+        GROUP BY p.targetLang, p.level`,
+    );
+    return c.json({ depth: rows });
+  });
+
+  /** A finished passage and its package, written by the Pi. */
+  app.post("/service/passages", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      paragraph?: Record<string, unknown>;
+      package?: { version: number; spans: unknown[]; vocabulary: unknown };
+    };
+    const p = body.paragraph;
+    if (!p?.id || !body.package) return c.json({ error: "paragraph and package are required" }, 400);
+
+    const columns = Object.keys(p);
+    await c.get("store").run(
+      `INSERT OR REPLACE INTO paragraphs (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`,
+      ...columns.map((column) => p[column] as never),
+    );
+
+    const json = JSON.stringify(body.package);
+    const CHUNK = 12_000;
+    await c.get("store").run("DELETE FROM package_chunks WHERE paragraphId = ?", String(p.id));
+    for (let offset = 0, idx = 0; offset < json.length; offset += CHUNK, idx += 1) {
+      await c.get("store").run(
+        "INSERT INTO package_chunks (paragraphId, idx, data) VALUES (?,?,?)",
+        String(p.id),
+        idx,
+        json.slice(offset, offset + CHUNK),
+      );
+    }
+    await c.get("store").run(
+      "INSERT OR REPLACE INTO passage_packages (paragraphId, version, data, createdAt) VALUES (?,?,?,?)",
+      String(p.id),
+      body.package.version,
+      "",
+      Date.now(),
+    );
+    return c.json({ ok: true }, 201);
+  });
+
   app.use("*", async (c, next) => {
     const session = await sessionUser(getCookie(c, SESSION_COOKIE), c.get("store"));
     if (!session) return c.json({ error: "sign in required", signedIn: false }, 401);
@@ -326,6 +399,14 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
       (key: string) => probabilities.get(key) ?? 1,
     );
 
+    // Prefer the Pi's folding of this learner's evidence; the model prediction above is only the
+    // stand-in until the next pull writes the real answer.
+    const estimated = await store.get<{ unknownCount: number; coverage: number }>(
+      "SELECT unknownCount, coverage FROM reader_bands WHERE userId = ? AND paragraphId = ?",
+      userId,
+      id,
+    );
+
     const star = await store.get("SELECT 1 AS x FROM paragraph_stars WHERE userId = ? AND paragraphId = ?", userId, id);
     const vote = await store.get<{ userBand: string }>(
       "SELECT userBand FROM difficulty_votes WHERE userId = ? AND paragraphId = ? ORDER BY createdAt DESC LIMIT 1",
@@ -347,8 +428,16 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
             glossTermPos: null, glossPos: null, meanings: entry.gloss ? [{ pos: null, termPos: null, text: entry.gloss, source: null }] : [] },
         ]),
       ),
-      unknown: { count: unknown.count, band: passageBand(unknown.count) },
-      coverage: { coverage: coverage.coverage, verdict: coverage.verdict, unknownIn: coverage.unknownIn },
+      unknown: {
+        count: estimated?.unknownCount ?? unknown.count,
+        band: passageBand(estimated?.unknownCount ?? unknown.count),
+        source: estimated ? "pi" : "model",
+      },
+      coverage: {
+        coverage: estimated?.coverage ?? coverage.coverage,
+        verdict: coverage.verdict,
+        unknownIn: coverage.unknownIn,
+      },
       known: { measured: (ability?.n ?? 0) > 0, basis: ability ?? null },
       keyOf: undefined,
     });

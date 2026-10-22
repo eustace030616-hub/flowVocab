@@ -16,6 +16,14 @@ import path from "node:path";
 
 import { all, get, openDatabase, run } from "../../lib/store/db";
 import { recomputeAllAbilities } from "../../lib/learner/profile";
+import { knownProbabilities } from "../../lib/learner/reading";
+import { unknownWords } from "../../lib/learner/band";
+import { coverageOf } from "../../lib/learner/coverage";
+import { packageFor } from "../../lib/content/pack";
+import { generateOne, importParagraph } from "../generate/generate";
+import { BRIEFS, briefIdOf } from "../generate/briefs";
+import { deepseekProvider } from "../generate/provider";
+import type { CefrLevel, TargetLang } from "../../lib/lang";
 import { loadEnv } from "../env";
 
 const CURSOR = path.resolve(process.cwd(), "data/d1-cursor.json");
@@ -103,7 +111,110 @@ function importEvent(event: RemoteEvent): void {
   );
 }
 
-async function onePass(config: ServiceConfig, drain: boolean): Promise<{ events: number; estimates: number }> {
+/**
+ * Write the Pi's reading of each passage these learners touched.
+ *
+ * The unknown count is a function of the whole evidence, and this is the only place that can fold it.
+ * Until this runs for a passage, the reader shows the model prediction and says so.
+ */
+async function pushBands(config: ServiceConfig, users: Set<string>): Promise<number> {
+  const rows: Array<Record<string, unknown>> = [];
+  for (const userId of users) {
+    const read = all<{ paragraphId: string; targetLang: string }>(
+      `SELECT DISTINCT paragraphId, targetLang FROM events
+        WHERE userId = ? AND paragraphId IS NOT NULL AND paragraphId <> ''`,
+      userId,
+    );
+    for (const item of read) {
+      const pack = packageFor(item.paragraphId);
+      if (!pack) continue;
+      const spans = pack.spans as unknown as Parameters<typeof unknownWords>[0];
+      const keys = [...new Set(Object.keys(pack.vocabulary))];
+      const known = await knownProbabilities(userId, item.targetLang as TargetLang, keys, {
+        difficulties: new Map(Object.entries(pack.vocabulary).map(([key, entry]) => [key, entry.difficulty])),
+      });
+      const marked = new Set(
+        all<{ lemmaKey: string }>("SELECT lemmaKey FROM marks WHERE userId = ? AND paragraphId = ?", userId, item.paragraphId).map(
+          (m) => m.lemmaKey,
+        ),
+      );
+      const unknown = unknownWords(spans, {
+        pKnownOf: (key: string) => known.probabilities.get(key),
+        marked: (span: { lemmaKey: string }) => marked.has(span.lemmaKey),
+      } as never);
+      const coverage = coverageOf(spans, (key: string) => known.probabilities.get(key) ?? 1);
+      rows.push({
+        userId,
+        paragraphId: item.paragraphId,
+        targetLang: item.targetLang,
+        unknownCount: unknown.count,
+        coverage: coverage.coverage,
+      });
+    }
+  }
+  if (rows.length === 0) return 0;
+  await call(config, "/bands", { method: "POST", body: JSON.stringify({ rows }) });
+  return rows.length;
+}
+
+/**
+ * Fill the pool: when the stock for a language and level is shallow, write one more passage and push it.
+ *
+ * The Pi generates because it has the vocabulary and the rubric; Cloudflare stores because it serves.
+ * A failure is not fatal — the next tick tries again, and reading never waits on it.
+ */
+async function fillPool(config: ServiceConfig): Promise<number> {
+  const target = Number(process.env.FLOWWING_POOL_TARGET ?? 3);
+  const all: Array<[TargetLang, CefrLevel]> = [
+    ["de", "A2"], ["de", "B1"], ["de", "B2"],
+    ["en", "A2"], ["en", "B1"], ["en", "B2"],
+  ];
+  // `FLOWWING_POOL_LEVELS=de:B2` narrows the fill, which is what a test wants and a nightly run does not.
+  const only = process.env.FLOWWING_POOL_LEVELS?.split(",").map((entry) => entry.trim()).filter(Boolean);
+  const levels = only ? all.filter(([lang, level]) => only.includes(`${lang}:${level}`)) : all;
+
+  const remote = await call<{ depth: Array<{ targetLang: string; level: string | null; depth: number }> }>(config, "/pool");
+  let filled = 0;
+
+  for (const [targetLang, level] of levels) {
+    const depth = remote.depth.find((row) => row.targetLang === targetLang && row.level === level)?.depth ?? 0;
+    if (depth >= target) continue;
+
+    const spec = BRIEFS.find((brief) => brief.targetLang === targetLang && brief.level === level);
+    if (!spec) continue;
+
+    const provider = deepseekProvider();
+    const outcome = await generateOne(provider, {
+      ...spec,
+      // A fresh identity, so this adds to the stock instead of replacing the brief it came from.
+      briefId: `${briefIdOf(spec)}:pool:${Date.now()}`,
+    });
+    if (!outcome.passed || !outcome.content) {
+      // Say why, rather than letting `importParagraph` report "nothing to import" and hide the reason.
+      console.warn(`  pool: ${targetLang}/${level} not accepted — ${outcome.issues.slice(0, 2).join("; ") || "no content"}`);
+      continue;
+    }
+    const paragraphId = await importParagraph(outcome);
+    const pack = packageFor(paragraphId);
+    const paragraph = get<Record<string, unknown>>("SELECT * FROM paragraphs WHERE id = ?", paragraphId);
+    if (!pack || !paragraph) continue;
+    // A pooled passage is *stock*: it counts toward the depth the next tick measures. Without this the
+    // fill would generate forever and the pool would never appear to fill.
+    run("UPDATE paragraphs SET buffered = 1 WHERE id = ?", paragraphId);
+    await call(config, "/passages", {
+      method: "POST",
+      body: JSON.stringify({ paragraph: { ...paragraph, buffered: 1 }, package: pack }),
+    });
+    filled += 1;
+    console.log(`  pool: wrote ${targetLang}/${level} ${String(paragraph.title ?? "")} (was ${depth}/${target})`);
+  }
+  return filled;
+}
+
+async function onePass(
+  config: ServiceConfig,
+  drain: boolean,
+): Promise<{ events: number; estimates: number; bands: number; filled: number }> {
   let cursor = await readCursor();
   let imported = 0;
   const touched = new Set<string>();
@@ -145,11 +256,13 @@ async function onePass(config: ServiceConfig, drain: boolean): Promise<{ events:
     }
   }
 
-  return { events: imported, estimates };
+  const bands = await pushBands(config, touched);
+  const filled = await fillPool(config);
+  return { events: imported, estimates, bands, filled };
 }
 
 /** One pass over the queue, for callers that already have a process and a config. */
-export async function onePullPass(): Promise<{ events: number; estimates: number }> {
+export async function onePullPass(): Promise<{ events: number; estimates: number; bands: number; filled: number }> {
   const env = loadEnv();
   for (const [key, value] of Object.entries(env)) {
     if (process.env[key] === undefined) process.env[key] = value;
@@ -169,8 +282,8 @@ async function main(): Promise<void> {
   const started = Date.now();
   const result = await onePass(config, drain);
   console.log(
-    `pull: ${result.events} event${result.events === 1 ? "" : "s"} · ` +
-      `${result.estimates} estimate${result.estimates === 1 ? "" : "s"} written back · ` +
+    `pull: ${result.events} events · ${result.estimates} estimates · ` +
+      `${result.bands} bands · ${result.filled} passages · ` +
       `cursor ${await readCursor()} · ${Date.now() - started}ms`,
   );
 }

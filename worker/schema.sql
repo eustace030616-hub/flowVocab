@@ -269,6 +269,21 @@ CREATE TABLE IF NOT EXISTS passage_packages (
   createdAt   INTEGER NOT NULL
 );
 
+-- The Pi's reading of a passage, for one learner.
+--
+-- The unknown count is a function of this learner's whole evidence, and only the Pi can fold that. So
+-- the Pi computes it when it pulls and writes the answer here; the reader serves this row and falls
+-- back to the model prediction until it exists. One estimator, one number.
+CREATE TABLE IF NOT EXISTS reader_bands (
+  userId      TEXT NOT NULL,
+  paragraphId TEXT NOT NULL,
+  targetLang  TEXT NOT NULL,
+  unknownCount INTEGER NOT NULL,
+  coverage    REAL NOT NULL,
+  computedAt  INTEGER NOT NULL,
+  PRIMARY KEY (userId, paragraphId)
+);
+
 -- ── The pool ─────────────────────────────────────────────────────────────────
 
 -- Who has read what is in circulation.
