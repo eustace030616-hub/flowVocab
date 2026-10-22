@@ -1,12 +1,27 @@
 import { Hono } from "hono";
 import { handle } from "hono/vercel";
-import { getCookie, setCookie } from "hono/cookie";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 
 import { Paragraph } from "@/src/models/Paragraph";
 import { Word } from "@/src/models/Word";
 import { Mark } from "@/src/models/Mark";
 import { Provenance } from "@/src/models/Provenance";
-import { glossLangFor, isTargetLang, isTrackId, TRACKS, type TargetLang, type GlossLang } from "@/src/lib/lang";
+import {
+  glossLangFor,
+  isTargetLang,
+  isTrackId,
+  TRACKS,
+  type TargetLang,
+  type GlossLang,
+  type TrackId,
+} from "@/src/lib/lang";
+import {
+  SESSION_COOKIE,
+  endSession,
+  login,
+  register,
+  sessionUser,
+} from "@/src/lib/learner/auth";
 import {
   resolveUser,
   setTrack,
@@ -86,7 +101,7 @@ import type { CefrLevel } from "@/src/lib/lang";
 const env = loadEnv();
 import { wordSpans, TOKENIZER_VERSION } from "@/src/lib/tokenize";
 
-type Variables = { user: ResolvedUser };
+type Variables = { user: ResolvedUser; username: string | null };
 
 const app = new Hono<{ Variables: Variables }>().basePath("/api");
 
@@ -106,22 +121,77 @@ const EVENT_TYPES = [
  * and write per-user, which is the actual requirement. Swapping in real auth means changing
  * `resolveUser` only.
  */
+/**
+ * Who is asking, and whether they are allowed to.
+ *
+ * A session cookie is the identity. The old anonymous cookie still identifies a user who has not
+ * registered yet — it is what their history is attached to — but it is no longer sufficient on its
+ * own: without a session, everything except the auth routes answers 401, and the page shows the
+ * gate. That keeps the first person's existing data without letting anyone in by looking like them.
+ */
 app.use("*", async (c, next) => {
-  // No database handshake: SQLite is a file, opened on first use by the store. The middleware that
-  // used to connect to MongoDB on every request is gone with the server it connected to.
-  const existing = getCookie(c, USER_COOKIE);
-  const { user, created } = await resolveUser(existing);
-  if (created) {
-    setCookie(c, USER_COOKIE, user.userId, {
-      httpOnly: true,
-      sameSite: "Lax",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 365,
-    });
-  }
+  const session = sessionUser(getCookie(c, SESSION_COOKIE));
+  // `resolveUser` returns `{ user, created }`; the identity is its `.user`.
+  const legacyCookie = getCookie(c, USER_COOKIE);
+  const legacy = session || !legacyCookie ? null : (await resolveUser(legacyCookie)).user;
+  const user = session
+    ? { userId: session.userId, track: session.track as TrackId }
+    : (legacy ?? { userId: "", track: TRACKS["en-de"].id as TrackId });
+
   c.set("user", user);
+  c.set("username", session?.username ?? null);
+
+  // `c.req.path` carries the `/api` base path, so the comparison is made without it.
+  const path = c.req.path.replace(/^\/api(?=\/|$)/, "");
+  const open = path === "/auth" || path.startsWith("/auth/") || c.req.method === "OPTIONS";
+  if (!session && !legacy && !open) {
+    return c.json({ error: "sign in required", signedIn: false }, 401);
+  }
   await next();
 });
+
+app.post("/auth/register", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
+  const result = register(String(body.username ?? ""), String(body.password ?? ""), getCookie(c, USER_COOKIE));
+  if (!result.ok) {
+    return c.json({ error: result.error === "taken" ? "that name is taken" : "username and password are required" }, 409);
+  }
+  setCookie(c, SESSION_COOKIE, result.token, cookieOptions());
+  return c.json({ ok: true, username: result.user.username }, 201);
+});
+
+app.post("/auth/login", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
+  const result = login(String(body.username ?? ""), String(body.password ?? ""));
+  if (!result.ok) return c.json({ error: "wrong name or password" }, 401);
+  setCookie(c, SESSION_COOKIE, result.token, cookieOptions());
+  return c.json({ ok: true, username: result.user.username });
+});
+
+app.post("/auth/logout", async (c) => {
+  endSession(getCookie(c, SESSION_COOKIE));
+  deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  return c.json({ ok: true });
+});
+
+app.get("/auth/me", async (c) => {
+  const session = sessionUser(getCookie(c, SESSION_COOKIE));
+  return c.json({ signedIn: Boolean(session), username: session?.username ?? null });
+});
+
+/** One place for the cookie's flags, so a session cookie cannot drift from the others. */
+function cookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "Lax" as const,
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+    // Off by default: this app is served over plain HTTP behind `tailscale serve`, and a `secure`
+    // cookie is not sent back over HTTP, so the session would silently fail to stick. Set
+    // FLOWWING_SECURE_COOKIES=1 once it is behind real HTTPS.
+    secure: process.env.FLOWWING_SECURE_COOKIES === "1",
+  };
+}
 
 /** Which target language a request concerns: explicit value if valid, else the user's track. */
 function targetLangFor(

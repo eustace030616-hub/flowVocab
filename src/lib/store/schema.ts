@@ -163,11 +163,27 @@ CREATE INDEX IF NOT EXISTS paragraphs_buffer ON paragraphs (targetLang, buffered
 
 -- ── Learner ───────────────────────────────────────────────────────────────────
 
+CREATE TABLE IF NOT EXISTS sessions (
+  id        TEXT PRIMARY KEY,
+  userId    TEXT NOT NULL,
+  -- The token itself is never stored: a leak of this table must not be a set of usable sessions.
+  tokenHash TEXT NOT NULL UNIQUE,
+  createdAt INTEGER NOT NULL,
+  expiresAt INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS sessions_user ON sessions (userId);
+
 CREATE TABLE IF NOT EXISTS users (
   id         TEXT PRIMARY KEY,
   userId     TEXT NOT NULL UNIQUE,
   track      TEXT NOT NULL,
   uiLocale   TEXT NOT NULL DEFAULT 'en',
+  -- Dev-stage auth: any string is a valid username, any string is a valid password. What is *not*
+  -- negotiable is how the password is stored — scrypt with a per-user salt, so a leaked file is not
+  -- a leaked set of passwords even in a dev database.
+  username     TEXT UNIQUE,
+  passwordHash TEXT,
+  passwordSalt TEXT,
   createdAt  INTEGER NOT NULL,
   updatedAt  INTEGER NOT NULL
 );

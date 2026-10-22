@@ -49,6 +49,9 @@ export function nowMs(): number {
 const COLUMN_MIGRATIONS: Array<{ table: string; column: string; ddl: string }> = [
   { table: "paragraphs", column: "starred", ddl: "INTEGER NOT NULL DEFAULT 0" },
   { table: "difficulty_votes", column: "explicit", ddl: "INTEGER NOT NULL DEFAULT 0" },
+  { table: "users", column: "username", ddl: "TEXT" },
+  { table: "users", column: "passwordHash", ddl: "TEXT" },
+  { table: "users", column: "passwordSalt", ddl: "TEXT" },
 ];
 
 function applyColumnMigrations(handle: DatabaseSync): void {

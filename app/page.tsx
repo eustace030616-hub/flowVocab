@@ -140,6 +140,15 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     placementKeepGoing: "Keep going for a more accurate estimate",
     placementAnswerMore: "Answer more to get an estimate",
     appSays: "app",
+    authTitle: "Sign in",
+    authHint: "Any name, any password — this is a dev build.",
+    authName: "Name",
+    authPassword: "Password",
+    authIn: "Sign in",
+    authCreate: "Create account",
+    authSignOut: "Sign out",
+    authFailed: "Wrong name or password.",
+    authTaken: "That name is taken.",
     difficultyVote: "How hard was this for you? Stored beside the app's answer, to calibrate it.",
     older: "Older",
     newer: "Newer",
@@ -221,6 +230,15 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     placementKeepGoing: "继续作答，结果会更准确",
     placementAnswerMore: "继续作答以得到估算",
     appSays: "应用",
+    authTitle: "登录",
+    authHint: "任意名称、任意密码 — 这是开发版本。",
+    authName: "名称",
+    authPassword: "密码",
+    authIn: "登录",
+    authCreate: "创建账号",
+    authSignOut: "退出",
+    authFailed: "名称或密码错误。",
+    authTaken: "该名称已被占用。",
     difficultyVote: "这段对你来说有多难？你的回答会与应用的结果一起保存，用于校准。",
     older: "更早",
     newer: "更新",
@@ -376,6 +394,17 @@ export default function Home() {
    * better than an empty one.
    */
   const [loading, setLoading] = useState(true);
+  /**
+   * Whether a session exists.
+   *
+   * `null` while unknown, so the first paint is neither the app nor the gate: showing the gate to
+   * somebody who is signed in would flash a login form at them on every reload.
+   */
+  const [signedIn, setSignedIn] = useState<boolean | null>(null);
+  const [authName, setAuthName] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
   const [paragraph, setParagraph] = useState<Paragraph | null>(null);
   const [marked, setMarked] = useState<Set<number>>(new Set());
   /** Whether the open passage is kept on purpose. Mirrors `paragraph.starred`, and moves on tap. */
@@ -592,6 +621,11 @@ export default function Home() {
     setLoading(true);
 
     const meRes = await fetch("/api/me");
+    if (meRes.status === 401) {
+      setSignedIn(false);
+      setLoading(false);
+      return;
+    }
     let meData = await readJson<Me>(meRes);
     if (!meData || !Array.isArray(meData.tracks)) {
       setMe(null);
@@ -614,6 +648,7 @@ export default function Home() {
       // requiring it to also carry `tracks` silently left the UI on the old track.
       if (patched?.targetLang) meData = { ...meData, ...patched } as Me;
     }
+    setSignedIn(true);
     setMe(meData);
 
     const res = await fetch(`/api/paragraphs?targetLang=${meData.targetLang}&summary=1`);
@@ -764,6 +799,41 @@ export default function Home() {
     apply();
     query.addEventListener("change", apply);
     return () => query.removeEventListener("change", apply);
+  }, []);
+
+  /**
+   * Sign in, or create an account.
+   *
+   * Dev stage: no rules on either field. The server still hashes the password with scrypt, because
+   * skipping that is a habit worth never forming, and the same door will be shipped later.
+   */
+  const authenticate = useCallback(
+    async (mode: "login" | "register") => {
+      setAuthBusy(true);
+      setAuthError(null);
+      const res = await fetch(`/api/auth/${mode}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: authName, password: authPassword }),
+      });
+      setAuthBusy(false);
+      if (!res.ok) {
+        setAuthError(res.status === 409 ? t.authTaken : t.authFailed);
+        return;
+      }
+      setAuthPassword("");
+      setSignedIn(true);
+      await load();
+    },
+    [authName, authPassword, load, t.authFailed, t.authTaken],
+  );
+
+  const signOut = useCallback(async () => {
+    await fetch("/api/auth/logout", { method: "POST" });
+    setSignedIn(false);
+    setMe(null);
+    setParagraph(null);
+    setHistory([]);
   }, []);
 
   /** Record the reader's verdict beside what the app computed. */
@@ -1850,6 +1920,13 @@ export default function Home() {
             </div>
             {/* History, not generation: the way onward is the button in the header now, and this
                 is how you get back to something you read before. */}
+            <button
+              onClick={() => void signOut()}
+              className="fv-touch h-8 px-2 text-xs font-medium text-zinc-400 hover:text-zinc-700"
+              title={t.authSignOut}
+            >
+              {t.authSignOut}
+            </button>
             <button
               onClick={() => setHistoryOpen(true)}
               disabled={!me}
