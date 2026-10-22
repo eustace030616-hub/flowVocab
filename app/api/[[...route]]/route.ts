@@ -828,19 +828,6 @@ app.post("/events", async (c) => {
  * Slow on purpose: one to four model calls, so the client shows a spinner rather than expecting a
  * round trip.
  */
-/**
- * Generation in flight, keyed by what it produces.
- *
- * The work is one or two async calls to the model: the event loop is idle while they run, so ten
- * readers pressing at once cost about as much as one — but only if there is *one* of them. Without
- * this, ten presses enqueue ten separate generations for the same language and level, each paying
- * for its own rubric and judge calls to produce something almost identical.
- *
- * A press that finds a generation already running waits for it and is served its result. The text is
- * shared content anyway; what is per-reader about a passage is the reader, not the words.
- */
-const generationInFlight = new Map<string, Promise<{ paragraphId: string; outcome: Awaited<ReturnType<typeof generateOne>> }>>();
-
 app.post("/paragraphs/generate", async (c) => {
   const user = c.get("user");
   const body = (await c.req.json().catch(() => ({}))) as { targetLang?: unknown; level?: unknown; topic?: unknown };
@@ -896,27 +883,15 @@ app.post("/paragraphs/generate", async (c) => {
   }
 
   try {
-    const flightKey = `${targetLang}:${level}`;
-    let flight = generationInFlight.get(flightKey);
-    const joined = Boolean(flight);
-    if (!flight) {
-      flight = (async () => {
-        const outcome = await generateOne(deepseekProvider(), spec, {
-          // A request that cannot be answered inside this is not worth holding open. With thinking
-          // disabled a full generation takes a few seconds, so this is a backstop.
-          deadlineMs: 30_000,
-          skipTopicWords: false,
-        });
-        if (!outcome.passed) return { paragraphId: "", outcome };
-        return { paragraphId: await importParagraph(outcome), outcome };
-      })().finally(() => generationInFlight.delete(flightKey));
-      generationInFlight.set(flightKey, flight);
-    }
-
-    console.info(
-      `[generate] ${flightKey} ${joined ? "joined an in-flight generation" : "starting"} · ${generationInFlight.size} in flight`,
-    );
-    const { paragraphId: joinedId, outcome } = await flight;
+    // Every press that misses the pool starts its own generation. There is no joining: the work is
+    // an async call, several can be in flight at once, and ten readers pressing should get ten
+    // passages rather than ten copies of one. What is shared is the *pool*, not the request.
+    const outcome = await generateOne(deepseekProvider(), spec, {
+      // A request that cannot be answered inside this is not worth holding open. With thinking
+      // disabled a full generation takes a few seconds, so this is a backstop.
+      deadlineMs: 30_000,
+      skipTopicWords: false,
+    });
     if (!outcome.passed) {
       return c.json(
         {
@@ -930,10 +905,11 @@ app.post("/paragraphs/generate", async (c) => {
       );
     }
 
+    const paragraphId = await importParagraph(outcome);
     return c.json(
       {
         ok: true,
-        paragraphId: joinedId,
+        paragraphId,
         title: outcome.title,
         level,
         topic: spec.topic,

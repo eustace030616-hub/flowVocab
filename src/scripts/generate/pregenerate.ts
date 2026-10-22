@@ -41,6 +41,15 @@ export async function levelFor(userId: string, targetLang: TargetLang): Promise<
  * Called by the generate route after serving a buffered passage, and by the script. The brief id is
  * unique per passage, so stocking never overwrites anything.
  */
+/**
+ * Which levels are currently being refilled.
+ *
+ * The dedupe belongs here rather than on the request path: a press must generate its own passage, but
+ * ten presses in a row should not each start a *stocking* loop that generates `BUFFER_TARGET` more.
+ * One refill per language and level at a time; the next press extends it.
+ */
+const refilling = new Set<string>();
+
 export async function refillBuffer(
   userId: string,
   targetLang: TargetLang,
@@ -50,6 +59,16 @@ export async function refillBuffer(
   if (already >= wanted) return 0;
 
   const level = await levelFor(userId, targetLang);
+  const key = `${targetLang}:${level}`;
+  if (refilling.has(key)) return 0;
+  refilling.add(key);
+  try {
+    return await stock(key);
+  } finally {
+    refilling.delete(key);
+  }
+
+  async function stock(_key: string): Promise<number> {
   const provider = deepseekProvider();
   let written = 0;
 
@@ -68,6 +87,7 @@ export async function refillBuffer(
     written += 1;
   }
   return written;
+  }
 }
 
 async function main() {
