@@ -390,6 +390,8 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
   const [historyOpen, setHistoryOpen] = useState(false);
   /** The account page: level, history, the test and signing out live here now. */
   const [userOpen, setUserOpen] = useState(false);
+  /** The history is folded by default: it is a picker, not the point of the page. */
+  const [historyExpanded, setHistoryExpanded] = useState(false);
   /**
    * Something is being fetched for the reader.
    *
@@ -1493,13 +1495,21 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
               )}
 
               <section className="border-t border-zinc-200 pt-4">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-2">
-                  {t.history} {history.length > 0 && <span className="text-zinc-300">{history.length}</span>}
-                </p>
-                {history.length === 0 ? (
-                  <p className="text-sm text-zinc-500">{t.historyEmpty}</p>
+                <button
+                  onClick={() => setHistoryExpanded((open) => !open)}
+                  className="fv-touch w-full flex items-center justify-between gap-4 text-left"
+                  aria-expanded={historyExpanded}
+                >
+                  <span className="text-[10px] uppercase tracking-wide text-zinc-400">
+                    {t.history}
+                    {history.length > 0 && <span className="ml-2 text-zinc-300">{history.length}</span>}
+                  </span>
+                  <span className="text-xs text-zinc-400">{historyExpanded ? "−" : "+"}</span>
+                </button>
+                {!historyExpanded ? null : history.length === 0 ? (
+                  <p className="text-sm text-zinc-500 mt-2">{t.historyEmpty}</p>
                 ) : (
-                  <ul className="divide-y divide-zinc-200">
+                  <ul className="divide-y divide-zinc-200 mt-2">
                     {history.map((item) => (
                       <li key={item._id}>
                         <button
@@ -1507,14 +1517,9 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                             void openHistoryPassage(item._id);
                             setUserOpen(false);
                           }}
-                          className="fv-touch w-full flex items-baseline justify-between gap-4 py-2 text-left hover:bg-zinc-50 transition-colors"
+                          className="fv-touch w-full py-2 text-left text-sm text-zinc-900 truncate hover:text-zinc-500 transition-colors"
                         >
-                          <span className="text-sm text-zinc-900 truncate">{item.title}</span>
-                          <span className="shrink-0 text-xs text-zinc-400">
-                            {[item.level, item.wordCount ? `${item.wordCount} ${t.words}` : null]
-                              .filter(Boolean)
-                              .join(" · ")}
-                          </span>
+                          {item.title}
                         </button>
                       </li>
                     ))}
@@ -1648,20 +1653,24 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                     choose to be. */}
                 {browsing ? (
                   <>
-                    <button
-                      onClick={() => void stepHistory(1)}
-                      disabled={!historyPosition || historyPosition.index >= historyPosition.total - 1}
-                      className="fv-touch h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-40 transition-colors"
-                    >
-                      ‹ {t.older}
-                    </button>
-                    <button
-                      onClick={() => void stepHistory(-1)}
-                      disabled={!historyPosition || historyPosition.index <= 0}
-                      className="fv-touch h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-40 transition-colors"
-                    >
-                      {t.newer} ›
-                    </button>
+                      <button
+                        onClick={() => {
+                          if (currentId) void openParagraph(currentId);
+                          setBrowsing(false);
+                        }}
+                        className="fv-touch h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 transition-colors"
+                      >
+                        {t.returnToLive}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setHistoryExpanded(true);
+                          setUserOpen(true);
+                        }}
+                        className="fv-touch h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 transition-colors"
+                      >
+                        {t.list}
+                      </button>
                   </>
                 ) : (
                   <button
