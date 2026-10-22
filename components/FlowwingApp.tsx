@@ -7,6 +7,7 @@ import { groupMeanings, meaningLabel } from "@/src/lib/ui/meanings";
 import { liveCoverage } from "@/src/lib/ui/coverage-label";
 import { passageBand, unknownWords } from "@/src/lib/learner/band";
 import { truncateWords } from "@/src/lib/ui/truncate";
+import AuthGate from "./AuthGate";
 
 interface VocabularyEntry {
   lemma: string;
@@ -1393,6 +1394,13 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
 
   const isActiveOwner = (span: Span) => active?.ownerStart === ownerOf(span);
   const isHoveredOwner = (span: Span) => hoveredOwner === ownerOf(span);
+
+  // No session yet, or none at all: the gate.
+  //
+  // This used to be in the page's HTML, rendered per request — which a static bundle cannot do, so
+  // signing out (or arriving signed out) showed the app with every control disabled. `null` means
+  // the session check has not answered; the gate is the safe thing to show then too.
+  if (signedIn !== true) return <AuthGate locale={me?.uiLocale ?? "en"} />;
 
   return (
     // `h-[100dvh]` rather than `min-h-screen`: the shell is exactly the viewport and never scrolls,
