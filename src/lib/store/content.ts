@@ -232,6 +232,64 @@ export function nextBufferedParagraph(targetLang: string, level?: string | null)
   return row ? toParagraph(row) : null;
 }
 
+/** How deep a reader's view of the pool should be kept. */
+export const POOL_TARGET_DEPTH = 3;
+
+/** How many readers a passage serves before it leaves circulation. */
+export const POOL_READERS_MAX = 3;
+
+/**
+ * The pool, for one reader.
+ *
+ * A passage is in the pool while `buffered = 1`; its *depth for a reader* is how many of those they
+ * have not already read. So the same reader sees the pool shrink as they read, and a reader who has
+ * just arrived sees all of it.
+ */
+export function poolDepth(userId: string, targetLang: string, level?: string | null): number {
+  const row = get<{ n: number }>(
+    `SELECT COUNT(*) n FROM paragraphs p
+      WHERE p.targetLang = ? AND p.buffered = 1 ${level ? "AND p.level = ?" : ""}
+        AND NOT EXISTS (SELECT 1 FROM pool_reads r WHERE r.paragraphId = p.id AND r.userId = ?)`,
+    ...(level ? [targetLang, level, userId] : [targetLang, userId]),
+  );
+  return row?.n ?? 0;
+}
+
+/** Readers so far, for the retirement rule. */
+export function readersOf(paragraphId: string): number {
+  return get<{ n: number }>("SELECT COUNT(*) n FROM pool_reads WHERE paragraphId = ?", paragraphId)?.n ?? 0;
+}
+
+/**
+ * Claim a passage for this reader: one they have not read, retired once three people have.
+ *
+ * Claiming does not immediately consume: the row stays buffered so the next reader can have it. It
+ * leaves the pool when the third reader arrives, which is what keeps the pool from being a single
+ * passage passed around forever.
+ */
+export function claimForReader(
+  userId: string,
+  targetLang: string,
+  level?: string | null,
+): ParagraphRecord | null {
+  const id = get<{ id: string }>(
+    `SELECT p.id FROM paragraphs p
+      WHERE p.targetLang = ? AND p.buffered = 1 ${level ? "AND p.level = ?" : ""}
+        AND NOT EXISTS (SELECT 1 FROM pool_reads r WHERE r.paragraphId = p.id AND r.userId = ?)
+      ORDER BY p.createdAt ASC LIMIT 1`,
+    ...(level ? [targetLang, level, userId] : [targetLang, userId]),
+  )?.id;
+  if (!id) return null;
+
+  run("INSERT INTO pool_reads (paragraphId, userId, createdAt) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+    id, userId, nowMs());
+  // Retired on the third reader: still theirs to browse, no longer offered to anybody else.
+  if (readersOf(id) >= POOL_READERS_MAX) run("UPDATE paragraphs SET buffered = 0 WHERE id = ?", id);
+
+  const row = get<ParagraphRow>("SELECT * FROM paragraphs WHERE id = ?", id);
+  return row ? toParagraph(row) : null;
+}
+
 /**
  * Take a passage out of the pool, atomically.
  *

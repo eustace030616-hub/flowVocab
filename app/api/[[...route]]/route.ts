@@ -68,7 +68,9 @@ import {
   legacyStarredIds,
   paragraphSummaries,
   paragraphsFor,
-  claimBufferedParagraph,
+  POOL_TARGET_DEPTH,
+  claimForReader,
+  poolDepth,
   clearBuffered,
   upsertParagraphByBrief,
   countBuffered,
@@ -861,9 +863,15 @@ app.post("/paragraphs/generate", async (c) => {
   // old, unmarked and unstarred — see `pruneUnmarked`.
   pruneUnmarked(targetLang);
 
-  // The order is the whole design: the pool first, generation only on a miss.
-  const buffered = claimBufferedParagraph(targetLang, level);
+  // The order is the whole design: the pool first, generation only on a miss. A passage stays in
+  // the pool after one reader takes it — it is claimed, not consumed — so depth is per reader.
+  const buffered = claimForReader(user.userId, targetLang, level);
   if (buffered) {
+    // Stock for this reader in the background if their view of the pool is shallow. The refill
+    // itself is single-flight per level, so ten presses do not start ten loops.
+    if (poolDepth(user.userId, targetLang, level) < POOL_TARGET_DEPTH) {
+      void refillBuffer(user.userId, targetLang).catch(() => {});
+    }
     void refillBuffer(user.userId, targetLang).catch(() => {
       // A failed top-up is not worth failing the request over; the next press will try again.
     });

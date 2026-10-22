@@ -269,6 +269,22 @@ CREATE TABLE IF NOT EXISTS placement_sessions (
 );
 CREATE INDEX IF NOT EXISTS placement_recent ON placement_sessions (userId, targetLang, createdAt DESC);
 
+-- ── The pool ─────────────────────────────────────────────────────────────────
+
+-- Who has read what is in circulation.
+--
+-- A passage used to leave the pool the moment one reader took it, so the second reader cost a
+-- generation. Now a passage stays available until three people have read it: the pool is shared, and
+-- "depth" is per reader — what *you* have not read yet — so a new reader arrives to a full pool
+-- rather than to the wreckage of somebody else's press.
+CREATE TABLE IF NOT EXISTS pool_reads (
+  paragraphId TEXT NOT NULL,
+  userId      TEXT NOT NULL,
+  createdAt   INTEGER NOT NULL,
+  PRIMARY KEY (paragraphId, userId)
+);
+CREATE INDEX IF NOT EXISTS pool_reads_user ON pool_reads (userId);
+
 -- ── Stars ───────────────────────────────────────────────────────────────────
 
 -- A star belongs to a reader. It used to be a column on the passage, which was fine while there was
