@@ -142,6 +142,24 @@ unreliable, every time      the same eleven-ish sites, because the call's closin
 The domain layer above the store then needs only `await` on its calls (with the registry default), and
 that part never got a clean run.
 
+## Verified recipe (round 8)
+
+The store layer reached **0 errors** with this sequence, which is worth keeping:
+
+1. Add `src/lib/store/registry.ts` and default every store parameter:
+   `store: StoreDriver = currentStore()`.
+2. Run the transformer over `content`, `learner`, `dictionary` (async, awaited primitives,
+   transaction callbacks made async, return types wrapped in `Promise<>`).
+3. Rewrite **whole statements** for the seven residual shapes — there are 20 of them and they are
+   listed in the commit history; a fragment patch produces `return rows(toParagraph)` and a
+   `Number(…)` with an extra paren.
+4. Result: `npm run typecheck` shows zero errors inside `src/lib/store/`.
+
+Then the domain layer needs only awaits. The await-only fixer took 132 → 24 in two rounds; the 24 are
+the familiar corruptions, and repairing those reached **1 error** before the last fix reopened a
+cascade (166). That is where it stands: the store converts, the layer above is awaited mechanically,
+and the tail is still hand work.
+
 ## Why this is worth finishing
 
 Once it is done, `src/server/app.ts` is one module for both hosts, the two drivers are the only
