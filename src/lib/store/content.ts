@@ -232,6 +232,36 @@ export function nextBufferedParagraph(targetLang: string, level?: string | null)
   return row ? toParagraph(row) : null;
 }
 
+/**
+ * Take a passage out of the pool, atomically.
+ *
+ * `nextBufferedParagraph` followed by `clearBuffered` is two statements, and two presses arriving
+ * together can both read the same row before either clears it — the same passage handed to both
+ * readers. The claim is one statement here, so a row can only be taken once.
+ *
+ * Returns the passage that was claimed, or `null` if the pool had nothing matching.
+ */
+export function claimBufferedParagraph(
+  targetLang: string,
+  level?: string | null,
+): ParagraphRecord | null {
+  const row = get<ParagraphRow>(
+    level
+      ? `UPDATE paragraphs SET buffered = 0
+           WHERE id = (SELECT id FROM paragraphs
+                        WHERE targetLang = ? AND buffered = 1 AND level = ?
+                        ORDER BY createdAt ASC LIMIT 1)
+         RETURNING *`
+      : `UPDATE paragraphs SET buffered = 0
+           WHERE id = (SELECT id FROM paragraphs
+                        WHERE targetLang = ? AND buffered = 1
+                        ORDER BY createdAt ASC LIMIT 1)
+         RETURNING *`,
+    ...(level ? [targetLang, level] : [targetLang]),
+  );
+  return row ? toParagraph(row) : null;
+}
+
 export function clearBuffered(id: string): void {
   run("UPDATE paragraphs SET buffered = 0 WHERE id = ?", id);
 }

@@ -68,7 +68,7 @@ import {
   legacyStarredIds,
   paragraphSummaries,
   paragraphsFor,
-  nextBufferedParagraph,
+  claimBufferedParagraph,
   clearBuffered,
   upsertParagraphByBrief,
   countBuffered,
@@ -861,9 +861,9 @@ app.post("/paragraphs/generate", async (c) => {
   // old, unmarked and unstarred — see `pruneUnmarked`.
   pruneUnmarked(targetLang);
 
-  const buffered = nextBufferedParagraph(targetLang, level);
+  // The order is the whole design: the pool first, generation only on a miss.
+  const buffered = claimBufferedParagraph(targetLang, level);
   if (buffered) {
-    clearBuffered(buffered._id);
     void refillBuffer(user.userId, targetLang).catch(() => {
       // A failed top-up is not worth failing the request over; the next press will try again.
     });
