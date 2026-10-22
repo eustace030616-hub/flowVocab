@@ -112,6 +112,36 @@ Each is one line: move the `await` to the call, put the store argument on the ca
 enclosing `if`, or hoist `await` out of a spread. Then `tsc` is clean, the 212 tests say whether the
 semantics survived, and the Worker can import `src/server/app.ts` — which is the whole point.
 
+## What has actually been tried, and where it stops
+
+Seven attempts. The result is not nothing: it establishes exactly which parts are mechanical and which
+are not.
+
+```
+mechanical, reliable        the three store modules convert with the transformer:
+                            async keyword, defaulted `store`, awaited primitives, transaction
+                            callbacks made async, return types wrapped in Promise<>
+                            → 0 errors inside the store modules, twice, after hand-fixing
+                            the chained-return shapes below
+
+unreliable, every time      the same eleven-ish sites, because the call's closing paren is not
+                            where a regex thinks it is:
+
+                              return await store.all<T>(…).map(fn)          → assign, then map
+                              return Number(await store.get<T>(…)?.n ?? 0)  → assign, then read
+                              const x = await store.get<T>(…)?.id           → assign, then read
+                              await inside a non-async callback             → make the callback async
+                              a required parameter after an optional one     → reorder, or default it
+
+                            Each fix is a whole-statement rewrite. A patch that touches half of one
+                            produces `return rows(toParagraph)` or `Number(…)` with an extra paren —
+                            both of which compile-error *somewhere else*, which is what made the
+                            error count jump 2 → 319 on the sixth attempt.
+```
+
+The domain layer above the store then needs only `await` on its calls (with the registry default), and
+that part never got a clean run.
+
 ## Why this is worth finishing
 
 Once it is done, `src/server/app.ts` is one module for both hosts, the two drivers are the only
