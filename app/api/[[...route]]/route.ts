@@ -16,6 +16,8 @@ import {
   type GlossLang,
   type TrackId,
 } from "@/src/lib/lang";
+import { verifyPassword } from "@/src/lib/learner/password";
+import { nodeDriver } from "@/src/lib/store/driver-node";
 import {
   SESSION_COOKIE,
   endSession,
@@ -133,7 +135,7 @@ const EVENT_TYPES = [
  * gate. That keeps the first person's existing data without letting anyone in by looking like them.
  */
 app.use("*", async (c, next) => {
-  const session = sessionUser(getCookie(c, SESSION_COOKIE));
+  const session = await sessionUser(getCookie(c, SESSION_COOKIE), nodeDriver);
   // `resolveUser` returns `{ user, created }`; the identity is its `.user`.
   const legacyCookie = getCookie(c, USER_COOKIE);
   const legacy = session || !legacyCookie ? null : (await resolveUser(legacyCookie)).user;
@@ -157,7 +159,7 @@ app.use("*", async (c, next) => {
 
 app.post("/auth/register", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
-  const result = await register(String(body.username ?? ""), String(body.password ?? ""), getCookie(c, USER_COOKIE));
+  const result = await register(String(body.username ?? ""), String(body.password ?? ""), getCookie(c, USER_COOKIE), nodeDriver);
   if (!result.ok) {
     return c.json({ error: result.error === "taken" ? "that name is taken" : "username and password are required" }, 409);
   }
@@ -167,20 +169,23 @@ app.post("/auth/register", async (c) => {
 
 app.post("/auth/login", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
-  const result = await login(String(body.username ?? ""), String(body.password ?? ""));
+  const result = await login(String(body.username ?? ""), String(body.password ?? ""), {
+    store: nodeDriver,
+    verifyLegacy: verifyPassword,
+  });
   if (!result.ok) return c.json({ error: "wrong name or password" }, 401);
   setCookie(c, SESSION_COOKIE, result.token, cookieOptions());
   return c.json({ ok: true, username: result.user.username });
 });
 
 app.post("/auth/logout", async (c) => {
-  endSession(getCookie(c, SESSION_COOKIE));
+  await endSession(getCookie(c, SESSION_COOKIE), nodeDriver);
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
   return c.json({ ok: true });
 });
 
 app.get("/auth/me", async (c) => {
-  const session = sessionUser(getCookie(c, SESSION_COOKIE));
+  const session = await sessionUser(getCookie(c, SESSION_COOKIE), nodeDriver);
   return c.json({ signedIn: Boolean(session), username: session?.username ?? null });
 });
 

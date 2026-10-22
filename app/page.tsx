@@ -10,6 +10,7 @@ import { cookies } from "next/headers";
 import AuthGate from "@/components/AuthGate";
 import FlowwingApp from "@/components/FlowwingApp";
 import { SESSION_COOKIE, sessionUser } from "@/src/lib/learner/auth";
+import { nodeDriver } from "@/src/lib/store/driver-node";
 
 // Rendered per request: the answer depends on a cookie, and a cached answer is the bug this page
 // was written to fix.
@@ -17,7 +18,7 @@ export const dynamic = "force-dynamic";
 
 export default async function Page() {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
-  const session = sessionUser(token);
+  const session = await sessionUser(token, nodeDriver);
 
   if (!session) return <AuthGate />;
   return <FlowwingApp initialUsername={session.username} />;

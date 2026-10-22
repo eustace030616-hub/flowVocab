@@ -12,7 +12,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 
 import { d1Driver, type D1Database } from "./d1";
-import { SESSION_COOKIE, endSession, login, register, sessionUser } from "./auth";
+import { SESSION_COOKIE, endSession, login, register, sessionUser } from "../../src/lib/learner/auth";
 
 interface Env {
   DB: D1Database;
@@ -49,7 +49,7 @@ function withSession(response: Response, token: string): Response {
 
 app.post("/api/auth/register", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
-  const result = await register(d1Driver(c.env.DB), String(body.username ?? ""), String(body.password ?? ""));
+  const result = await register(String(body.username ?? ""), String(body.password ?? ""), undefined, d1Driver(c.env.DB));
   if (!result.ok) {
     return c.json({ error: result.error === "taken" ? "that name is taken" : "username and password are required" }, 409);
   }
@@ -58,33 +58,33 @@ app.post("/api/auth/register", async (c) => {
 
 app.post("/api/auth/login", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
-  const result = await login(d1Driver(c.env.DB), String(body.username ?? ""), String(body.password ?? ""));
+  const result = await login(String(body.username ?? ""), String(body.password ?? ""), { store: d1Driver(c.env.DB) });
   if (!result.ok) return c.json({ error: "wrong name or password" }, 401);
   return withSession(c.json({ ok: true, username: result.user.username }), result.token);
 });
 
 app.post("/api/auth/logout", async (c) => {
-  await endSession(d1Driver(c.env.DB), cookieFrom(c.req.raw, SESSION_COOKIE));
+  await endSession(cookieFrom(c.req.raw, SESSION_COOKIE), d1Driver(c.env.DB));
   const response = c.json({ ok: true });
   response.headers.append("Set-Cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; Max-Age=0`);
   return response;
 });
 
 app.get("/api/auth/me", async (c) => {
-  const session = await sessionUser(d1Driver(c.env.DB), cookieFrom(c.req.raw, SESSION_COOKIE));
+  const session = await sessionUser(cookieFrom(c.req.raw, SESSION_COOKIE), d1Driver(c.env.DB));
   return c.json({ signedIn: Boolean(session), username: session?.username ?? null });
 });
 
 app.use("/api/*", async (c, next) => {
   const open = c.req.path.startsWith("/api/auth/") || c.req.method === "OPTIONS";
-  const session = open ? null : await sessionUser(d1Driver(c.env.DB), cookieFrom(c.req.raw, SESSION_COOKIE));
+  const session = open ? null : await sessionUser(cookieFrom(c.req.raw, SESSION_COOKIE), d1Driver(c.env.DB));
   if (!open && !session) return c.json({ error: "sign in required", signedIn: false }, 401);
   await next();
 });
 
 /** What the page asks for on load. Empty in this stage: no passages exist yet. */
 app.get("/api/me", async (c) => {
-  const session = await sessionUser(d1Driver(c.env.DB), cookieFrom(c.req.raw, SESSION_COOKIE));
+  const session = await sessionUser(cookieFrom(c.req.raw, SESSION_COOKIE), d1Driver(c.env.DB));
   if (!session) return c.json({ error: "sign in required" }, 401);
   return c.json({
     userId: session.userId,
