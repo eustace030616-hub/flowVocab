@@ -60,3 +60,4 @@ probe.tmp.ts
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
+backups/
