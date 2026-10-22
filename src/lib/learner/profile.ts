@@ -20,10 +20,10 @@ import {
 import type { CefrLevel, TargetLang } from "../lang";
 import {
   fitAbility,
-  observationsFor,
   LEVEL_SE_THRESHOLD,
   type AbilityEstimate,
 } from "./ability";
+import { observationsFor } from "./ability-store";
 import { levelFromDifficulty } from "../difficulty";
 import { placementObservations } from "./placement";
 

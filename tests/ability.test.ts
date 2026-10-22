@@ -10,6 +10,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import { scorePlacement, type PlacementItem } from "../src/lib/learner/placement";
+import { observationsFor } from "../src/lib/learner/ability-store";
 import {
   ABILITY_SCALE,
   KNOWN_AT_LEVEL,
@@ -205,7 +206,7 @@ test("evidence from the same session counts once", async () => {
   // The end-to-end case that failed: four reads of one paragraph in one sitting produced four
   // exposures per word and an estimate of C1/C2. Distinct sessions are what the model needs, and
   // `observationsFor` is where occurrence counts collapse.
-  const { observationsFor } = await import("../src/lib/learner/ability");
+  const { observationsFor } = await import("../src/lib/learner/ability-store");
   assert.equal(typeof observationsFor, "function");
 });
 
