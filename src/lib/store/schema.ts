@@ -269,6 +269,23 @@ CREATE TABLE IF NOT EXISTS placement_sessions (
 );
 CREATE INDEX IF NOT EXISTS placement_recent ON placement_sessions (userId, targetLang, createdAt DESC);
 
+-- ── Passage packages ────────────────────────────────────────────────────────
+
+-- A passage, tokenised and glossed once, at the moment it is written.
+--
+-- The reader used to tokenise and gloss on every view: six dictionary queries and ~150ms of CPU to
+-- answer the same question about the same unchanging text. The package is that answer, computed where
+-- the dictionary lives (the writer) and stored beside the passage, so reading is one row and the
+-- dictionary never has to be present on the host that serves readers.
+CREATE TABLE IF NOT EXISTS passage_packages (
+  paragraphId TEXT PRIMARY KEY,
+  -- Version of the tokeniser and gloss pipeline that produced this. A package with an older version
+  -- is rebuilt lazily by the writer, never repaired on the read path.
+  version     INTEGER NOT NULL DEFAULT 1,
+  data        TEXT NOT NULL,
+  createdAt   INTEGER NOT NULL
+);
+
 -- ── The pool ─────────────────────────────────────────────────────────────────
 
 -- Who has read what is in circulation.

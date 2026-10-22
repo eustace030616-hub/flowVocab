@@ -40,6 +40,14 @@ export interface KnownOptions {
    * one.
    */
   parts?: Map<string, string[]>;
+  /**
+   * Difficulty per lemma, when the caller already has it.
+   *
+   * A packed passage carries each word's difficulty from the moment it was written, so the reader can
+   * answer this without the 840k-row vocabulary table — which is what lets a host with no dictionary
+   * serve a passage.
+   */
+  difficulties?: Map<string, number>;
 }
 
 export interface KnownResult {
@@ -90,11 +98,10 @@ export async function knownProbabilities(
     : null;
   const folded = foldWordEvidence(events as unknown as EventLike[]);
 
-  const words = wordsByKeys(targetLang, unique, { origin: "import" });
-
   // A lemma may have several entries across parts of speech; the easiest reading is the one the
   // learner could plausibly know, so coverage is not depressed by a rare homograph.
-  const difficultyOf = new Map<string, number>();
+  const difficultyOf = new Map<string, number>(options.difficulties ?? new Map());
+  const words = options.difficulties ? [] : wordsByKeys(targetLang, unique, { origin: "import" });
   for (const word of words) {
     const current = difficultyOf.get(word.lemmaKey);
     if (current === undefined || word.difficulty < current) {

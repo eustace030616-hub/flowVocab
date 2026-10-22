@@ -22,6 +22,7 @@ import {
   wordsByKeys,
 } from "../../lib/store/dictionary";
 import { upsertParagraphByBrief, paragraphsBySource } from "../../lib/store/content";
+import { packParagraph } from "../../lib/content/pack";
 import { TOKENIZER_VERSION } from "../../lib/tokenize";
 import { levelMidpoint } from "../../lib/difficulty";
 import { glossLangFor, type CefrLevel, type TargetLang } from "../../lib/lang";
@@ -474,7 +475,7 @@ export async function importParagraph(outcome: GenerationOutcome): Promise<strin
   // Identity is the brief. The title is model output and changes between runs; using it as the key
   // made every regeneration a new paragraph rather than a replacement.
   const identity = spec.briefId ?? briefIdOf(spec);
-  return upsertParagraphByBrief({
+  const paragraphId = upsertParagraphByBrief({
     targetLang: spec.targetLang,
     briefId: identity,
     title: outcome.title,
@@ -491,6 +492,15 @@ export async function importParagraph(outcome: GenerationOutcome): Promise<strin
     starred: false,
     promptSnapshot,
   });
+
+  // Packed here because this is where the dictionary is: the reader then needs one row, not a
+  // tokeniser and six queries. A failure to pack must not lose the passage, so it is reported.
+  try {
+    await packParagraph(paragraphId);
+  } catch (error) {
+    console.warn("[pack] failed for", paragraphId, error instanceof Error ? error.message : error);
+  }
+  return paragraphId;
 }
 
 /**

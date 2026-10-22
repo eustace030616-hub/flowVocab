@@ -41,6 +41,8 @@ import { abilitiesFor, recomputeAllAbilities } from "@/src/lib/learner/profile";
 import { knownProbabilities } from "@/src/lib/learner/reading";
 import { coverageOf } from "@/src/lib/learner/coverage";
 import { passageBand, targetBriefLevel, unknownWords } from "@/src/lib/learner/band";
+import { packageFor } from "@/src/lib/content/pack";
+import type { Span } from "@/src/lib/tokenize";
 import { levelFromDifficulty } from "@/src/lib/difficulty";
 import {
   calibrationSummary,
@@ -296,19 +298,24 @@ async function readerPayload(
   store: StoreDriver,
 ) {
   {
-    const spans = await tokenizeWithLexicon(paragraph.content, targetLang);
+    // A packed passage carries its spans and glosses from the moment it was written, so the reader
+    // needs neither the tokeniser nor the dictionary. Anything unpacked falls back to the old path.
+    const pack = packageFor(String(paragraph._id));
+    const spans = pack ? (pack.spans as unknown as Span[]) : await tokenizeWithLexicon(paragraph.content, targetLang);
 
     // Marks this learner has already made, keyed by where they made them.
     const marked = marksForParagraph(userId, String(paragraph._id));
 
     // Vocabulary records behind the spans, so the popover has a gloss without a second round trip.
-    const lexicon = await wordsForSpans(targetLang, spans);
+    const lexicon = pack ? new Map() : await wordsForSpans(targetLang, spans);
     // Compound parts are not tokens, so they are not in the lexicon map — but their glosses are
     // what makes a compound understandable. Add them to the keys so both lookups cover them.
     const partKeys = spans.flatMap((span) => span.compoundParts ?? []);
-    const keys = [...new Set([...lexicon.keys(), ...partKeys])];
+    const keys = pack
+      ? [...new Set([...Object.keys(pack.vocabulary), ...partKeys])]
+      : [...new Set([...lexicon.keys(), ...partKeys])];
     // Every entry for the key, across parts of speech: the reader shows each reading it has.
-    const words = keys.length ? wordsByKeys(targetLang, keys, { origin: null }) : [];
+    const words = pack || keys.length === 0 ? [] : wordsByKeys(targetLang, keys, { origin: null });
 
     // This learner's own state, which lives in WordState rather than on the shared Word.
     const states = await statesFor(userId, targetLang, keys);
@@ -317,7 +324,7 @@ async function readerPayload(
     // A token in running text carries no part of speech — nothing tells us "well-trained" is a
     // verb — so picking one reading by database order glossed a verb with the noun's 火车. All the
     // readings are returned, labelled, and the interface shows them together.
-    const glosses = await glossesByLemma(targetLang, glossLang, keys);
+    const glosses = pack ? new Map() : await glossesByLemma(targetLang, glossLang, keys);
 
     // Per-word knowledge probability, and the coverage it implies. Derived from the event log and
     // the ability estimate; nothing is written.
@@ -330,6 +337,9 @@ async function readerPayload(
     }
     const known = await knownProbabilities(userId, targetLang, keys, {
       parts: compoundParts,
+      difficulties: pack
+        ? new Map(Object.entries(pack.vocabulary).map(([key, entry]) => [key, entry.difficulty]))
+        : undefined,
     });
     const probabilities = known.probabilities;
 
@@ -346,13 +356,13 @@ async function readerPayload(
       isMarked: (key) => markedLemmas.has(key),
     });
 
-    const vocabulary: Record<string, unknown> = {};
-    for (const word of words) {
+    const vocabulary: Record<string, unknown> = pack ? { ...pack.vocabulary } : {};
+    for (const word of pack ? [] : words) {
       if (vocabulary[word.lemmaKey]) continue;
       const meanings = glosses.get(word.lemmaKey) ?? [];
       // The entry's own part of speech decides which reading leads, when it has one.
       const gloss =
-        meanings.find((m) => m.pos && m.pos === word.pos) ?? meanings[0] ?? null;
+        meanings.find((m: { pos?: string | null }) => m.pos && m.pos === word.pos) ?? meanings[0] ?? null;
       const state = states.get(word.lemmaKey);
       vocabulary[word.lemmaKey] = {
         lemma: word.lemma,
@@ -364,7 +374,7 @@ async function readerPayload(
         // which one is which rather than hiding them behind one unlabelled line.
         glossTermPos: gloss?.termPos ?? null,
         glossPos: gloss?.pos ?? null,
-        meanings: meanings.map((m) => ({
+        meanings: meanings.map((m: { pos?: string | null; termPos?: string | null; text: string; source?: string | null }) => ({
           pos: m.pos || null,
           termPos: m.termPos ?? null,
           text: m.text,
