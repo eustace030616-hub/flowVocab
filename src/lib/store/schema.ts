@@ -277,6 +277,15 @@ CREATE INDEX IF NOT EXISTS placement_recent ON placement_sessions (userId, targe
 -- answer the same question about the same unchanging text. The package is that answer, computed where
 -- the dictionary lives (the writer) and stored beside the passage, so reading is one row and the
 -- dictionary never has to be present on the host that serves readers.
+-- D1 rejects a statement over ~100KB, and a packed passage is around 60KB of JSON, so the payload is
+-- stored in chunks. Readers concatenate them in order; nothing else changes.
+CREATE TABLE IF NOT EXISTS package_chunks (
+  paragraphId TEXT NOT NULL,
+  idx         INTEGER NOT NULL,
+  data        TEXT NOT NULL,
+  PRIMARY KEY (paragraphId, idx)
+);
+
 CREATE TABLE IF NOT EXISTS passage_packages (
   paragraphId TEXT PRIMARY KEY,
   -- Version of the tokeniser and gloss pipeline that produced this. A package with an older version

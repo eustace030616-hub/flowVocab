@@ -12,7 +12,7 @@ import { wordsByKeys } from "../store/dictionary";
 import { glossesByLemma } from "../learner/glosses";
 import { tokenizeWithLexicon } from "../learner/lexicon";
 import { wordSpans } from "../tokenize";
-import { get, nowMs, run } from "../store/db";
+import { all, get, nowMs, run } from "../store/db";
 import type { TargetLang } from "../lang";
 
 /** Bump when the shape or the pipeline changes, so old packages are rebuilt. */
@@ -75,12 +75,26 @@ export async function packParagraph(paragraphId: string): Promise<PackageVocabul
   }
 
   const data: PassagePackage = { version: PACKAGE_VERSION, spans: spans as unknown as Array<Record<string, unknown>>, vocabulary };
+  const json = JSON.stringify(data);
+
+  // Chunked because D1 (the other host) refuses a statement much over 100KB, and a passage is ~60KB.
+  // The chunk size is a multiple under that with room for the statement around it.
+  const CHUNK = 12_000;
+  run("DELETE FROM package_chunks WHERE paragraphId = ?", paragraphId);
+  for (let offset = 0, idx = 0; offset < json.length; offset += CHUNK, idx += 1) {
+    run(
+      "INSERT INTO package_chunks (paragraphId, idx, data) VALUES (?,?,?)",
+      paragraphId,
+      idx,
+      json.slice(offset, offset + CHUNK),
+    );
+  }
   run(
     `INSERT INTO passage_packages (paragraphId, version, data, createdAt) VALUES (?,?,?,?)
      ON CONFLICT(paragraphId) DO UPDATE SET version = excluded.version, data = excluded.data, createdAt = excluded.createdAt`,
     paragraphId,
     PACKAGE_VERSION,
-    JSON.stringify(data),
+    "",
     nowMs(),
   );
   return Object.values(vocabulary);
@@ -88,13 +102,18 @@ export async function packParagraph(paragraphId: string): Promise<PackageVocabul
 
 /** The stored package, or `null` when the passage has never been packed at this version. */
 export function packageFor(paragraphId: string): PassagePackage | null {
-  const row = get<{ version: number; data: string }>(
-    "SELECT version, data FROM passage_packages WHERE paragraphId = ?",
+  const row = get<{ version: number }>(
+    "SELECT version FROM passage_packages WHERE paragraphId = ?",
     paragraphId,
   );
   if (!row || row.version !== PACKAGE_VERSION) return null;
+  const chunks = all<{ data: string }>(
+    "SELECT data FROM package_chunks WHERE paragraphId = ? ORDER BY idx ASC",
+    paragraphId,
+  );
+  if (chunks.length === 0) return null;
   try {
-    return JSON.parse(row.data) as PassagePackage;
+    return JSON.parse(chunks.map((chunk) => chunk.data).join("")) as PassagePackage;
   } catch {
     return null;
   }
