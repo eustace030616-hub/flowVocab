@@ -78,6 +78,58 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
     return c.json({ signedIn: Boolean(session), username: session?.username ?? null });
   });
 
+  /**
+   * Service endpoints, for the other host.
+   *
+   * Identity has one owner: this database. The Pi holds passages and generation, but it does not mint
+   * its own accounts — it asks here, so a username resolves to one `userId` on both hosts and the two
+   * cannot drift into "same name, different person".
+   *
+   * Guarded by a shared secret rather than a user session: the caller is a server, not a reader.
+   */
+  app.use("/service/*", async (c, next) => {
+    const expected = (c.env as { SERVICE_SECRET?: string } | undefined)?.SERVICE_SECRET;
+    const given = c.req.header("X-Flowwing-Service");
+    if (!expected || given !== expected) return c.json({ error: "service access only" }, 403);
+    await next();
+  });
+
+  app.post("/service/register", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
+    const result = await register(String(body.username ?? ""), String(body.password ?? ""), undefined, c.get("store"));
+    if (!result.ok) {
+      return c.json({ error: result.error === "taken" ? "taken" : "missing" }, result.error === "taken" ? 409 : 400);
+    }
+    return c.json({ userId: result.user.userId, username: result.user.username, track: result.user.track }, 201);
+  });
+
+  app.post("/service/login", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
+    const result = await login(String(body.username ?? ""), String(body.password ?? ""), { store: c.get("store") });
+    if (!result.ok) return c.json({ error: "bad-credentials" }, 401);
+    return c.json({ userId: result.user.userId, username: result.user.username, track: result.user.track });
+  });
+
+  /**
+   * Accept a hash the Pi has just upgraded.
+   *
+   * Workers cannot run PBKDF2 above 100,000 iterations, so an account hashed at a higher count cannot
+   * be verified here at all. The Pi can verify it (Node has no such cap), re-hashes at the portable
+   * count and sends the result — which is why this endpoint exists, and why it is guarded by the
+   * service secret rather than a password: the caller has already proved the password.
+   */
+  app.post("/service/password", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { username?: string; passwordHash?: string };
+    if (!body.username || !body.passwordHash) return c.json({ error: "username and passwordHash required" }, 400);
+    await c.get("store").run(
+      "UPDATE users SET passwordHash = ?, passwordSalt = NULL, updatedAt = ? WHERE username = ?",
+      body.passwordHash,
+      Date.now(),
+      body.username,
+    );
+    return c.json({ ok: true });
+  });
+
   app.use("*", async (c, next) => {
     const session = await sessionUser(getCookie(c, SESSION_COOKIE), c.get("store"));
     if (!session) return c.json({ error: "sign in required", signedIn: false }, 401);

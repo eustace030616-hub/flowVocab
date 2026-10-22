@@ -1,9 +1,8 @@
 /**
- * The Node entry: the same app the Worker runs, plus static files.
+ * The Node entry: the Pi's server.
  *
- * This replaces `next start` on the Pi. The API is `src/server/app.ts` verbatim — the same module the
- * Worker imports — and the only additions are the built frontend and a listener. So "identical
- * flowwing on both hosts" is a property of the code rather than a maintenance promise.
+ * The API is `src/server/app.ts` verbatim, the built frontend is served from `web/dist`, and nothing
+ * else happens here — so the two hosts differ by their store, not by their behaviour.
  */
 import { readFile } from "node:fs/promises";
 import path from "node:path";
@@ -14,6 +13,14 @@ import { serveStatic } from "@hono/node-server/serve-static";
 
 import { createApp } from "./app";
 import { nodeDriver } from "../lib/store/driver-node";
+import { loadEnv } from "../scripts/env";
+
+// `.env.local` is read into a record for the generator, but the rest of the server reads
+// `process.env` — including the identity service this host defers accounts to. Put the values where
+// everything can see them.
+for (const [key, value] of Object.entries(loadEnv())) {
+  if (process.env[key] === undefined) process.env[key] = value;
+}
 
 const app = createApp(() => nodeDriver);
 const port = Number(process.env.PORT ?? 3100);
@@ -28,5 +35,8 @@ outer.use("/*", serveStatic({ root: "./web/dist" }));
 outer.use("/*", async (c) => c.html(await readFile(path.join(dist, "index.html"), "utf8")));
 
 serve({ fetch: outer.fetch, port, hostname }, (info) => {
-  console.log(`flowwing on http://${hostname}:${info.port}`);
+  console.log(
+    `flowwing on http://${hostname}:${info.port}` +
+      ` · identity ${process.env.FLOWWING_IDENTITY_URL ? "deferred to Cloudflare" : "local"}`,
+  );
 });
