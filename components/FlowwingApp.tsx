@@ -103,6 +103,8 @@ interface Me {  userId: string;
   targetLang: "en" | "de";
   glossLang: "en" | "zh";
   uiLocale: "en" | "zh";
+  /** Present on the Worker and now on the Pi too; the avatar shows its first letter. */
+  username?: string | null;
   label: string;
   tracks: Array<{ id: "zh-en" | "en-de"; label: string; targetLang: string }>;
   /** Per-language ability, derived from the event log. */
@@ -386,6 +388,8 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [browsing, setBrowsing] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
+  /** The account page: level, history, the test and signing out live here now. */
+  const [userOpen, setUserOpen] = useState(false);
   /**
    * Something is being fetched for the reader.
    *
@@ -1412,78 +1416,137 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
           panel with a shadow, it is the top of the page. */}
       <header className="w-full min-h-16 fv-rule-bottom bg-white flex items-center justify-between gap-2 px-4 sm:px-6 py-4 shrink-0">
         <div className="flex items-center gap-4">
-          {/* The hero course name: the style's second deliberate exception, and the only text on
-              the page that carries the misregistration fringe. */}
+          {/* The hero course name: the style's second deliberate exception, and the only text on the
+              page that carries the misregistration fringe. */}
           <h1 className="fv-hero text-xl font-medium tracking-tight text-zinc-900">{t.appName}</h1>
         </div>
         <div className="flex items-center gap-2">
-          {/* The way out of the session. Here rather than in the sidebar because the sidebar is
-              hidden on a phone, and a sign-out nobody can reach is a session nobody can end. */}
+          {/* One control. Everything that belongs to the account is behind it, on the account page:
+              a top banner with six actions in it is a menu, and a menu is not a masthead. */}
           {signedIn && (
             <button
-              onClick={() => void signOut()}
-              className="fv-touch h-8 px-2 text-xs font-medium text-zinc-400 hover:text-zinc-700 transition-colors"
+              onClick={() => setUserOpen(true)}
+              aria-label={t.account}
+              title={me?.username ?? t.account}
+              className="fv-touch h-8 w-8 border border-zinc-900 flex items-center justify-center text-xs font-medium text-zinc-900 hover:bg-zinc-900 hover:text-white transition-colors rounded-none"
             >
-              {t.authSignOut}
+              {(me?.username ?? "?").slice(0, 1).toUpperCase()}
             </button>
-          )}
-          {/* On a phone the sidebar is hidden, so its two actions live here instead. */}
-          <button
-            onClick={() => setHistoryOpen(true)}
-            disabled={!me || loading}
-            className="fv-touch md:hidden h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-50 transition-colors"
-          >
-            {t.history}
-            {history.length > 0 && <span className="ml-1 text-zinc-400">{history.length}</span>}
-          </button>
-          {/* Not in history. A placement test is something you sit down to from the live passage,
-              and its result would arrive while you are looking at something else. */}
-          {!browsing && (
-            <button
-              onClick={() => void startPlacement()}
-              disabled={placementBusy || generating || loading || !me}
-              className="fv-touch md:hidden h-8 px-2 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-50 transition-colors"
-            >
-              {t.test}
-            </button>
-          )}
-          {/* In history the language control gives way to the way back: switching track while
-              browsing a stored passage would leave the reader nowhere. One tap returns to the live
-              passage, which is the one thing you want from here. */}
-          {browsing && (
-            <button
-              onClick={() => {
-                if (currentId) void openParagraph(currentId);
-                setBrowsing(false);
-              }}
-              className="fv-touch h-8 px-4 text-xs font-medium bg-zinc-900 text-white rounded-none hover:bg-zinc-800 transition-colors"
-            >
-              {t.current}
-            </button>
-          )}
-          {!browsing && me?.tracks && me.tracks.length > 0 && (
-            <div className="flex h-8 rounded-none border border-zinc-200 overflow-hidden">
-              {me.tracks.map((track) => (
-                <button
-                  key={track.id}
-                  onClick={() => void load(track.id)}
-                  disabled={loading}
-                  className={`fv-touch px-2 text-xs font-medium transition-colors disabled:opacity-50 ${
-                    me.track === track.id
-                      ? "bg-zinc-900 text-white"
-                      : "text-zinc-500 hover:bg-zinc-100"
-                  }`}
-                >
-                  {track.label}
-                </button>
-              ))}
-            </div>
           )}
         </div>
       </header>
 
+      {userOpen && (
+        <div className="fixed inset-0 z-50 bg-white flex flex-col">
+          <div className="h-14 shrink-0 flex items-center justify-between px-4 sm:px-6 border-b border-zinc-200">
+            <span className="text-xs uppercase tracking-wide text-zinc-400">{t.account}</span>
+            <button
+              onClick={() => setUserOpen(false)}
+              className="fv-touch h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 hover:bg-zinc-100 transition-colors rounded-none"
+            >
+              {t.close}
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-xl px-4 sm:px-6 py-8 flex flex-col gap-8">
+              {/* Identity, as a box: the same square as the banner, larger. */}
+              <div className="flex items-center gap-4">
+                <div className="h-16 w-16 shrink-0 border border-zinc-900 flex items-center justify-center text-xl font-medium text-zinc-900">
+                  {(me?.username ?? "?").slice(0, 1).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-zinc-900 truncate">{me?.username ?? "…"}</p>
+                  <p className="text-xs text-zinc-500">
+                    {me ? `${me.targetLang} → ${me.glossLang}` : ""}
+                  </p>
+                </div>
+              </div>
+
+              <section className="border-t border-zinc-200 pt-4">
+                <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-2">{t.level}</p>
+                <p className="text-2xl font-medium text-zinc-900">
+                  {me?.ability?.find((a) => a.targetLang === me?.targetLang)?.level ?? t.levelUnknown}
+                </p>
+              </section>
+
+              {me?.tracks && me.tracks.length > 1 && (
+                <section className="border-t border-zinc-200 pt-4">
+                  <div className="flex h-8 border border-zinc-200 overflow-hidden rounded-none">
+                    {me.tracks.map((track) => (
+                      <button
+                        key={track.id}
+                        onClick={() => {
+                          void load(track.id);
+                          setUserOpen(false);
+                        }}
+                        disabled={loading}
+                        className={`fv-touch flex-1 px-2 text-xs font-medium transition-colors disabled:opacity-50 ${
+                          me.track === track.id ? "bg-zinc-900 text-white" : "text-zinc-500 hover:bg-zinc-100"
+                        }`}
+                      >
+                        {track.label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              <section className="border-t border-zinc-200 pt-4">
+                <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-2">
+                  {t.history} {history.length > 0 && <span className="text-zinc-300">{history.length}</span>}
+                </p>
+                {history.length === 0 ? (
+                  <p className="text-sm text-zinc-500">{t.historyEmpty}</p>
+                ) : (
+                  <ul className="divide-y divide-zinc-200">
+                    {history.map((item) => (
+                      <li key={item._id}>
+                        <button
+                          onClick={() => {
+                            void openHistoryPassage(item._id);
+                            setUserOpen(false);
+                          }}
+                          className="fv-touch w-full flex items-baseline justify-between gap-4 py-2 text-left hover:bg-zinc-50 transition-colors"
+                        >
+                          <span className="text-sm text-zinc-900 truncate">{item.title}</span>
+                          <span className="shrink-0 text-xs text-zinc-400">
+                            {[item.level, item.wordCount ? `${item.wordCount} ${t.words}` : null]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+
+              <section className="border-t border-zinc-200 pt-4 flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    setUserOpen(false);
+                    void startPlacement();
+                  }}
+                  disabled={placementBusy || generating || loading || !me}
+                  className="fv-touch h-11 w-full text-sm font-medium border border-zinc-900 text-zinc-900 hover:bg-zinc-900 hover:text-white disabled:opacity-50 transition-colors rounded-none"
+                >
+                  {t.placement}
+                </button>
+                <button
+                  onClick={() => void signOut()}
+                  className="fv-touch h-11 w-full text-sm font-medium text-zinc-500 hover:text-zinc-900 transition-colors rounded-none"
+                >
+                  {t.authSignOut}
+                </button>
+              </section>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
-        <div className="w-full md:w-4/5 flex flex-col min-h-0 p-4 sm:p-4 md:p-6">
+        <div className="w-full w-full flex flex-col min-h-0 p-4 sm:p-4 md:p-6">
           {/*
             Two rows, because the reader is doing two different things.
 
@@ -1923,57 +1986,6 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
           </div>
         </div>
 
-        <aside className="hidden md:flex md:w-1/5 bg-white border-l fv-hairline flex-col shrink-0">
-          <div className="h-1/2 flex flex-col items-center justify-center gap-4 p-4 border-b border-zinc-200">
-            <div className="w-16 h-16 rounded-none bg-zinc-200 flex items-center justify-center text-zinc-400 text-2xl">
-              ?
-            </div>
-            <span className="text-sm text-zinc-500">
-              {me ? `${me.track}` : "…"}
-            </span>
-            <div className="flex items-center gap-2 mt-2">
-              <span className="text-xs px-2 py-0.5 rounded-none bg-zinc-100 text-zinc-600 font-medium">
-                {me?.targetLang ?? "…"}
-              </span>
-              <span className="text-xs text-zinc-400">→</span>
-              <span className="text-xs text-zinc-400">{me?.glossLang ?? "…"}</span>
-            </div>
-            {/* History, not generation: the way onward is the button in the header now, and this
-                is how you get back to something you read before. */}
-            <button
-              onClick={() => void signOut()}
-              className="fv-touch h-8 px-2 text-xs font-medium text-zinc-400 hover:text-zinc-700"
-              title={t.authSignOut}
-            >
-              {t.authSignOut}
-            </button>
-            <button
-              onClick={() => setHistoryOpen(true)}
-              disabled={!me}
-              className="fv-touch mt-4 h-8 px-4 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-50 transition-colors"
-            >
-              {t.history} {history.length > 0 && <span className="text-zinc-400">{history.length}</span>}
-            </button>
-            {/* Hidden while browsing, for the same reason as the header's: the test belongs to the
-                live passage, not to the archive. */}
-            {!browsing && (
-              <button
-                onClick={() => void startPlacement()}
-                disabled={placementBusy || generating || !me}
-                className="mt-2 h-8 px-4 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 disabled:opacity-50 transition-colors"
-              >
-                {t.placement}
-              </button>
-            )}
-          </div>
-
-          <div className="h-1/2 flex flex-col items-center justify-center p-4 gap-2">
-            <p className="text-[10px] uppercase tracking-wide text-zinc-400">{t.eventLog}</p>
-            <p className="text-xs text-zinc-500 text-center break-words">
-              {lastEvent ?? "—"}
-            </p>
-          </div>
-        </aside>
       </div>
 
       {/*
