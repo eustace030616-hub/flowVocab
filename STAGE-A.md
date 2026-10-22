@@ -43,6 +43,25 @@ serves the UI and auth and answers 501 with a reason elsewhere.
 3. `src/server/app.ts` — 26 call sites, each an `await` plus `c.get("store")`.
 4. The scripts (`generate`, `pregenerate`, importers) — they pass `nodeDriver` explicitly.
 
+## What automation got, and where it stops
+
+Converting `content.ts` and `learner.ts` with a script, then fixing call sites from the compiler's own
+messages, took the tree from **155 type errors to 18**:
+
+```
+  pass                                            errors
+  stores converted (content 12, learner 13)          155
+  enclosing functions converted from tsc output       69
+  call sites fixed from tsc messages (await, arg)     18
+```
+
+Those last 18 are the reason this is not finished: the call-site fixer inserts text at the position the
+compiler reports, and the compiler's position is sometimes not the position it means — `await if (…)`,
+`, nodeDriver` pushed inside an `if (…)` condition, `await ...spread`. Eighteen syntax errors across ten
+files, and the fix is to edit them by hand, not to re-run the script.
+
+So the honest state: the store conversion is mechanical and proven; the last mile is judgement.
+
 ## The mechanical recipe
 
 For a store module, a script can do most of it:
@@ -53,6 +72,25 @@ For a store module, a script can do most of it:
 For the layers above, no script can decide which functions are database-bound — that distinction is
 the work, and it is why the earlier over-reach happened. `tsc` is the guide: every remaining error is
 an `await` or a store argument, and the enclosing function is the one to convert.
+
+## The last mile, precisely
+
+```
+  src/lib/learner/ability.ts           1 site   (await placed inside an expression)
+  src/lib/learner/placement-service.ts 4
+  src/lib/learner/profile.ts           3        (embedding: `...await placementObservations(...)`)
+  src/lib/learner/reading.ts           1
+  src/lib/learner/state.ts             2
+  src/lib/learner/user.ts              1        (store argument landed in the `if (…)` condition)
+  src/lib/store/content.ts             1        (array argument before a spread)
+  src/scripts/generate/generate.ts     1
+  src/scripts/generate/pregenerate.ts  1
+  src/server/app.ts                    1
+```
+
+Each is one line: move the `await` to the call, put the store argument on the call rather than on the
+enclosing `if`, or hoist `await` out of a spread. Then `tsc` is clean, the 212 tests say whether the
+semantics survived, and the Worker can import `src/server/app.ts` — which is the whole point.
 
 ## Why this is worth finishing
 
