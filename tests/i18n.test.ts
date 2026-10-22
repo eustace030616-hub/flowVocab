@@ -20,7 +20,7 @@ function localeKeys(source: string, name: "en" | "zh"): string[] {
 }
 
 test("every string exists in both locales", () => {
-  const source = readFileSync("app/page.tsx", "utf-8");
+  const source = readFileSync("components/FlowwingApp.tsx", "utf-8");
   const en = new Set(localeKeys(source, "en"));
   const zh = new Set(localeKeys(source, "zh"));
 
