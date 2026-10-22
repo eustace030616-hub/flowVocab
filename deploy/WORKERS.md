@@ -62,6 +62,25 @@ passed into the driver per request. `wrangler.toml` with an `assets` binding for
 **D. Static export.** `output: "export"` in `next.config.ts`, the API route excluded from the export,
 and the page's fetches pointed at the Worker's URL. *Verifiable locally.*
 
+## How the Worker reaches the Pi's API today
+
+The store is synchronous on the Pi, so the Worker cannot answer passages itself. It proxies `/api/*`
+to the Pi and serves the same frontend build, which means: same app, same API, same accounts, and one
+username that works on both addresses.
+
+The origin is `PI_ORIGIN` in `worker/wrangler.toml`. It currently points at a **quick tunnel**, whose
+URL changes whenever it restarts — so that value goes stale. Making it durable takes one command on
+the Pi, once:
+
+```bash
+sudo tailscale set --operator=eustace     # lets you manage serve/funnel without sudo
+tailscale funnel --bg 3100                # stable HTTPS at https://berry.taild3bc35.ts.net
+```
+
+Then `PI_ORIGIN = "https://berry.taild3bc35.ts.net"` and the tunnel process is no longer needed.
+Funnel has to be allowed for the tailnet; if the command reports an ACL error, enable Funnel for this
+node in the admin console first.
+
 ## What is already built and verified
 
 `worker/` holds the second half of the deployment:
