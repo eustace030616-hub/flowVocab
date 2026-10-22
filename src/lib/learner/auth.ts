@@ -12,13 +12,13 @@
  *   sessions    an opaque token in the cookie; only its SHA-256 is stored, so the table cannot be
  *               replayed if it leaks.
  */
-import { randomBytes, randomUUID, scryptSync, timingSafeEqual, createHash } from "node:crypto";
+import { randomBytes, randomUUID, createHash } from "node:crypto";
+import { hashPassword, verifyPassword } from "./password";
 import { get, nowMs, run, transaction } from "../store/db";
 import { ensureUser } from "../store/learner";
 
 export const SESSION_COOKIE = "flowwing_session";
 const SESSION_DAYS = 30;
-const KEY_LENGTH = 32;
 
 interface UserRow {
   userId: string;
@@ -26,10 +26,6 @@ interface UserRow {
   passwordHash: string | null;
   passwordSalt: string | null;
   track: string;
-}
-
-function hashPassword(password: string, salt: string): string {
-  return scryptSync(password, salt, KEY_LENGTH).toString("hex");
 }
 
 function hashToken(token: string): string {
@@ -89,29 +85,28 @@ export type AuthResult =
  * browser that already has one claims that history instead of creating a second, empty user: the
  * alternative is that the first person to register silently loses every passage they marked.
  */
-export function register(
+export async function register(
   username: string,
   password: string,
   legacyUserId?: string,
-): AuthResult {
+): Promise<AuthResult> {
   const name = username.trim();
   if (!name || !password) return { ok: false, error: "missing" };
   if (get("SELECT 1 AS x FROM users WHERE username = ?", name)) return { ok: false, error: "taken" };
 
-  const salt = randomBytes(16).toString("hex");
-  const hash = hashPassword(password, salt);
+  const hash = await hashPassword(password);
 
   const userId = randomUUID();
   transaction(() => {
     const legacy = legacyUserId ? get<UserRow>("SELECT * FROM users WHERE userId = ?", legacyUserId) : null;
     if (legacy && !legacy.username) {
-      run("UPDATE users SET username = ?, passwordHash = ?, passwordSalt = ?, updatedAt = ? WHERE userId = ?",
-        name, hash, salt, nowMs(), legacy.userId);
+      run("UPDATE users SET username = ?, passwordHash = ?, passwordSalt = NULL, updatedAt = ? WHERE userId = ?",
+        name, hash, nowMs(), legacy.userId);
       return;
     }
     ensureUser(userId);
-    run("UPDATE users SET username = ?, passwordHash = ?, passwordSalt = ?, updatedAt = ? WHERE userId = ?",
-      name, hash, salt, nowMs(), userId);
+    run("UPDATE users SET username = ?, passwordHash = ?, passwordSalt = NULL, updatedAt = ? WHERE userId = ?",
+      name, hash, nowMs(), userId);
   });
 
   const claimed = legacyUserId && get<UserRow>("SELECT * FROM users WHERE userId = ?", legacyUserId)?.username === name;
@@ -121,16 +116,20 @@ export function register(
   return { ok: true, user: { userId: finalId, username: name, track: row.track }, token };
 }
 
-export function login(username: string, password: string): AuthResult {
+export async function login(username: string, password: string): Promise<AuthResult> {
   const name = username.trim();
   if (!name || !password) return { ok: false, error: "missing" };
   const row = get<UserRow>("SELECT * FROM users WHERE username = ?", name);
-  if (!row?.passwordHash || !row.passwordSalt) return { ok: false, error: "bad-credentials" };
+  // `passwordSalt` is only meaningful for a legacy scrypt row; the portable format carries its salt
+  // inside `passwordHash`, so requiring the column here rejected every upgraded account.
+  if (!row?.passwordHash) return { ok: false, error: "bad-credentials" };
 
-  const expected = Buffer.from(row.passwordHash, "hex");
-  const actual = Buffer.from(hashPassword(password, row.passwordSalt), "hex");
-  if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) {
-    return { ok: false, error: "bad-credentials" };
+  const verified = await verifyPassword(password, row.passwordHash, row.passwordSalt);
+  if (!verified.ok) return { ok: false, error: "bad-credentials" };
+  // A legacy scrypt row migrates itself here, so the account works on Workers from now on.
+  if (verified.upgrade) {
+    run("UPDATE users SET passwordHash = ?, passwordSalt = NULL, updatedAt = ? WHERE userId = ?",
+      verified.upgrade, nowMs(), row.userId);
   }
   return {
     ok: true,

@@ -2035,12 +2035,13 @@ function d1Driver(db) {
 }
 __name(d1Driver, "d1Driver");
 
-// src/crypto.ts
+// ../src/lib/learner/password-core.ts
 var ITERATIONS = 15e4;
 var KEY_BITS = 256;
 var encoder = new TextEncoder();
 function toHex(buffer) {
-  return [...new Uint8Array(buffer)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  const bytes = buffer instanceof Uint8Array ? buffer : new Uint8Array(buffer);
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 __name(toHex, "toHex");
 function fromHex(hex) {
@@ -2050,35 +2051,45 @@ function fromHex(hex) {
   return out;
 }
 __name(fromHex, "fromHex");
-async function derive(password, salt) {
+function constantTimeEqualHex(aHex, bHex) {
+  if (aHex.length !== bHex.length)
+    return false;
+  let diff = 0;
+  for (let i = 0; i < aHex.length; i += 1)
+    diff |= aHex.charCodeAt(i) ^ bHex.charCodeAt(i);
+  return diff === 0;
+}
+__name(constantTimeEqualHex, "constantTimeEqualHex");
+function newSaltHex() {
+  return toHex(crypto.getRandomValues(new Uint8Array(16)));
+}
+__name(newSaltHex, "newSaltHex");
+async function derive(password, saltHex, iterations) {
   const key = await crypto.subtle.importKey("raw", encoder.encode(password), "PBKDF2", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits(
-    { name: "PBKDF2", hash: "SHA-256", salt: encoder.encode(salt), iterations: ITERATIONS },
+    { name: "PBKDF2", hash: "SHA-256", salt: new Uint8Array(fromHex(saltHex)), iterations },
     key,
     KEY_BITS
   );
   return toHex(bits);
 }
 __name(derive, "derive");
-function newSalt() {
-  return toHex(crypto.getRandomValues(new Uint8Array(16)).buffer);
-}
-__name(newSalt, "newSalt");
-async function hashPassword(password, salt) {
-  return derive(password, salt);
+async function hashPassword(password) {
+  const salt = newSaltHex();
+  const hash = await derive(password, salt, ITERATIONS);
+  return `pbkdf2$${ITERATIONS}$${salt}$${hash}`;
 }
 __name(hashPassword, "hashPassword");
-async function verifyPassword(password, salt, expectedHex) {
-  const actual = fromHex(await derive(password, salt));
-  const expected = fromHex(expectedHex);
-  if (actual.length !== expected.length)
+async function verifyPasswordCore(password, stored) {
+  if (!stored.startsWith("pbkdf2$"))
     return false;
-  let diff = 0;
-  for (let i = 0; i < actual.length; i += 1)
-    diff |= actual[i] ^ expected[i];
-  return diff === 0;
+  const [, iterationsText, salt, expected] = stored.split("$");
+  if (!salt || !expected)
+    return false;
+  const actual = await derive(password, salt, Number(iterationsText));
+  return constantTimeEqualHex(actual, expected);
 }
-__name(verifyPassword, "verifyPassword");
+__name(verifyPasswordCore, "verifyPasswordCore");
 async function hashToken(token) {
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(token));
   return toHex(digest);
@@ -2128,17 +2139,15 @@ async function register(store, username, password) {
     return { ok: false, error: "taken" };
   }
   const userId = crypto.randomUUID();
-  const salt = newSalt();
-  const hash = await hashPassword(password, salt);
+  const hash = await hashPassword(password);
   await store.run(
-    "INSERT INTO users (id, userId, track, uiLocale, username, passwordHash, passwordSalt, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO users (id, userId, track, uiLocale, username, passwordHash, passwordSalt, createdAt, updatedAt) VALUES (?,?,?,?,?,?,NULL,?,?)",
     userId,
     userId,
     "en-de",
     "en",
     name,
     hash,
-    salt,
     Date.now(),
     Date.now()
   );
@@ -2155,7 +2164,7 @@ async function login(store, username, password) {
   );
   if (!row?.passwordHash || !row.passwordSalt)
     return { ok: false, error: "bad-credentials" };
-  if (!await verifyPassword(password, row.passwordSalt, row.passwordHash)) {
+  if (!await verifyPasswordCore(password, row.passwordHash)) {
     return { ok: false, error: "bad-credentials" };
   }
   return { ok: true, user: { userId: row.userId, username: name, track: row.track }, token: await startSession(store, row.userId) };

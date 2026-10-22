@@ -11,12 +11,13 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
 
-import { d1Driver } from "./d1";
+import { d1Driver, type D1Database } from "./d1";
 import { SESSION_COOKIE, endSession, login, register, sessionUser } from "./auth";
 
 interface Env {
   DB: D1Database;
-  ASSETS?: Fetcher;
+  /** The static shell, served by the assets binding. */
+  ASSETS?: { fetch(request: Request): Promise<Response> };
 }
 
 const app = new Hono<{ Bindings: Env }>();

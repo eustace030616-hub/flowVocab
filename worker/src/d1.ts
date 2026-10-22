@@ -13,6 +13,20 @@
  */
 import type { StoreDriver } from "../../src/lib/store/driver";
 
+/** The slice of D1 this driver needs, declared here rather than adding a global types package. */
+export interface D1Result<T> {
+  results?: T[];
+}
+export interface D1PreparedStatement {
+  bind(...params: unknown[]): D1PreparedStatement;
+  all<T>(): Promise<D1Result<T>>;
+  first<T>(): Promise<T | null>;
+  run(): Promise<unknown>;
+}
+export interface D1Database {
+  prepare(sql: string): D1PreparedStatement;
+}
+
 export function d1Driver(db: D1Database): StoreDriver {
   return {
     async all<T>(sql: string, ...params: unknown[]) {

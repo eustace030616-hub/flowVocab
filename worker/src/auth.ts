@@ -7,7 +7,7 @@
  * writing it here first is what proves the Workers half can exist without porting everything.
  */
 import type { StoreDriver } from "../../src/lib/store/driver";
-import { hashPassword, hashToken, newSalt, verifyPassword } from "./crypto";
+import { hashPassword, hashToken, verifyStored } from "./crypto";
 
 export const SESSION_COOKIE = "flowwing_session";
 const SESSION_DAYS = 30;
@@ -60,11 +60,11 @@ export async function register(store: StoreDriver, username: string, password: s
   }
 
   const userId = crypto.randomUUID();
-  const salt = newSalt();
-  const hash = await hashPassword(password, salt);
+  // The portable format, one column: the same string the Pi writes, so an account works on both.
+  const hash = await hashPassword(password);
   await store.run(
-    "INSERT INTO users (id, userId, track, uiLocale, username, passwordHash, passwordSalt, createdAt, updatedAt) VALUES (?,?,?,?,?,?,?,?,?)",
-    userId, userId, "en-de", "en", name, hash, salt, Date.now(), Date.now(),
+    "INSERT INTO users (id, userId, track, uiLocale, username, passwordHash, passwordSalt, createdAt, updatedAt) VALUES (?,?,?,?,?,?,NULL,?,?)",
+    userId, userId, "en-de", "en", name, hash, Date.now(), Date.now(),
   );
   return { ok: true, user: { userId, username: name, track: "en-de" }, token: await startSession(store, userId) };
 }
@@ -77,7 +77,7 @@ export async function login(store: StoreDriver, username: string, password: stri
     name,
   );
   if (!row?.passwordHash || !row.passwordSalt) return { ok: false, error: "bad-credentials" };
-  if (!(await verifyPassword(password, row.passwordSalt, row.passwordHash))) {
+  if (!(await verifyStored(password, row.passwordHash))) {
     return { ok: false, error: "bad-credentials" };
   }
   return { ok: true, user: { userId: row.userId, username: name, track: row.track }, token: await startSession(store, row.userId) };

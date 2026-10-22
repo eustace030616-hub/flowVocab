@@ -157,7 +157,7 @@ app.use("*", async (c, next) => {
 
 app.post("/auth/register", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
-  const result = register(String(body.username ?? ""), String(body.password ?? ""), getCookie(c, USER_COOKIE));
+  const result = await register(String(body.username ?? ""), String(body.password ?? ""), getCookie(c, USER_COOKIE));
   if (!result.ok) {
     return c.json({ error: result.error === "taken" ? "that name is taken" : "username and password are required" }, 409);
   }
@@ -167,7 +167,7 @@ app.post("/auth/register", async (c) => {
 
 app.post("/auth/login", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
-  const result = login(String(body.username ?? ""), String(body.password ?? ""));
+  const result = await login(String(body.username ?? ""), String(body.password ?? ""));
   if (!result.ok) return c.json({ error: "wrong name or password" }, 401);
   setCookie(c, SESSION_COOKIE, result.token, cookieOptions());
   return c.json({ ok: true, username: result.user.username });
