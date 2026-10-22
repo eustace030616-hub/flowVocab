@@ -73,6 +73,26 @@ For the layers above, no script can decide which functions are database-bound �
 the work, and it is why the earlier over-reach happened. `tsc` is the guide: every remaining error is
 an `await` or a store argument, and the enclosing function is the one to convert.
 
+## The design change that halves the work
+
+Six attempts at call-site repair failed at the same point, and the reason is worth writing down: the
+driver is **stateless** — a handle to one database, not a connection with per-request state. So it does
+not have to be a parameter at all.
+
+```ts
+// src/lib/store/registry.ts
+setStore(d1Bridge(env.DB))   // Workers: same binding every request, so a race sets the same value
+setStore(nodeDriver)         // Node: once, at startup
+store: StoreDriver = currentStore()   // the parameter remains, defaulted
+```
+
+With that, converted store functions keep working when called without a store, and **call sites only
+need `await` — no argument insertion**. That matters because every one of the repairs that went wrong
+was an argument inserted in the wrong place (`, store` after a closing paren, `, nodeDriver` inside an
+`if` condition, a parameter list). Removing argument insertion removes most of the failure surface.
+
+The explicit parameter stays: tests, scripts and a future second database pass their own.
+
 ## The last mile, precisely
 
 ```
