@@ -61,7 +61,20 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
 
   app.post("/auth/login", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
-    const result = await login(String(body.username ?? ""), String(body.password ?? ""), { store: c.get("store") });
+    let result: Awaited<ReturnType<typeof login>>;
+    try {
+      result = await login(String(body.username ?? ""), String(body.password ?? ""), { store: c.get("store") });
+    } catch {
+      // This host cannot read the hash (Workers cap PBKDF2 at 100,000 iterations). Not a bad password:
+      // the Pi can verify it and will send a usable hash back the moment it is used there once.
+      return c.json(
+        {
+          error: "this account needs one sign-in on the Pi first",
+          detail: "its password hash was made at a cost Cloudflare cannot compute; signing in on berry upgrades it",
+        },
+        409,
+      );
+    }
     if (!result.ok) return c.json({ error: "wrong name or password" }, 401);
     setCookie(c, SESSION_COOKIE, result.token, { httpOnly: true, sameSite: "Lax", path: "/", maxAge: 30 * 86_400 });
     return c.json({ ok: true, username: result.user.username });

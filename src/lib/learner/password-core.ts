@@ -59,6 +59,13 @@ export async function hashPassword(password: string): Promise<string> {
   return `pbkdf2$${ITERATIONS}$${salt}$${hash}`;
 }
 
+/**
+ * Verify a portable hash.
+ *
+ * Workers refuse PBKDF2 above 100,000 iterations, and an account hashed before the count was lowered
+ * carries 150,000 — so this can throw on that runtime. That is not a wrong password, it is a hash this
+ * host cannot read, and callers need to tell the two apart.
+ */
 export async function verifyPasswordCore(
   password: string,
   stored: string,
