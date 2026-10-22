@@ -37,7 +37,7 @@ export async function verifyPassword(
   if (!stored) return { ok: false };
 
   if (stored.startsWith("pbkdf2$")) {
-    return { ok: await verifyPasswordCore(password, stored) };
+    return verifyPasswordCore(password, stored);
   }
 
   if (!legacySalt) return { ok: false };

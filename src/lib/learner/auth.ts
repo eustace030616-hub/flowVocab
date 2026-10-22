@@ -144,7 +144,7 @@ export async function login(
   if (!row?.passwordHash) return { ok: false, error: "bad-credentials" };
 
   const verified = row.passwordHash.startsWith("pbkdf2$")
-    ? { ok: await verifyPasswordCore(password, row.passwordHash) }
+    ? await verifyPasswordCore(password, row.passwordHash)
     : ((await options.verifyLegacy?.(password, row.passwordHash, row.passwordSalt)) ?? { ok: false });
   if (!verified.ok) return { ok: false, error: "bad-credentials" };
   // A legacy scrypt row migrates itself here, so the account works on Workers from now on.

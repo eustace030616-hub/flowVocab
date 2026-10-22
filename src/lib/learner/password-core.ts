@@ -10,7 +10,13 @@
  * The comparison is constant-time written in plain JavaScript, because `timingSafeEqual` is a Node
  * function and this module must not depend on one.
  */
-const ITERATIONS = 150_000;
+/**
+ * 100,000 — which is Cloudflare Workers' ceiling, not a security recommendation. OWASP suggests far
+ * more for PBKDF2-SHA256, so this is the most the shared code can ask for while one format has to
+ * work on both hosts. A stored hash records the count it used, and a row with any other count is
+ * re-hashed on the next successful sign-in, so raising this later migrates everything by itself.
+ */
+const ITERATIONS = 100_000;
 const KEY_BITS = 256;
 const encoder = new TextEncoder();
 
@@ -53,12 +59,19 @@ export async function hashPassword(password: string): Promise<string> {
   return `pbkdf2$${ITERATIONS}$${salt}$${hash}`;
 }
 
-export async function verifyPasswordCore(password: string, stored: string): Promise<boolean> {
-  if (!stored.startsWith("pbkdf2$")) return false;
+export async function verifyPasswordCore(
+  password: string,
+  stored: string,
+): Promise<{ ok: boolean; upgrade?: string }> {
+  if (!stored.startsWith("pbkdf2$")) return { ok: false };
   const [, iterationsText, salt, expected] = stored.split("$");
-  if (!salt || !expected) return false;
+  if (!salt || !expected) return { ok: false };
+
   const actual = await derive(password, salt, Number(iterationsText));
-  return constantTimeEqualHex(actual, expected);
+  if (!constantTimeEqualHex(actual, expected)) return { ok: false };
+  // The count is part of the stored value, so a change of constant migrates by itself on next login.
+  if (Number(iterationsText) !== ITERATIONS) return { ok: true, upgrade: await hashPassword(password) };
+  return { ok: true };
 }
 
 export async function hashToken(token: string): Promise<string> {
