@@ -3,6 +3,7 @@
  * pregenerated.
  */
 
+import type { StoreDriver } from "./driver";
 import { all, bool, flag, get, newId, nowMs, run, transaction } from "./db";
 
 export interface ParagraphRecord {
@@ -89,15 +90,15 @@ export function toParagraph(row: ParagraphRow): ParagraphRecord {
  * A learner new to the language should meet the simplest text available, not whatever was written
  * most recently — recency matters for the history list, not for what to read next.
  */
-export function paragraphsFor(targetLang: string): ParagraphRecord[] {
-  return all<ParagraphRow>(
+export async function paragraphsFor(targetLang: string, store: StoreDriver): Promise<ParagraphRecord[]> {
+  return await store.all<ParagraphRow>(
     "SELECT * FROM paragraphs WHERE targetLang = ? ORDER BY difficulty ASC, createdAt ASC",
     targetLang,
   ).map(toParagraph);
 }
 
-export function paragraphById(id: string): ParagraphRecord | null {
-  const row = get<ParagraphRow>("SELECT * FROM paragraphs WHERE id = ?", id);
+export async function paragraphById(id: string, store: StoreDriver): Promise<ParagraphRecord | null> {
+  const row = await store.get<ParagraphRow>("SELECT * FROM paragraphs WHERE id = ?", id);
   return row ? toParagraph(row) : null;
 }
 
@@ -107,8 +108,8 @@ export function paragraphById(id: string): ParagraphRecord | null {
  * Kept light on purpose — no content, no spans — because the list grows without limit as the reader
  * generates, and the list needs none of it.
  */
-export function paragraphSummaries(targetLang: string, userId: string): ParagraphSummary[] {
-  return all<{
+export async function paragraphSummaries(targetLang: string, userId: string, store: StoreDriver): Promise<ParagraphSummary[]> {
+  return await store.all<{
     id: string;
     title: string;
     topic: string | null;
@@ -155,9 +156,7 @@ export function paragraphSummaries(targetLang: string, userId: string): Paragrap
  * The brief is the identity, not the title: titles are written by the model and change between runs,
  * which is how five briefs once became nine paragraphs.
  */
-export function upsertParagraphByBrief(
-  paragraph: Omit<ParagraphRecord, "_id" | "createdAt"> & { _id?: string },
-): string {
+export async function upsertParagraphByBrief(paragraph: Omit<ParagraphRecord, "_id" | "createdAt"> & { _id?: string }, store: StoreDriver): Promise<string> {
   const existing = paragraph.briefId
     ? get<{ id: string }>(
         "SELECT id FROM paragraphs WHERE targetLang = ? AND briefId = ?",
@@ -167,7 +166,7 @@ export function upsertParagraphByBrief(
     : undefined;
   const id = existing?.id ?? paragraph._id ?? newId();
 
-  run(
+  await store.run(
     `INSERT INTO paragraphs (id, targetLang, title, content, topic, wordCount, level, difficulty,
                              difficultySource, coverage, tokenizerVersion, source, briefId, buffered,
                              starred, promptSnapshot, createdAt, updatedAt)
@@ -203,7 +202,7 @@ export function upsertParagraphByBrief(
 }
 
 export function insertParagraph(paragraph: Omit<ParagraphRecord, "_id" | "createdAt">): string {
-  return upsertParagraphByBrief(paragraph);
+  return await upsertParagraphByBrief(paragraph);
 }
 
 // ── The pregenerated stock ────────────────────────────────────────────────────
@@ -217,15 +216,15 @@ export function insertParagraph(paragraph: Omit<ParagraphRecord, "_id" | "create
  * so "there is a passage in the buffer" is not the same as "there is a passage for this reader".
  * When nothing matches, the caller writes one, which is correct rather than fast.
  */
-export function nextBufferedParagraph(targetLang: string, level?: string | null): ParagraphRecord | null {
+export async function nextBufferedParagraph(targetLang: string, level?: string | null, store: StoreDriver): Promise<ParagraphRecord | null> {
   const row = level
-    ? get<ParagraphRow>(
+    ? await store.get<ParagraphRow>(
         `SELECT * FROM paragraphs WHERE targetLang = ? AND buffered = 1 AND level = ?
          ORDER BY createdAt ASC LIMIT 1`,
         targetLang,
         level,
       )
-    : get<ParagraphRow>(
+    : await store.get<ParagraphRow>(
         "SELECT * FROM paragraphs WHERE targetLang = ? AND buffered = 1 ORDER BY createdAt ASC LIMIT 1",
         targetLang,
       );
@@ -245,8 +244,8 @@ export const POOL_READERS_MAX = 3;
  * have not already read. So the same reader sees the pool shrink as they read, and a reader who has
  * just arrived sees all of it.
  */
-export function poolDepth(userId: string, targetLang: string, level?: string | null): number {
-  const row = get<{ n: number }>(
+export async function poolDepth(userId: string, targetLang: string, level?: string | null, store: StoreDriver): Promise<number> {
+  const row = await store.get<{ n: number }>(
     `SELECT COUNT(*) n FROM paragraphs p
       WHERE p.targetLang = ? AND p.buffered = 1 ${level ? "AND p.level = ?" : ""}
         AND NOT EXISTS (SELECT 1 FROM pool_reads r WHERE r.paragraphId = p.id AND r.userId = ?)`,
@@ -256,8 +255,8 @@ export function poolDepth(userId: string, targetLang: string, level?: string | n
 }
 
 /** Readers so far, for the retirement rule. */
-export function readersOf(paragraphId: string): number {
-  return get<{ n: number }>("SELECT COUNT(*) n FROM pool_reads WHERE paragraphId = ?", paragraphId)?.n ?? 0;
+export async function readersOf(paragraphId: string, store: StoreDriver): Promise<number> {
+  return await store.get<{ n: number }>("SELECT COUNT(*) n FROM pool_reads WHERE paragraphId = ?", paragraphId)?.n ?? 0;
 }
 
 /**
@@ -267,11 +266,9 @@ export function readersOf(paragraphId: string): number {
  * leaves the pool when the third reader arrives, which is what keeps the pool from being a single
  * passage passed around forever.
  */
-export function claimForReader(
-  userId: string,
+export async function claimForReader(userId: string,
   targetLang: string,
-  level?: string | null,
-): ParagraphRecord | null {
+  level?: string | null, store: StoreDriver): Promise<ParagraphRecord | null> {
   const id = get<{ id: string }>(
     `SELECT p.id FROM paragraphs p
       WHERE p.targetLang = ? AND p.buffered = 1 ${level ? "AND p.level = ?" : ""}
@@ -281,10 +278,10 @@ export function claimForReader(
   )?.id;
   if (!id) return null;
 
-  run("INSERT INTO pool_reads (paragraphId, userId, createdAt) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+  await store.run("INSERT INTO pool_reads (paragraphId, userId, createdAt) VALUES (?,?,?) ON CONFLICT DO NOTHING",
     id, userId, nowMs());
   // Retired on the third reader: still theirs to browse, no longer offered to anybody else.
-  if (readersOf(id) >= POOL_READERS_MAX) run("UPDATE paragraphs SET buffered = 0 WHERE id = ?", id);
+  if (await readersOf(id) >= POOL_READERS_MAX) await store.run("UPDATE paragraphs SET buffered = 0 WHERE id = ?", id);
 
   const row = get<ParagraphRow>("SELECT * FROM paragraphs WHERE id = ?", id);
   return row ? toParagraph(row) : null;
@@ -299,11 +296,9 @@ export function claimForReader(
  *
  * Returns the passage that was claimed, or `null` if the pool had nothing matching.
  */
-export function claimBufferedParagraph(
-  targetLang: string,
-  level?: string | null,
-): ParagraphRecord | null {
-  const row = get<ParagraphRow>(
+export async function claimBufferedParagraph(targetLang: string,
+  level?: string | null, store: StoreDriver): Promise<ParagraphRecord | null> {
+  const row = await store.get<ParagraphRow>(
     level
       ? `UPDATE paragraphs SET buffered = 0
            WHERE id = (SELECT id FROM paragraphs
@@ -320,25 +315,25 @@ export function claimBufferedParagraph(
   return row ? toParagraph(row) : null;
 }
 
-export function clearBuffered(id: string): void {
-  run("UPDATE paragraphs SET buffered = 0 WHERE id = ?", id);
+export async function clearBuffered(id: string, store: StoreDriver): Promise<void> {
+  await store.run("UPDATE paragraphs SET buffered = 0 WHERE id = ?", id);
 }
 
-export function markBuffered(id: string): void {
-  run("UPDATE paragraphs SET buffered = 1 WHERE id = ?", id);
+export async function markBuffered(id: string, store: StoreDriver): Promise<void> {
+  await store.run("UPDATE paragraphs SET buffered = 1 WHERE id = ?", id);
 }
 
-export function countBuffered(targetLang: string): number {
-  return Number(get<{ n: number }>("SELECT COUNT(*) AS n FROM paragraphs WHERE targetLang = ? AND buffered = 1", targetLang)?.n ?? 0);
+export async function countBuffered(targetLang: string, store: StoreDriver): Promise<number> {
+  return Number(await store.get<{ n: number }>("SELECT COUNT(*) AS n FROM paragraphs WHERE targetLang = ? AND buffered = 1", targetLang)?.n ?? 0);
 }
 
 /** Stored passages by where they came from — the set `--verify` re-measures. */
-export function paragraphsBySource(source: string): ParagraphRecord[] {
-  return all<ParagraphRow>("SELECT * FROM paragraphs WHERE source = ? ORDER BY createdAt ASC", source).map(toParagraph);
+export async function paragraphsBySource(source: string, store: StoreDriver): Promise<ParagraphRecord[]> {
+  return await store.all<ParagraphRow>("SELECT * FROM paragraphs WHERE source = ? ORDER BY createdAt ASC", source).map(toParagraph);
 }
 
-export function paragraphByBrief(targetLang: string, briefId: string): ParagraphRecord | null {
-  const row = get<ParagraphRow>(
+export async function paragraphByBrief(targetLang: string, briefId: string, store: StoreDriver): Promise<ParagraphRecord | null> {
+  const row = await store.get<ParagraphRow>(
     "SELECT * FROM paragraphs WHERE targetLang = ? AND briefId = ?",
     targetLang,
     briefId,
@@ -347,12 +342,12 @@ export function paragraphByBrief(targetLang: string, briefId: string): Paragraph
 }
 
 /** Flag a passage as stock. The brief is the identity, not the title. */
-export function markBufferedByBrief(targetLang: string, briefId: string): void {
-  run("UPDATE paragraphs SET buffered = 1 WHERE targetLang = ? AND briefId = ?", targetLang, briefId);
+export async function markBufferedByBrief(targetLang: string, briefId: string, store: StoreDriver): Promise<void> {
+  await store.run("UPDATE paragraphs SET buffered = 1 WHERE targetLang = ? AND briefId = ?", targetLang, briefId);
 }
 
-export function countParagraphs(targetLang: string): number {
-  return Number(get<{ n: number }>("SELECT COUNT(*) AS n FROM paragraphs WHERE targetLang = ?", targetLang)?.n ?? 0);
+export async function countParagraphs(targetLang: string, store: StoreDriver): Promise<number> {
+  return Number(await store.get<{ n: number }>("SELECT COUNT(*) AS n FROM paragraphs WHERE targetLang = ?", targetLang)?.n ?? 0);
 }
 
 
@@ -361,8 +356,8 @@ export function countParagraphs(targetLang: string): number {
 /**
  * Kept for the one-off migration of the old global column; new stars go through `stars.ts`.
  */
-export function legacyStarredIds(): string[] {
-  return all<{ id: string }>("SELECT id FROM paragraphs WHERE starred = 1").map((row) => row.id);
+export async function legacyStarredIds(store: StoreDriver): Promise<string[]> {
+  return await store.all<{ id: string }>("SELECT id FROM paragraphs WHERE starred = 1").map((row) => row.id);
 }
 
 /**
@@ -395,7 +390,7 @@ export const HISTORY_KEEP = 30;
  *
  * Returns the ids removed, so a caller can report rather than guess.
  */
-export function pruneUnmarked(targetLang: string, keep = HISTORY_KEEP): string[] {
+export async function pruneUnmarked(targetLang: string, keep = HISTORY_KEEP, store: StoreDriver): Promise<string[]> {
   const candidates = all<{ id: string }>(
     `SELECT id FROM paragraphs
      WHERE targetLang = ? AND buffered = 0
@@ -410,8 +405,8 @@ export function pruneUnmarked(targetLang: string, keep = HISTORY_KEEP): string[]
   );
   if (candidates.length === 0) return [];
   const ids = candidates.map((row) => row.id);
-  transaction(() => {
-    for (const id of ids) run("DELETE FROM paragraphs WHERE id = ?", id);
+  await store.transaction(() => {
+    for (const id of ids) await store.run("DELETE FROM paragraphs WHERE id = ?", id);
   });
   return ids;
 }
