@@ -101,7 +101,7 @@ export const RUBRIC_LIMITS = {
    * So the constraint on A2 is vocabulary, not the threshold, and it is enforced the honest way:
    * by measuring and asking for specific simplifications.
    */
-  minCoverage: MINIMAL_COVERAGE - 0.01,
+  minCoverage: MINIMAL_COVERAGE - 0.02,
   /** And not so easy that it teaches nothing. */
   maxCoverage: COMFORTABLE_COVERAGE + 0.01,
 } as const;

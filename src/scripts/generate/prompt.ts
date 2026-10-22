@@ -54,6 +54,33 @@ const LANGUAGE: Record<TargetLang, { name: string; gloss: string }> = {
   en: { name: "English", gloss: "Chinese" },
 };
 
+/**
+ * House-style exemplars.
+ *
+ * The register of a text is easier to show than to describe, and this project cannot show the model a
+ * Goethe or telc exam text: those are protected, and the licence register here exists precisely to
+ * keep them out. So the examples below were written for this project. They are short, adult, and
+ * end without a moral — the three properties the earlier prompt kept losing because it asked for
+ * "Concrete and ordinary" and "short sentences", which reads as an instruction to write for children.
+ */
+const EXEMPLARS: Partial<Record<CefrLevel, string>> = {
+  A2: `Der Kühlschrank in der Küche ist kaputt. Seit drei Tagen ist das Gemüse im unteren Fach weich.
+Am Montag kommt der Techniker, sagt mir die Hausverwaltung am Telefon. Ich warte bis elf, er kommt nicht.
+Am Abend schreibe ich eine Mail und nenne die Nummer vom Auftrag. Zwei Tage später steht ein Mann vor der Tür.
+Er braucht zwanzig Minuten. Danach ist der Kühlschrank wieder kalt, und ich habe nichts weggeworfen.`,
+  B1: `Als ich am Bahnhof ankam, war der Zug schon weg. Ich hatte eine Stunde früher losfahren wollen, aber
+die Straßenbahn stand zwanzig Minuten im Stau, und ich stand auf dem Gleis und sah nur noch die roten Lichter.
+Am Schalter sagte man mir, der nächste Zug fahre in zwei Stunden, und ich könne die Fahrkarte nicht umtauschen.
+Ich setzte mich auf eine Bank und las die E-Mails, die ich den ganzen Tag aufgeschoben hatte.
+Kurz nach sechs fuhr der Zug dann los, fast leer. Ich war zu müde, um mich zu ärgern.`,
+  B2: `Am Ende der Besprechung sagte die Abteilungsleiterin, sie wolle die Zahlen bis Freitag sehen, und zwar
+aus der neuen Datenbank. Ich hatte diese Datenbank seit dem Wechsel des Systems noch nie benutzt, und der
+Kollege, der sie eingerichtet hatte, war seit dem Frühjahr krank. Also blieb mir nur, die alten Tabellen
+herauszusuchen, sie Stück für Stück zu vergleichen und zu hoffen, dass ich keine Spalte übersah.
+Am Donnerstag war ich um halb eins fertig. Sie nahm das Blatt, sah es an und fragte, ob das alles sei.
+Ich sagte ja. Mehr war nicht zu tun.`,
+};
+
 export function buildSystemPrompt(brief: Brief): string {
   const { name, gloss } = LANGUAGE[brief.targetLang];
   return [
@@ -79,18 +106,35 @@ export function buildSystemPrompt(brief: Brief): string {
     "- Keep the same people and place throughout. No new characters in the last paragraph.",
     `- Each paragraph should be roughly ${Math.round((brief.paragraphs ? brief.words / brief.paragraphs : brief.words) / 25) * 25} words: four to eight sentences of ordinary length.`,
     "  A paragraph of one or two sentences is a fragment, not a paragraph.",
-    "- Concrete and ordinary: something happens, someone does something, there is a small outcome.",
+    "Who is reading this: an adult, reading in a second language. They read newspapers and novels in",
+    "their own language; they are not a child and they are not being entertained. Write for them.",
+    "",
+    "The situation must be adult and specific:",
+    "- Work, money, housing, bureaucracy, health, a disagreement between people, something broken that",
+    "  matters, a decision with a cost. Not school, not pets, not a walk in nice weather.",
+    "- Specificity over cuteness: the exact object, amount, time or word that was said. Concrete detail",
+    "  is what makes prose adult; generalised pleasantness is what makes it childish.",
+    "- There is no moral and no lesson. Do not end by explaining what the story meant, and do not end",
+    "  with everyone content. End on a concrete detail or an unfinished gesture.",
     "- At most one short quotation, and never the whole passage inside quotation marks.",
     "- No lists of unrelated facts, no abrupt changes of subject, no absurd combinations.",
     "",
-    "Language:",
-    "- Prefer the simplest word that says what you mean. Simpler is better than more precise.",
+    "Language — controlled vocabulary, not simple-minded prose:",
+    "- Prefer the simplest word that says what you mean, but do not flatten the sentence to get there.",
+    "- Vary sentence length deliberately: some short, one longer with a subordinate clause (weil,",
+    "  obwohl, während, als). Uniform short sentences read as a reading exercise, not as writing.",
     `- Build the register from the CORE words where they fit naturally; they are advisory, not compulsory.`,
     "- The TARGET list is a pool of new words at this level. Choose the five to eight that fit the",
     "  scene you write, and use each one where its meaning is clear from the context. Leave the rest.",
-    "- Short sentences. No idioms, no wordplay, no metaphors.",
+    "- No idioms, no wordplay, no metaphors, no exclamation marks, no diminutives.",
     "- If the scene needs a word that is too advanced, change what happens in the scene rather than",
     "  forcing an awkward phrase to avoid it. A simpler event told naturally beats a strained one.",
+    "",
+    "Register reference — written for this project, at this level. Imitate the voice, not the content:",
+    EXEMPLARS[brief.level],
+    "",
+    "Register reference — written for this project, at this level. Imitate the voice, not the content:",
+    EXEMPLARS[brief.level] ?? "",
     "",
     "Reply with JSON only, no code fences:",
     `{"title": "short title", "paragraphs": ["first paragraph", "second", "third"]}`,
@@ -135,6 +179,7 @@ export function buildJudgeSystemPrompt(targetLang: TargetLang): string {
     "- The whole passage is one long quotation, or a list rather than a scene.",
     "",
     "Pass it if a patient reader would accept it as a short, simple, connected text.",
+    "",
     "Reply with JSON only, no code fences:",
     '{"coherent": true, "problems": ["specific problem", "..."]}',
   ].join("\n");
