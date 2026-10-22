@@ -11,7 +11,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { trackFor } from "../../models/User";
+import { trackFor } from "../lang";
 import { ensureUser, setUserTrack, userByUserId } from "../store/learner";
 import type { TrackId } from "../lang";
 

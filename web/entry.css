@@ -1,0 +1,10 @@
+/* The app's stylesheet, plus the one thing the Vite build cannot infer.
+ *
+ * Tailwind v4 detects class names from the project root — which here is `web/` — so every utility
+ * used in `components/` and `app/` was invisible and the build emitted 4.9kB of CSS and a page with no
+ * boxes. `@source` tells it where the markup actually is.
+ */
+@import "../styles/globals.css";
+
+@source "../components";
+@source "../src";

@@ -1,12 +1,8 @@
 import { Hono } from "hono";
+import type { StoreDriver } from "@/src/lib/store/driver";
 import { isStarred, setStar, starredAmong } from "@/src/lib/store/stars";
-import { handle } from "hono/vercel";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 
-import { Paragraph } from "@/src/models/Paragraph";
-import { Word } from "@/src/models/Word";
-import { Mark } from "@/src/models/Mark";
-import { Provenance } from "@/src/models/Provenance";
 import {
   glossLangFor,
   isTargetLang,
@@ -17,7 +13,7 @@ import {
   type TrackId,
 } from "@/src/lib/lang";
 import { verifyPassword } from "@/src/lib/learner/password";
-import { nodeDriver } from "@/src/lib/store/driver-node";
+
 import {
   SESSION_COOKIE,
   endSession,
@@ -38,7 +34,6 @@ import {
   recomputeWordState,
   statesFor,
 } from "@/src/lib/learner/state";
-import { WordState } from "@/src/models/WordState";
 import { tokenizeWithLexicon, wordsForSpans } from "@/src/lib/learner/lexicon";
 import { pickExistingWord } from "@/src/lib/learner/resolve";
 import { allGlossesFor, glossesByLemma, pickGloss } from "@/src/lib/learner/glosses";
@@ -100,15 +95,22 @@ import { onDemandBrief } from "@/src/scripts/generate/briefs";
 import { refillBuffer } from "@/src/scripts/generate/pregenerate";
 import { deepseekProvider } from "@/src/scripts/generate/provider";
 import { loadEnv } from "@/src/scripts/env";
-import { AbilityState } from "@/src/models/AbilityState";
 import type { CefrLevel } from "@/src/lib/lang";
 
 const env = loadEnv();
 import { wordSpans, TOKENIZER_VERSION } from "@/src/lib/tokenize";
 
-type Variables = { user: ResolvedUser; username: string | null };
+type Variables = { user: ResolvedUser; username: string | null; store: StoreDriver };
 
-const app = new Hono<{ Variables: Variables }>().basePath("/api");
+/**
+ * The API, as a function of where its rows live.
+ *
+ * No driver is imported here on purpose. The Node entry passes the SQLite file, the Worker passes a D1
+ * binding, and neither drags the other's runtime into its bundle — which is what makes one module serve
+ * both hosts for real rather than in principle.
+ */
+export function createApp(getStore: (env: unknown) => StoreDriver) {
+  const app = new Hono<{ Variables: Variables }>().basePath("/api");
 
 const EVENT_TYPES = [
   "exposure",
@@ -134,8 +136,19 @@ const EVENT_TYPES = [
  * own: without a session, everything except the auth routes answers 401, and the page shows the
  * gate. That keeps the first person's existing data without letting anyone in by looking like them.
  */
+/**
+ * Which store this request uses.
+ *
+ * The one thing that differs between the two deployments: a Worker has `env.DB` (D1) and no file, the
+ * Node server has the file and no binding. Everything below this line is the same code either way.
+ */
 app.use("*", async (c, next) => {
-  const session = await sessionUser(getCookie(c, SESSION_COOKIE), nodeDriver);
+  c.set("store", getStore(c.env));
+  await next();
+});
+
+app.use("*", async (c, next) => {
+  const session = await sessionUser(getCookie(c, SESSION_COOKIE), c.get("store"));
   // `resolveUser` returns `{ user, created }`; the identity is its `.user`.
   const legacyCookie = getCookie(c, USER_COOKIE);
   const legacy = session || !legacyCookie ? null : (await resolveUser(legacyCookie)).user;
@@ -159,7 +172,7 @@ app.use("*", async (c, next) => {
 
 app.post("/auth/register", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
-  const result = await register(String(body.username ?? ""), String(body.password ?? ""), getCookie(c, USER_COOKIE), nodeDriver);
+  const result = await register(String(body.username ?? ""), String(body.password ?? ""), getCookie(c, USER_COOKIE), c.get("store"));
   if (!result.ok) {
     return c.json({ error: result.error === "taken" ? "that name is taken" : "username and password are required" }, 409);
   }
@@ -170,7 +183,7 @@ app.post("/auth/register", async (c) => {
 app.post("/auth/login", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
   const result = await login(String(body.username ?? ""), String(body.password ?? ""), {
-    store: nodeDriver,
+    store: c.get("store"),
     verifyLegacy: verifyPassword,
   });
   if (!result.ok) return c.json({ error: "wrong name or password" }, 401);
@@ -179,13 +192,13 @@ app.post("/auth/login", async (c) => {
 });
 
 app.post("/auth/logout", async (c) => {
-  await endSession(getCookie(c, SESSION_COOKIE), nodeDriver);
+  await endSession(getCookie(c, SESSION_COOKIE), c.get("store"));
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
   return c.json({ ok: true });
 });
 
 app.get("/auth/me", async (c) => {
-  const session = await sessionUser(getCookie(c, SESSION_COOKIE), nodeDriver);
+  const session = await sessionUser(getCookie(c, SESSION_COOKIE), c.get("store"));
   return c.json({ signedIn: Boolean(session), username: session?.username ?? null });
 });
 
@@ -1029,8 +1042,5 @@ app.get("/provenance", async (c) => {
   return c.json(datasets);
 });
 
-export const GET = handle(app);
-export const POST = handle(app);
-export const PUT = handle(app);
-export const DELETE = handle(app);
-export const PATCH = handle(app);
+  return app;
+}

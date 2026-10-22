@@ -12,7 +12,7 @@ database_id = "48c3c18c-f1ba-4007-a4fe-f606d6485aa0"
 # The page is static: Next's `output: "export"` (or this shell, for the first stage) is served by the
 # assets binding, and the Worker handles only /api. Nothing about the frontend needs a server.
 [assets]
-directory = "./public"
+directory = "../web/dist"
 binding = "ASSETS"
 
 [observability]

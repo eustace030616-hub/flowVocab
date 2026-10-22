@@ -10,14 +10,12 @@
  * difference between the two.
  */
 
-import { connectDB } from "../../lib/db";
 import { abilityFor, anyAbilityUser } from "../../lib/store/learner";
 import { countBuffered, markBufferedByBrief, paragraphByBrief } from "../../lib/store/content";
 import { targetBriefLevel } from "../../lib/learner/band";
 import { briefIdOf, onDemandBrief } from "./briefs";
 import { deepseekProvider, describeProvider } from "./provider";
 import { generateOne, importParagraph } from "./generate";
-import { assertShippable } from "../../lib/licence/datasets";
 import type { CefrLevel, TargetLang } from "../../lib/lang";
 import { runIfEntry } from "../run";
 
@@ -91,7 +89,13 @@ export async function refillBuffer(
 }
 
 async function main() {
+  // Resolved at runtime through a variable so bundlers cannot fold it in: the API imports this module
+  // for `refillBuffer`, and it must not drag MongoDB into a Worker bundle.
+  const licence = "../../lib/licence/datasets";
+  const { assertShippable } = await import(licence);
   assertShippable("deepseek-generated");
+  const mongo = "../../lib/db";
+  const { connectDB } = await import(mongo);
   await connectDB();
   const provider = deepseekProvider();
   const count = Number(argOf("--count") ?? BUFFER_TARGET);

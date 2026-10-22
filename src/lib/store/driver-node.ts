@@ -9,6 +9,7 @@ import { all, db, get, run } from "./db";
 import type { StoreDriver } from "./driver";
 
 export const nodeDriver: StoreDriver = {
+  kind: "node",
   async all<T>(sql: string, ...params: unknown[]) {
     return all<T>(sql, ...params);
   },

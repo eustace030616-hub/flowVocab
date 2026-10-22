@@ -12,6 +12,8 @@
  * free now costs six hops.
  */
 export interface StoreDriver {
+  /** Which host this is, so a route can say "not on this one yet" rather than fail obscurely. */
+  kind: "node" | "d1";
   /** Every row. */
   all<T>(sql: string, ...params: unknown[]): Promise<T[]>;
   /** The first row, or `null`. */

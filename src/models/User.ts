@@ -39,6 +39,4 @@ const UserSchema = new Schema<IUser>(
 export const User = models.User || model<IUser>("User", UserSchema);
 
 /** The full (targetLang, glossLang, uiLocale) triple for a user's current track. */
-export function trackFor(user: Pick<IUser, "track">): Track {
-  return TRACKS[user.track] ?? TRACKS[DEFAULT_TRACK];
-}
+export { trackFor } from "../lib/lang";

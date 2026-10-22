@@ -21,8 +21,7 @@
  * strongest evidence of knowing a word) and `lookup` (checked, but not marked).
  */
 
-import { Event, type EventSource, type EventType, type EventItem } from "../../models/Event";
-type IEvent = InstanceType<typeof Event>;
+import type { EventSource, EventType, EventItem, IEvent } from "../../models/Event";
 import { type WordStatus } from "../../models/WordState";
 import {
   countEvents,
@@ -100,7 +99,7 @@ export function statusFor(timesMet: number, unfamiliarity: number): WordStatus {
 }
 
 export function countsFromEvents(
-  events: Array<Pick<import("../../models/Event").IEvent, "type">>,
+  events: Array<Pick<IEvent, "type">>,
 ): SignalCounts {
   const counts: SignalCounts = { ...EMPTY_COUNTS };
   for (const e of events) {

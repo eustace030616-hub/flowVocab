@@ -1,97 +1,83 @@
 /**
- * The API on Workers, reading D1.
+ * The Worker entry — the maximum sharing the store currently allows.
  *
- * This is the second half of the deployment in `deploy/WORKERS.md`: the page is static and served as
- * assets, the API is this Worker, and the store is D1 through the same driver seam the local app uses.
+ * It imports the *same* auth module and serves the *same* UI build as the Pi. It does not import
+ * `src/server/app.ts`, and that is not a preference: the rest of the API still reaches `node:sqlite`
+ * through the synchronous store, which the platform refuses at upload time (`No such module
+ * "node:sqlite"`). Until that store is async, the honest shape is:
  *
- * What is here now is the proof rather than the product: the Worker boots, binds D1, and answers from
- * real tables. The remaining work is mechanical — the store functions are still written for a
- * synchronous local file (see `deploy/WORKERS.md`, stage A).
+ *     shared      the UI, the auth module, the password format, the driver seam
+ *     not yet     passages, marks, events, placement, generation — 501 here, with a reason
  */
 import { Hono } from "hono";
-import { cors } from "hono/cors";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 
-import { d1Driver, type D1Database } from "./d1";
 import { SESSION_COOKIE, endSession, login, register, sessionUser } from "../../src/lib/learner/auth";
+import { d1Bridge, type D1Like } from "../../src/lib/store/driver-d1";
 
 interface Env {
-  DB: D1Database;
-  /** The static shell, served by the assets binding. */
+  DB: D1Like;
   ASSETS?: { fetch(request: Request): Promise<Response> };
 }
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env }>().basePath("/api");
+const store = (env: Env) => d1Bridge(env.DB);
 
-app.use("*", cors({ origin: (origin) => origin, credentials: true }));
-
-/**
- * The gate, on Workers.
- *
- * Same contract as the Pi's: any name, any password; a session cookie is the identity; everything
- * except the auth routes answers 401 without one.
- */
-function cookieFrom(request: Request, name: string): string | undefined {
-  const header = request.headers.get("Cookie") ?? "";
-  for (const part of header.split(";")) {
-    const [key, ...rest] = part.trim().split("=");
-    if (key === name) return rest.join("=");
-  }
-  return undefined;
+function cookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "Lax" as const,
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+    // Off by default: served over plain HTTP in some setups, where a `secure` cookie is never sent back.
+    secure: false,
+  };
 }
 
-function withSession(response: Response, token: string): Response {
-  response.headers.append(
-    "Set-Cookie",
-    `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${30 * 86_400}`,
-  );
-  return response;
-}
-
-app.post("/api/auth/register", async (c) => {
+app.post("/auth/register", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
-  const result = await register(String(body.username ?? ""), String(body.password ?? ""), undefined, d1Driver(c.env.DB));
+  const result = await register(String(body.username ?? ""), String(body.password ?? ""), undefined, store(c.env));
   if (!result.ok) {
     return c.json({ error: result.error === "taken" ? "that name is taken" : "username and password are required" }, 409);
   }
-  return withSession(c.json({ ok: true, username: result.user.username }, 201), result.token);
+  setCookie(c, SESSION_COOKIE, result.token, cookieOptions());
+  return c.json({ ok: true, username: result.user.username }, 201);
 });
 
-app.post("/api/auth/login", async (c) => {
+app.post("/auth/login", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };
-  const result = await login(String(body.username ?? ""), String(body.password ?? ""), { store: d1Driver(c.env.DB) });
+  const result = await login(String(body.username ?? ""), String(body.password ?? ""), { store: store(c.env) });
   if (!result.ok) return c.json({ error: "wrong name or password" }, 401);
-  return withSession(c.json({ ok: true, username: result.user.username }), result.token);
+  setCookie(c, SESSION_COOKIE, result.token, cookieOptions());
+  return c.json({ ok: true, username: result.user.username });
 });
 
-app.post("/api/auth/logout", async (c) => {
-  await endSession(cookieFrom(c.req.raw, SESSION_COOKIE), d1Driver(c.env.DB));
-  const response = c.json({ ok: true });
-  response.headers.append("Set-Cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; Max-Age=0`);
-  return response;
+app.post("/auth/logout", async (c) => {
+  await endSession(getCookie(c, SESSION_COOKIE), store(c.env));
+  deleteCookie(c, SESSION_COOKIE, { path: "/" });
+  return c.json({ ok: true });
 });
 
-app.get("/api/auth/me", async (c) => {
-  const session = await sessionUser(cookieFrom(c.req.raw, SESSION_COOKIE), d1Driver(c.env.DB));
+app.get("/auth/me", async (c) => {
+  const session = await sessionUser(getCookie(c, SESSION_COOKIE), store(c.env));
   return c.json({ signedIn: Boolean(session), username: session?.username ?? null });
 });
 
-app.use("/api/*", async (c, next) => {
-  const open = c.req.path.startsWith("/api/auth/") || c.req.method === "OPTIONS";
-  const session = open ? null : await sessionUser(cookieFrom(c.req.raw, SESSION_COOKIE), d1Driver(c.env.DB));
-  if (!open && !session) return c.json({ error: "sign in required", signedIn: false }, 401);
+app.use("*", async (c, next) => {
+  const session = await sessionUser(getCookie(c, SESSION_COOKIE), store(c.env));
+  if (!session) return c.json({ error: "sign in required", signedIn: false }, 401);
+  c.set("userId" as never, session.userId as never);
   await next();
 });
 
-/** What the page asks for on load. Empty in this stage: no passages exist yet. */
-app.get("/api/me", async (c) => {
-  const session = await sessionUser(cookieFrom(c.req.raw, SESSION_COOKIE), d1Driver(c.env.DB));
-  if (!session) return c.json({ error: "sign in required" }, 401);
+app.get("/me", async (c) => {
+  const session = (await sessionUser(getCookie(c, SESSION_COOKIE), store(c.env)))!;
   return c.json({
     userId: session.userId,
     username: session.username,
     track: session.track,
-    targetLang: "de",
-    glossLang: "en",
+    targetLang: session.track === "zh-en" ? "en" : "de",
+    glossLang: session.track === "zh-en" ? "zh" : "en",
     uiLocale: "en",
     tracks: [
       { id: "en-de", targetLang: "de", glossLang: "en" },
@@ -101,34 +87,36 @@ app.get("/api/me", async (c) => {
   });
 });
 
-app.get("/api/paragraphs", async (c) => c.json([]));
-
-app.get("/api/health", async (c) => {
-  const store = d1Driver(c.env.DB);
-  const [words, glosses, paragraphs] = await Promise.all([
-    store.get<{ n: number }>("SELECT COUNT(*) n FROM words"),
-    store.get<{ n: number }>("SELECT COUNT(*) n FROM glosses"),
-    store.get<{ n: number }>("SELECT COUNT(*) n FROM paragraphs"),
-  ]);
-  return c.json({
-    ok: true,
-    runtime: "workers",
-    words: words?.n ?? 0,
-    glosses: glosses?.n ?? 0,
-    paragraphs: paragraphs?.n ?? 0,
-  });
+app.patch("/me/track", async (c) => {
+  const body = (await c.req.json().catch(() => ({}))) as { track?: string };
+  const session = (await sessionUser(getCookie(c, SESSION_COOKIE), store(c.env)))!;
+  await store(c.env).run("UPDATE users SET track = ?, updatedAt = ? WHERE userId = ?", body.track ?? session.track, Date.now(), session.userId);
+  return c.json({ ok: true, track: body.track ?? session.track });
 });
 
-/** The pool, as the page will ask for it: what this reader has not read yet. */
-app.get("/api/pool", async (c) => {
-  const store = d1Driver(c.env.DB);
-  const level = c.req.query("level") ?? "B1";
-  const rows = await store.all<{ id: string; title: string; level: string }>(
-    "SELECT id, title, level FROM paragraphs WHERE targetLang = ? AND buffered = 1 AND level = ? LIMIT 5",
-    c.req.query("targetLang") ?? "de",
-    level,
-  );
-  return c.json({ level, passages: rows });
-});
+// Everything below needs the synchronous store. Said plainly rather than failing obscurely.
+app.all("*", (c) =>
+  c.json(
+    {
+      error: "not available on this host yet",
+      detail:
+        "this route reads the local SQLite store; it moves to D1 when the store becomes async (deploy/WORKERS.md, stage A)",
+      route: c.req.path,
+    },
+    501,
+  ),
+);
 
-export default app;
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith("/api/")) return app.fetch(request, env, ctx as never);
+    if (env.ASSETS) return env.ASSETS.fetch(request);
+    return new Response("not found", { status: 404 });
+  },
+};
+
+interface ExecutionContext {
+  waitUntil(promise: Promise<unknown>): void;
+  passThroughOnException(): void;
+}

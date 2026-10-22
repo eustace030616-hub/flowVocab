@@ -14,8 +14,9 @@ export default defineConfig({
     alias: { "@": root },
   },
   build: {
-    // Straight into what the Worker serves as assets, so `wrangler deploy` ships the real UI.
-    outDir: fileURLToPath(new URL("../worker/public", import.meta.url)),
+    // `web/dist` is the frontend: the Node server reads it, and the Worker's assets binding reads the
+    // same directory. One build, both hosts.
+    outDir: fileURLToPath(new URL("./dist", import.meta.url)),
     emptyOutDir: true,
   },
 });

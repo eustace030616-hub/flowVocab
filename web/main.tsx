@@ -8,7 +8,7 @@
 import { createRoot } from "react-dom/client";
 
 import FlowwingApp from "../components/FlowwingApp";
-import "../app/globals.css";
+import "./entry.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("no #root to mount into");

@@ -15,7 +15,6 @@
  * the number is the evidence about whether it is being honoured.
  */
 
-import { connectDB } from "../../lib/db";
 import {
   glossKeys as glossKeySet,
   glossesByKeys,
@@ -24,7 +23,6 @@ import {
 } from "../../lib/store/dictionary";
 import { upsertParagraphByBrief, paragraphsBySource } from "../../lib/store/content";
 import { TOKENIZER_VERSION } from "../../lib/tokenize";
-import { assertShippable } from "../../lib/licence/datasets";
 import { levelMidpoint } from "../../lib/difficulty";
 import { glossLangFor, type CefrLevel, type TargetLang } from "../../lib/lang";
 import { tokenizeWithLexicon } from "../../lib/learner/lexicon";
@@ -547,6 +545,8 @@ async function verifyStored(): Promise<number> {
 async function main() {
   // Provenance is an obligation in both directions: the vocabulary the prompt is built from comes
   // from licensed datasets, and the output is itself a data source with terms of its own.
+  const licence = "../../lib/licence/datasets";
+  const { assertShippable } = await import(licence);
   assertShippable("cefrj-vocabulary-profile-1.5");
   assertShippable("deepseek-generated");
   const provider = deepseekProvider();
@@ -562,6 +562,10 @@ async function main() {
   console.log(`  mode         ${dryRun ? "dry run (nothing written)" : "import"}`);
   console.log("");
 
+  // Runtime-resolved so a bundler cannot fold MongoDB into a Worker bundle that merely imports
+  // `generateOne`. This line only ever runs in the CLI.
+  const mongo = "../../lib/db";
+  const { connectDB } = await import(mongo);
   await connectDB();
 
   if (process.argv.includes("--verify")) {

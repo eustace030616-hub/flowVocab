@@ -23,6 +23,9 @@ APP="/home/eustace/flowwing/app"
 
 cd "$(dirname "$0")/.."
 
+LOCAL_LOCK=$(shasum -a 256 package-lock.json | awk '{print $1}')
+REMOTE_LOCK=$(ssh "$HOST" "sha256sum $APP/package-lock.json 2>/dev/null | awk '{print \$1}'" || true)
+
 echo "▸ syncing source"
 rsync -az --delete \
   --exclude node_modules --exclude .next --exclude data --exclude .git \
@@ -30,8 +33,6 @@ rsync -az --delete \
   ./ "$HOST:$APP/"
 
 # `npm ci` only when the lockfile actually moved: it is the slowest step and usually unnecessary.
-LOCAL_LOCK=$(shasum -a 256 package-lock.json | awk '{print $1}')
-REMOTE_LOCK=$(ssh "$HOST" "sha256sum $APP/package-lock.json 2>/dev/null | awk '{print \$1}'" || true)
 if [ "$LOCAL_LOCK" != "$REMOTE_LOCK" ]; then
   echo "▸ dependencies changed — installing"
   ssh "$HOST" "cd $APP && /usr/local/bin/npm ci --no-audit --no-fund 2>&1 | tail -2"

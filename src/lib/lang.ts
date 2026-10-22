@@ -100,3 +100,8 @@ export function isCefrLevel(value: unknown): value is CefrLevel {
  * B1 the honest answer is a band, not a level.
  */
 export const UNKNOWN_DIFFICULTY = -1;
+
+/** The track a user row refers to, falling back to the default. Pure, so the runtime can import it. */
+export function trackFor(user: { track: string }): Track {
+  return TRACKS[user.track as TrackId] ?? TRACKS[DEFAULT_TRACK];
+}
