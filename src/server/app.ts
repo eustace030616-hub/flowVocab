@@ -275,7 +275,7 @@ app.get("/paragraphs", async (c) => {
 
   const out = [];
   for (const paragraph of paragraphs) {
-    out.push(await readerPayload(user.userId, paragraph, targetLang, glossLang));
+    out.push(await readerPayload(user.userId, paragraph, targetLang, glossLang, c.get("store")));
   }
 
   return c.json(out);
@@ -293,6 +293,7 @@ async function readerPayload(
   paragraph: ParagraphRecord,
   targetLang: TargetLang,
   glossLang: GlossLang,
+  store: StoreDriver,
 ) {
   {
     const spans = await tokenizeWithLexicon(paragraph.content, targetLang);
@@ -452,7 +453,7 @@ async function readerPayload(
       ...paragraph,
       // Overrides the legacy column of the same name: a star belongs to a reader, and spreading the
       // row was what made one person's star visible to everybody.
-      starred: isStarred(userId, String(paragraph._id)),
+      starred: await isStarred(userId, String(paragraph._id), store),
       spans,
       marked,
       vocabulary,
@@ -485,7 +486,7 @@ app.get("/paragraphs/:id", async (c) => {
   const paragraph = paragraphById(c.req.param("id"));
   if (!paragraph) return c.json({ error: "Not found" }, 404);
   const targetLang = (paragraph.targetLang ?? targetLangFor(c)) as TargetLang;
-  return c.json(await readerPayload(user.userId, paragraph, targetLang, glossLangFor(targetLang)));
+  return c.json(await readerPayload(user.userId, paragraph, targetLang, glossLangFor(targetLang), c.get("store")));
 });
 
 // ── Words ─────────────────────────────────────────────────────────────────────
@@ -684,8 +685,8 @@ app.post("/paragraphs/:id/star", async (c) => {
   const paragraph = paragraphById(id);
   if (!paragraph) return c.json({ error: "no such paragraph" }, 404);
   // A toggle is per reader now: "unstarred for me" is not a statement about anybody else.
-  const starred = typeof body.starred === "boolean" ? body.starred : !isStarred(user.userId, id);
-  setStar(user.userId, id, starred);
+  const starred = typeof body.starred === "boolean" ? body.starred : !(await isStarred(user.userId, id, c.get("store")));
+  await setStar(user.userId, id, starred, c.get("store"));
   return c.json({ ok: true, starred });
 });
 
@@ -709,7 +710,7 @@ app.post("/paragraphs/:id/difficulty", async (c) => {
     return c.json({ error: "band must be easy, hard or very_hard" }, 400);
   }
 
-  const payload = await readerPayload(user.userId, paragraph, paragraph.targetLang, glossLangFor(paragraph.targetLang));
+  const payload = await readerPayload(user.userId, paragraph, paragraph.targetLang, glossLangFor(paragraph.targetLang), c.get("store"));
   const ability = abilityFor(user.userId, paragraph.targetLang);
   await recordDifficultyVote({
     userId: user.userId,

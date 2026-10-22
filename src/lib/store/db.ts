@@ -20,20 +20,9 @@ import { SCHEMA_SQL } from "./schema";
 export const DATABASE_PATH =
   process.env.FLOWWING_DB ?? path.join(process.cwd(), "data", "flowwing.sqlite3");
 
-/**
- * Identifiers stay 24-character hex, the shape the documents used.
- *
- * Not vanity: existing rows keep their ids through the migration, and the client, the API paths and
- * the marks all reference paragraphs and words by that string. Renumbering would have made the move
- * a rewrite of everything that points at a row.
- */
-export function newId(): string {
-  return randomBytes(12).toString("hex");
-}
 
-export function nowMs(): number {
-  return Date.now();
-}
+
+
 
 /**
  * Columns added after a table already existed.
@@ -92,6 +81,9 @@ export function closeDatabase(): void {
 
 export type Row = Record<string, unknown>;
 
+// Pure helpers live in `util.ts`; re-exported so callers do not care where they are defined.
+export { bool, flag, json, newId, nowMs, placeholders } from "./util";
+
 export function all<T = Row>(sql: string, ...params: unknown[]): T[] {
   return db().prepare(sql).all(...(params as never[])) as T[];
 }
@@ -104,28 +96,13 @@ export function run(sql: string, ...params: unknown[]): void {
   db().prepare(sql).run(...(params as never[]));
 }
 
-/** `IN (?, ?, ?)` for a list, with the params to match. Empty lists are the caller's problem. */
-export function placeholders(count: number): string {
-  return Array.from({ length: count }, () => "?").join(", ");
-}
 
-export function json<T>(value: string | null | undefined, fallback: T): T {
-  if (!value) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}
 
-export function bool(value: unknown): boolean {
-  return value === 1 || value === true || value === "1";
-}
 
-/** Booleans are integers in SQLite; this keeps the conversion in one place. */
-export function flag(value: boolean | undefined | null): number {
-  return value ? 1 : 0;
-}
+
+
+
+
 
 /**
  * Run a batch inside one transaction.
