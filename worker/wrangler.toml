@@ -17,3 +17,8 @@ binding = "ASSETS"
 
 [observability]
 enabled = false
+
+# Interim API origin: the Pi, reached through a Cloudflare quick tunnel. Ephemeral by nature — when the
+# tunnel restarts, this value must be updated. Removed when the store is async (STAGE-A.md).
+[vars]
+PI_ORIGIN = "https://acre-makers-nissan-omissions.trycloudflare.com"

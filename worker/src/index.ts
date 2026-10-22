@@ -18,6 +18,15 @@ import { d1Bridge, type D1Like } from "../../src/lib/store/driver-d1";
 interface Env {
   DB: D1Like;
   ASSETS?: { fetch(request: Request): Promise<Response> };
+  /**
+   * Where the real API lives, for the interim.
+   *
+   * The store is still synchronous on the Pi, so this host cannot serve passages itself. Proxying is
+   * the honest interim: the frontend, the API and the accounts are the Pi's, and only the address the
+   * browser talks to is Cloudflare's. It also means one account works on both URLs, because there is
+   * one account table.
+   */
+  PI_ORIGIN?: string;
 }
 
 const app = new Hono<{ Bindings: Env }>().basePath("/api");
@@ -110,7 +119,15 @@ app.all("*", (c) =>
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname.startsWith("/api/")) return app.fetch(request, env, ctx as never);
+    if (url.pathname.startsWith("/api/")) {
+      // Interim: the Pi answers the API. The request goes out as it came in, so cookies, bodies and
+      // methods are preserved, and the response (including Set-Cookie) is returned untouched.
+      if (env.PI_ORIGIN) {
+        const target = new URL(url.pathname + url.search, env.PI_ORIGIN);
+        return fetch(new Request(target, request));
+      }
+      return app.fetch(request, env, ctx as never);
+    }
     if (env.ASSETS) return env.ASSETS.fetch(request);
     return new Response("not found", { status: 404 });
   },
