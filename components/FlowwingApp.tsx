@@ -390,8 +390,6 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
   const [historyOpen, setHistoryOpen] = useState(false);
   /** The account page: level, history, the test and signing out live here now. */
   const [userOpen, setUserOpen] = useState(false);
-  /** The history is folded by default: it is a picker, not the point of the page. */
-  const [historyExpanded, setHistoryExpanded] = useState(false);
   /**
    * Something is being fetched for the reader.
    *
@@ -1440,78 +1438,50 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
 
       {userOpen && (
         <div className="fixed inset-0 z-50 bg-white flex flex-col">
-          <div className="h-14 shrink-0 flex items-center justify-between px-4 sm:px-6 border-b border-zinc-200">
-            <span className="text-xs uppercase tracking-wide text-zinc-400">{t.account}</span>
-            <button
-              onClick={() => setUserOpen(false)}
-              className="fv-touch h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 hover:bg-zinc-100 transition-colors rounded-none"
-            >
-              {t.close}
-            </button>
-          </div>
-
           <div className="flex-1 overflow-y-auto">
-            <div className="mx-auto w-full max-w-xl px-4 sm:px-6 py-8 flex flex-col gap-8">
-              {/* Identity, as a box: the same square as the banner, larger. */}
-              <div className="flex items-center gap-4">
-                <div className="h-16 w-16 shrink-0 border border-zinc-900 flex items-center justify-center text-xl font-medium text-zinc-900">
-                  {(me?.username ?? "?").slice(0, 1).toUpperCase()}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-zinc-900 truncate">{me?.username ?? "…"}</p>
-                  <p className="text-xs text-zinc-500">
-                    {me ? `${me.targetLang} → ${me.glossLang}` : ""}
-                  </p>
-                </div>
-              </div>
+            <div className="mx-auto w-full max-w-xl px-4 sm:px-6 py-8 flex flex-col gap-6">
+              {/* The avatar is the way in and the way out: tapping the box again closes the page, so
+                  the page needs no separate close control and no title bar above it. */}
+              <button
+                onClick={() => setUserOpen(false)}
+                aria-label={t.close}
+                title={t.close}
+                className="h-16 w-16 shrink-0 border border-zinc-900 flex items-center justify-center text-xl font-medium text-zinc-900 hover:bg-zinc-900 hover:text-white transition-colors rounded-none"
+              >
+                {(me?.username ?? "?").slice(0, 1).toUpperCase()}
+              </button>
 
-              <section className="border-t border-zinc-200 pt-4">
-                <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-2">{t.level}</p>
+              <section>
+                <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-1">{t.level}</p>
                 <p className="text-2xl font-medium text-zinc-900">
                   {me?.ability?.find((a) => a.targetLang === me?.targetLang)?.level ?? t.levelUnknown}
                 </p>
               </section>
 
-              {me?.tracks && me.tracks.length > 1 && (
-                <section className="border-t border-zinc-200 pt-4">
-                  <div className="flex h-8 border border-zinc-200 overflow-hidden rounded-none">
-                    {me.tracks.map((track) => (
-                      <button
-                        key={track.id}
-                        onClick={() => {
-                          void load(track.id);
-                          setUserOpen(false);
-                        }}
-                        disabled={loading}
-                        className={`fv-touch flex-1 px-2 text-xs font-medium transition-colors disabled:opacity-50 ${
-                          me.track === track.id ? "bg-zinc-900 text-white" : "text-zinc-500 hover:bg-zinc-100"
-                        }`}
-                      >
-                        {track.label}
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              )}
+              <button
+                onClick={() => {
+                  setUserOpen(false);
+                  void startPlacement();
+                }}
+                disabled={placementBusy || generating || loading || !me}
+                className="fv-touch h-11 w-full text-sm font-medium border border-zinc-900 text-zinc-900 hover:bg-zinc-900 hover:text-white disabled:opacity-50 transition-colors rounded-none"
+              >
+                {t.placement}
+              </button>
 
-              <section className="border-t border-zinc-200 pt-4">
-                <button
-                  onClick={() => setHistoryExpanded((open) => !open)}
-                  className="fv-touch w-full flex items-center justify-between gap-4 text-left"
-                  aria-expanded={historyExpanded}
-                >
-                  <span className="text-[10px] uppercase tracking-wide text-zinc-400">
-                    {t.history}
-                    {history.length > 0 && <span className="ml-2 text-zinc-300">{history.length}</span>}
-                  </span>
-                  <span className="text-xs text-zinc-400">{historyExpanded ? "−" : "+"}</span>
-                </button>
-                {!historyExpanded ? null : history.length === 0 ? (
-                  <p className="text-sm text-zinc-500 mt-2">{t.historyEmpty}</p>
+              <section>
+                <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-2">
+                  {t.history} {history.length > 0 && <span className="ml-1 text-zinc-300">{history.length}</span>}
+                </p>
+                {/* A fixed window on the list, not a fold: about three titles are visible and the rest
+                    are a scroll away. The box never grows, so the page keeps the same shape whatever
+                    the archive's size. */}
+                {history.length === 0 ? (
+                  <p className="text-sm text-zinc-500">{t.historyEmpty}</p>
                 ) : (
-                  <ul className="divide-y divide-zinc-200 mt-2">
+                  <ul className="h-32 overflow-y-auto border-t border-zinc-200">
                     {history.map((item) => (
-                      <li key={item._id}>
+                      <li key={item._id} className="border-b border-zinc-200">
                         <button
                           onClick={() => {
                             void openHistoryPassage(item._id);
@@ -1527,28 +1497,17 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                 )}
               </section>
 
-              <section className="border-t border-zinc-200 pt-4 flex flex-col gap-2">
-                <button
-                  onClick={() => {
-                    setUserOpen(false);
-                    void startPlacement();
-                  }}
-                  disabled={placementBusy || generating || loading || !me}
-                  className="fv-touch h-11 w-full text-sm font-medium border border-zinc-900 text-zinc-900 hover:bg-zinc-900 hover:text-white disabled:opacity-50 transition-colors rounded-none"
-                >
-                  {t.placement}
-                </button>
-                <button
-                  onClick={() => void signOut()}
-                  className="fv-touch h-11 w-full text-sm font-medium text-zinc-500 hover:text-zinc-900 transition-colors rounded-none"
-                >
-                  {t.authSignOut}
-                </button>
-              </section>
+              <button
+                onClick={() => void signOut()}
+                className="fv-touch h-11 w-full text-sm font-medium text-zinc-500 hover:text-zinc-900 transition-colors rounded-none"
+              >
+                {t.authSignOut}
+              </button>
             </div>
           </div>
         </div>
       )}
+
 
       <div className="flex flex-col md:flex-row flex-1 min-h-0 overflow-hidden">
         <div className="w-full w-full flex flex-col min-h-0 p-4 sm:p-4 md:p-6">
@@ -1664,7 +1623,6 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                       </button>
                       <button
                         onClick={() => {
-                          setHistoryExpanded(true);
                           setUserOpen(true);
                         }}
                         className="fv-touch h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 transition-colors"
