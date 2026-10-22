@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Flowwing</title>
+<style>
+  :root { color-scheme: light; --hairline: #e4e4e7; --swiss: #da291c; }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100dvh; display: flex; background: #fff; color: #18181b;
+         font: 14px/1.5 "Helvetica Neue", Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased; }
+  main { margin: auto; width: 100%; max-width: 24rem; padding: 0 24px; }
+  h1 { font-size: 18px; font-weight: 500; letter-spacing: -0.01em; margin: 0; }
+  p.hint { font-size: 12px; color: #a1a1aa; margin: 4px 0 0; }
+  label { display: block; margin-top: 16px; }
+  label span { font-size: 12px; color: #71717a; }
+  input { width: 100%; height: 40px; margin-top: 4px; padding: 0 12px; font: inherit;
+          border: 1px solid var(--hairline); border-radius: 0; background: #fff; }
+  input:focus { outline: none; border-color: #18181b; }
+  .row { display: flex; gap: 8px; margin-top: 24px; }
+  button { height: 40px; font: inherit; font-weight: 500; border: 0; border-radius: 0; cursor: pointer; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  #signin { flex: 1; background: #18181b; color: #fff; }
+  #create { padding: 0 16px; background: #fff; color: #3f3f46; border: 1px solid var(--hairline); }
+  .err { font-size: 12px; color: var(--swiss); margin-top: 12px; }
+  /* the app shell: same page, second view */
+  #app { display: none; flex-direction: column; height: 100dvh; }
+  header { border-bottom: 2px solid #18181b; padding: 16px 16px 16px; display: flex; align-items: center; justify-content: space-between; }
+  header h1 { font-size: 20px; }
+  .rule { height: 1px; background: var(--hairline); margin: 0; border: 0; }
+  .reader { flex: 1; margin: 16px; border: 1px solid var(--hairline); padding: 16px;
+            display: flex; align-items: center; justify-content: center; color: #a1a1aa; font-size: 13px; text-align: center; }
+  .actions { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; padding: 0 16px 16px; }
+  .meta { font-size: 11px; color: #a1a1aa; }
+  .meta b { color: #18181b; font-weight: 500; }
+  #generate { background: #18181b; color: #fff; padding: 0 20px; }
+  #signout { background: none; color: #a1a1aa; padding: 0 8px; }
+</style>
+</head>
+<body>
+  <main id="gate">
+    <h1>Sign in</h1>
+    <p class="hint">Any name, any password — this is a dev build.</p>
+    <form id="form">
+      <label><span>Name</span><input id="name" autocomplete="username" autocapitalize="none" spellcheck="false" /></label>
+      <label><span>Password</span><input id="password" type="password" autocomplete="current-password" /></label>
+      <div class="row">
+        <button id="signin" type="submit">Sign in</button>
+        <button id="create" type="button">Create account</button>
+      </div>
+      <p class="err" id="err" hidden></p>
+    </form>
+  </main>
+
+  <div id="app">
+    <header>
+      <h1>Flowwing</h1>
+      <button id="signout">Sign out</button>
+    </header>
+    <div class="actions" style="padding-top:16px">
+      <span class="meta">Words <b id="words">—</b> · Level <b id="level">N/A</b></span>
+    </div>
+    <hr class="rule" />
+    <div class="reader" id="reader">No passage yet. Press Generation to write one.</div>
+    <div class="actions">
+      <span class="meta" id="who"></span>
+      <button id="generate">Generation</button>
+    </div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const api = (path, body) =>
+    fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : undefined);
+
+  async function show() {
+    const res = await api("/api/auth/me");
+    const who = await res.json();
+    if (!who.signedIn) return gate();
+    $("gate").remove();
+    $("app").style.display = "flex";
+    $("who").textContent = who.username ?? "";
+    const me = await (await api("/api/me")).json();
+    const list = await (await api("/api/paragraphs?targetLang=de&summary=1")).json();
+    $("words").textContent = list.length ? `${list.length} passages` : "0";
+    $("generate").disabled = list.length === 0 ? false : false;
+  }
+  function gate() { $("gate").style.display = "block"; $("app").style.display = "none"; }
+
+  $("form").addEventListener("submit", (event) => { event.preventDefault(); submit("login"); });
+  $("create").addEventListener("click", () => submit("register"));
+  $("signout").addEventListener("click", async () => { await api("/api/auth/logout", {}); location.reload(); });
+
+  async function submit(mode) {
+    $("err").hidden = true;
+    const res = await api(`/api/auth/${mode}`, { username: $("name").value, password: $("password").value });
+    if (!res.ok) { $("err").textContent = res.status === 409 ? "That name is taken." : "Wrong name or password."; $("err").hidden = false; return; }
+    location.reload();
+  }
+  show();
+</script>
+</body>
+</html>

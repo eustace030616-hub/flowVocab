@@ -10,5 +10,11 @@ database_name = "flowwing-api"
 # Replaced by a real id after `wrangler d1 create flowwing-api`. Local dev ignores it.
 database_id = "00000000-0000-0000-0000-000000000000"
 
+# The page is static: Next's `output: "export"` (or this shell, for the first stage) is served by the
+# assets binding, and the Worker handles only /api. Nothing about the frontend needs a server.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
 [observability]
 enabled = false
