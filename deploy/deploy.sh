@@ -45,7 +45,8 @@ ssh "$HOST" "cd $APP && /usr/local/bin/npm run build 2>&1 | tail -4"
 echo "▸ restarting"
 ssh "$HOST" "sudo -n systemctl restart flowwing && sleep 4 && systemctl is-active flowwing"
 
-CODE=$(ssh "$HOST" "curl -s -o /dev/null -w '%{http_code}' -m 15 http://127.0.0.1:3100/api/me")
+# `/api/auth/me` and not `/api/me`: the latter is behind the gate and answers 401 to a healthy app.
+CODE=$(ssh "$HOST" "curl -s -o /dev/null -w '%{http_code}' -m 15 http://127.0.0.1:3100/api/auth/me")
 if [ "$CODE" != "200" ]; then
   echo "✗ the app answered $CODE — check: ssh $HOST 'sudo journalctl -u flowwing -n 40'"
   exit 1
