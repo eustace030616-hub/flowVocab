@@ -829,11 +829,13 @@ export default function Home() {
   );
 
   const signOut = useCallback(async () => {
-    await fetch("/api/auth/logout", { method: "POST" });
-    setSignedIn(false);
-    setMe(null);
-    setParagraph(null);
-    setHistory([]);
+    try {
+      await fetch("/api/auth/logout", { method: "POST" });
+    } finally {
+      // A reload rather than a state reset: every screen in the app is built from per-user data, and
+      // the surest way to show the gate with none of it is to start the page again from nothing.
+      window.location.replace("/");
+    }
   }, []);
 
   /** Record the reader's verdict beside what the app computed. */
@@ -1407,6 +1409,16 @@ export default function Home() {
           <h1 className="fv-hero text-xl font-medium tracking-tight text-zinc-900">{t.appName}</h1>
         </div>
         <div className="flex items-center gap-2">
+          {/* The way out of the session. Here rather than in the sidebar because the sidebar is
+              hidden on a phone, and a sign-out nobody can reach is a session nobody can end. */}
+          {signedIn && (
+            <button
+              onClick={() => void signOut()}
+              className="fv-touch h-8 px-2 text-xs font-medium text-zinc-400 hover:text-zinc-700 transition-colors"
+            >
+              {t.authSignOut}
+            </button>
+          )}
           {/* On a phone the sidebar is hidden, so its two actions live here instead. */}
           <button
             onClick={() => setHistoryOpen(true)}

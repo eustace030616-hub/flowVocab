@@ -144,7 +144,9 @@ app.use("*", async (c, next) => {
   // `c.req.path` carries the `/api` base path, so the comparison is made without it.
   const path = c.req.path.replace(/^\/api(?=\/|$)/, "");
   const open = path === "/auth" || path.startsWith("/auth/") || c.req.method === "OPTIONS";
-  if (!session && !legacy && !open) {
+  // The legacy cookie no longer admits anyone: it identifies the history a registration can claim,
+  // not a way past the gate. Otherwise the first user never sees the form and can never register.
+  if (!session && !open) {
     return c.json({ error: "sign in required", signedIn: false }, 401);
   }
   await next();
