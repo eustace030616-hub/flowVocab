@@ -106,7 +106,7 @@ interface Me {  userId: string;
   /** Present on the Worker and now on the Pi too; the avatar shows its first letter. */
   username?: string | null;
   label: string;
-  tracks: Array<{ id: "zh-en" | "en-de"; label: string; targetLang: string }>;
+  tracks: Array<{ id: "zh-en" | "en-de"; label: string; targetLang: string; glossLang?: string }>;
   /** Per-language ability, derived from the event log. */
   ability?: AbilityView[];
 }
@@ -362,6 +362,13 @@ function describeFailure(path: string, res: Response): string {
   return `${path} returned ${res.status} ${res.statusText}. The API could not reach the database, or a query failed. Check that MongoDB is running.`;
 }
 
+/** The name of a language code, for the track drop list. */
+const LANGUAGE_NAMES: Record<string, string> = { zh: "Chinese", en: "English", de: "German" };
+
+function trackName(code: string | undefined): string {
+  return code ? (LANGUAGE_NAMES[code] ?? code.toUpperCase()) : "";
+}
+
 export default function Home({ initialUsername }: { initialUsername?: string }) {
   const [me, setMe] = useState<Me | null>(null);
   /**
@@ -390,6 +397,8 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
   const [historyOpen, setHistoryOpen] = useState(false);
   /** The account page: level, history, the test and signing out live here now. */
   const [userOpen, setUserOpen] = useState(false);
+  /** The history box is hidden until the row is tapped: it is the longest thing on the page. */
+  const [historyBox, setHistoryBox] = useState(false);
   /**
    * Something is being fetched for the reader.
    *
@@ -1451,21 +1460,26 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                 {(me?.username ?? "?").slice(0, 1).toUpperCase()}
               </button>
 
-              {/* One button, and it names the other track rather than the current one: what a switch
-                  does is the only thing worth putting on it. */}
+              {/* The tracks, as the pair of languages they are: which language you read, and which
+                  language the glosses come in. Naming a track "German" hides the half that matters to
+                  someone whose first language is not English. */}
               {me && me.tracks.length > 1 && (
-                <button
-                  onClick={() => {
-                    const other = me.tracks.find((track) => track.id !== me.track);
-                    if (!other) return;
-                    setUserOpen(false);
-                    void load(other.id);
-                  }}
+                <select
+                  value={me.track}
                   disabled={loading}
-                  className="self-start fv-touch h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 transition-colors rounded-none"
+                  onChange={(e) => {
+                    setUserOpen(false);
+                    void load(e.target.value);
+                  }}
+                  aria-label={t.tracks}
+                  className="self-start h-8 px-2 text-xs font-medium border border-zinc-200 bg-white text-zinc-700 disabled:opacity-50 rounded-none"
                 >
-                  ⇄ {me.tracks.find((track) => track.id !== me.track)?.label ?? t.tracks}
-                </button>
+                  {me.tracks.map((track) => (
+                    <option key={track.id} value={track.id}>
+                      {trackName(track.glossLang)} → {trackName(track.targetLang)}
+                    </option>
+                  ))}
+                </select>
               )}
 
               <section>
@@ -1487,16 +1501,24 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
               </button>
 
               <section>
-                <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-2">
-                  {t.history} {history.length > 0 && <span className="ml-1 text-zinc-300">{history.length}</span>}
-                </p>
+                <button
+                  onClick={() => setHistoryBox((open) => !open)}
+                  aria-expanded={historyBox}
+                  className="fv-touch w-full flex items-center justify-between gap-4 text-left"
+                >
+                  <span className="text-[10px] uppercase tracking-wide text-zinc-400">
+                    {t.history}
+                    {history.length > 0 && <span className="ml-1 text-zinc-300">{history.length}</span>}
+                  </span>
+                  <span className="text-xs text-zinc-400">{historyBox ? "−" : "+"}</span>
+                </button>
                 {/* A fixed window on the list, not a fold: about three titles are visible and the rest
                     are a scroll away. The box never grows, so the page keeps the same shape whatever
                     the archive's size. */}
-                {history.length === 0 ? (
-                  <p className="text-sm text-zinc-500">{t.historyEmpty}</p>
+                {!historyBox ? null : history.length === 0 ? (
+                  <p className="text-sm text-zinc-500 mt-2">{t.historyEmpty}</p>
                 ) : (
-                  <ul className="h-32 overflow-y-auto border-t border-zinc-200">
+                  <ul className="h-32 overflow-y-auto border-t border-zinc-200 mt-2">
                     {history.map((item) => (
                       <li key={item._id} className="border-b border-zinc-200">
                         <button
