@@ -31,7 +31,14 @@ import {
   wordsByKeys,
 } from "../store/dictionary";
 import type { TargetLang } from "../lang";
-import { lemmaKeyOf, tokenize, wordSpans, type LemmaLookup, type Span } from "../tokenize";
+import {
+  lemmaKeyOf,
+  tokenize,
+  wordSpans,
+  type LemmaLookup,
+  type SegmentToken,
+  type Span,
+} from "../tokenize";
 
 /** What a lexicon lookup returns: dictionary entries, and stated inflections. */
 export interface LexiconData {
@@ -78,10 +85,19 @@ export async function tokenizeAgainst(
   targetLang: TargetLang,
   query: LexiconQuery,
   maxPasses = 3,
-  tokens?: Array<{ surface: string; start: number; end: number }>,
+  tokens?: SegmentToken[],
 ): Promise<Span[]> {
   const known = new Set<string>();
   const forms = new Map<string, string>();
+
+  // Lemmas the segmenter supplied. Simplemma reads the surface and returns the citation form, which is
+  // exactly what the `inflections` table did — so when both are present the stated lemma wins, and the
+  // dictionary's copy becomes the fallback for tokens the segmenter did not label.
+  for (const token of tokens ?? []) {
+    if (!token.lemma) continue;
+    const key = lemmaKeyOf(token.surface);
+    if (key && !forms.has(key)) forms.set(key, token.lemma);
+  }
 
   // Ask about the surfaces up front: a stated inflection short-circuits the rules entirely, so it
   // is worth one query before lexing rather than discovering it after a wrong answer.
@@ -243,7 +259,7 @@ export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
 export async function tokenizeWithLexicon(
   text: string,
   targetLang: TargetLang,
-  tokens?: Array<{ surface: string; start: number; end: number }>,
+  tokens?: SegmentToken[],
 ): Promise<Span[]> {
   return tokenizeAgainst(text, targetLang, datastoreQuery(targetLang), 3, tokens);
 }

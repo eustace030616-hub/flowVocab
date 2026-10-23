@@ -19,7 +19,7 @@ import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from somajo import SoMaJo
-from somajo.token import Token
+from simplemma import lemmatize
 
 # SoMaJo 2.5 ships two models: the German CMC tokeniser and the English Penn-Treebank one.
 TOKENIZERS = {"de": "de_CMC", "en": "en_PTB"}
@@ -40,7 +40,10 @@ def tokenize(text: str, lang: str) -> dict:
                 # SoMaJo normalised something (a space, a quotation mark); skip it rather than
                 # invent an offset that would point at the wrong characters in the reader.
                 continue
-            tokens.append({"text": surface, "start": start, "end": start + len(surface)})
+            # Simplemma is the lemmatiser the dictionary's inflections table used to be: it reads a
+            # surface form and returns the citation form, from its own in-memory data, per token.
+            lemma = lemmatize(surface, lang=lang) if any(ch.isalpha() for ch in surface) else surface
+            tokens.append({"text": surface, "start": start, "end": start + len(surface), "lemma": lemma})
             cursor = start + len(surface)
     return {"tokens": tokens, "sentences": len(sentences)}
 

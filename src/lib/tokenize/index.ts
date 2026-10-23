@@ -59,6 +59,19 @@ export interface Span {
   compoundParts?: string[];
 }
 
+/**
+ * A token as a segmenter reports it: where it is, and optionally what its citation form is.
+ *
+ * `lemma` is what Simplemma supplies — the job the `inflections` table used to do — and the tokeniser
+ * treats it as a *stated* form, which outranks both the lexicon lookup and the suffix rules.
+ */
+export interface SegmentToken {
+  surface: string;
+  start: number;
+  end: number;
+  lemma?: string;
+}
+
 export interface TokenizeOptions {
   /**
    * Pre-segmented tokens, in order, as offsets into the text.
@@ -66,7 +79,7 @@ export interface TokenizeOptions {
    * Supplying these replaces the ICU segmenter and nothing else: lemmas, particles and compounds are
    * resolved from the same spans afterwards.
    */
-  tokens?: Array<{ surface: string; start: number; end: number }>;
+  tokens?: SegmentToken[];
   /** Lexicon probe. Supplying it turns best-effort lemmatisation into lookup-backed lemmatisation. */
   lookup?: LemmaLookup;
   /**
