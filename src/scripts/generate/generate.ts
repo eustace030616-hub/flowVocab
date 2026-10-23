@@ -17,9 +17,6 @@
 
 import {
   glossKeys as glossKeySet,
-  glossesByKeys,
-  sampleWordsBetween,
-  wordsByKeys,
 } from "../../lib/store/dictionary";
 import { upsertParagraphByBrief, paragraphsBySource } from "../../lib/store/content";
 import { packParagraph } from "../../lib/content/pack";
@@ -122,18 +119,8 @@ async function proposeTopicWords(
 
   const { high } = bandFor(spec.level);
   const keys = proposed.map((word) => word.toLowerCase().replace(/^(der|die|das|the|a|an)\s+/, "").trim());
-  const rows = wordsByKeys(spec.targetLang, keys, { origin: "import" }).filter(
-    (row) => row.difficulty >= 0 && row.difficulty <= high,
-  );
-
-  const glossLang = glossLangFor(spec.targetLang);
-  const glosses = glossesByKeys(spec.targetLang, glossLang, rows.map((r) => r.lemmaKey));
-  const glossOf = new Map<string, string>();
-  for (const g of glosses) if (!glossOf.has(g.lemmaKey)) glossOf.set(g.lemmaKey, g.text);
-
-  const kept = rows
-    .filter((row) => glossOf.has(row.lemmaKey))
-    .map((row) => ({ word: row.lemma, gloss: glossOf.get(row.lemmaKey) ?? null }));
+  const rows = filterTopicWords(spec.targetLang, keys, high);
+  const kept = rows.map((row) => ({ word: row.word, gloss: row.gloss ?? null }));
 
   options.onAttempt?.(
     `    topic words: ${proposed.length} proposed · ${rows.length} at or below ${spec.level} · ${kept.length} glossed`,

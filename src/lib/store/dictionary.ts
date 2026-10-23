@@ -1,3 +1,5 @@
+import { difficultyFromLevel } from "../difficulty";
+import { glossLangFor, type TargetLang } from "../lang";
 /**
  * LEGACY(store/dictionary)
  *
@@ -319,13 +321,34 @@ export function difficultyBandCounts(
   targetLang: string,
   bands: number,
 ): Array<{ band: number; n: number }> {
-  return all<{ band: number; n: number }>(
+  const counts = new Map<number, number>();
+  const add = (band: number, n: number) => counts.set(band, (counts.get(band) ?? 0) + n);
+
+  // The dictionary's counts, when it has any.
+  for (const row of all<{ band: number; n: number }>(
     `SELECT CAST(difficulty * ? AS INTEGER) AS band, COUNT(*) AS n FROM words
      WHERE targetLang = ? AND origin = 'import' AND difficulty >= 0 AND difficulty < 1.0001
      GROUP BY band ORDER BY band ASC`,
     bands,
     targetLang,
-  );
+  )) {
+    add(row.band, row.n);
+  }
+
+  // And the book's, from curated levels. The placement test reads this to decide which bands can supply
+  // items at all, so an empty answer here means no test — which is what an empty dictionary produced.
+  for (const row of all<{ level: string | null; n: number }>(
+    "SELECT level, COUNT(*) AS n FROM wordbook WHERE targetLang = ? AND level IS NOT NULL GROUP BY level",
+    targetLang,
+  )) {
+    const difficulty = difficultyFromLevel(row.level);
+    if (difficulty === null || difficulty < 0 || difficulty >= 1.0001) continue;
+    add(Math.min(bands - 1, Math.floor(difficulty * bands)), row.n);
+  }
+
+  return [...counts.entries()]
+    .map(([band, n]) => ({ band, n }))
+    .sort((a, b) => a.band - b.band);
 }
 
 export interface SampledWord {
@@ -340,6 +363,33 @@ export interface SampledWord {
  * `ORDER BY RANDOM()` where the documents used `$sample`. For a few dozen items out of a table of
  * hundreds of thousands this is the same bargain the server was making.
  */
+
+/**
+ * Words from the word book, mapped to the same difficulty scale the sampler uses.
+ *
+ * The placement test picks items spread across the difficulty axis. The book supplies difficulty from a
+ * curated level, so the test keeps working when the dictionary's `words` table does not — which is the
+ * whole point of the migration, and the one place where an empty dictionary made the test return no items
+ * at all rather than a worse test.
+ */
+function bookWordsInRange(targetLang: string, min: number, max: number, limit: number): SampledWord[] {
+  const rows = all<{ lemmaKey: string; word: string; level: string | null }>(
+    "SELECT lemmaKey, word, level FROM wordbook WHERE targetLang = ? AND level IS NOT NULL ORDER BY RANDOM() LIMIT ?",
+    targetLang,
+    // A narrow difficulty band needs a wide draw to find its few words: the book has five bands' worth of
+    // levels, so sampling a small window per band returned four items where the test expects dozens.
+    Math.max(limit * 40, 400),
+  );
+  const out: SampledWord[] = [];
+  for (const row of rows) {
+    const difficulty = difficultyFromLevel(row.level);
+    if (difficulty === null || difficulty < min || difficulty >= max) continue;
+    out.push({ lemmaKey: row.lemmaKey, lemma: row.word, difficulty });
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
 export function sampleWordsBetween(
   targetLang: string,
   min: number,
@@ -347,7 +397,9 @@ export function sampleWordsBetween(
   size: number,
 ): SampledWord[] {
   if (size <= 0) return [];
-  return all<SampledWord>(
+  const fromBook = bookWordsInRange(targetLang, min, max, size);
+  if (fromBook.length >= size) return fromBook;
+  const fromDictionary = all<SampledWord>(
     `SELECT lemmaKey, lemma, difficulty FROM words
      WHERE targetLang = ? AND origin = 'import' AND difficulty >= ? AND difficulty < ?
      ORDER BY RANDOM() LIMIT ?`,
@@ -356,6 +408,13 @@ export function sampleWordsBetween(
     max,
     size,
   );
+
+  // Union, so a word in both sources appears once and the book's answer wins on difficulty.
+  const merged = new Map<string, SampledWord>();
+  for (const word of [...fromBook, ...fromDictionary]) {
+    if (!merged.has(word.lemmaKey)) merged.set(word.lemmaKey, word);
+  }
+  return [...merged.values()].slice(0, size);
 }
 
 /** A random sample across the whole populated axis, for topping a short test up. */
@@ -417,13 +476,32 @@ export function glossesByKeys(targetLang: string, lang: string, keys: string[]):
 
 export function glossKeys(targetLang: string, lang: string, keys: string[]): Set<string> {
   if (keys.length === 0) return new Set();
-  const rows = all<{ lemmaKey: string }>(
-    `SELECT DISTINCT lemmaKey FROM glosses WHERE targetLang = ? AND lang = ? AND lemmaKey IN (${placeholders(keys.length)})`,
+  const found = new Set<string>();
+  const batch = keys.slice(0, 900);
+
+  // The word book first: its translations are the ones the rest of the pipeline now uses, and a reader
+  // looking at an item should see the same gloss everywhere.
+  if (lang === glossLangFor(targetLang as TargetLang)) {
+    for (const row of all<{ lemmaKey: string }>(
+      `SELECT lemmaKey FROM wordbook
+        WHERE targetLang = ? AND translation IS NOT NULL
+          AND lemmaKey IN (${batch.map(() => "?").join(",")})`,
+      targetLang,
+      ...batch,
+    )) {
+      found.add(row.lemmaKey);
+    }
+  }
+
+  for (const row of all<{ lemmaKey: string }>(
+    `SELECT DISTINCT lemmaKey FROM glosses WHERE targetLang = ? AND lang = ? AND lemmaKey IN (${batch.map(() => "?").join(",")})`,
     targetLang,
     lang,
-    ...keys,
-  );
-  return new Set(rows.map((row) => row.lemmaKey));
+    ...batch,
+  )) {
+    found.add(row.lemmaKey);
+  }
+  return found;
 }
 
 export function countGlossedWords(targetLang: string, lang: string): number {
