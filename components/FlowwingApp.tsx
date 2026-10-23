@@ -612,10 +612,8 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
   );
 
   /** History as the reader sees it: everything except the passage they are living in. */
-  const browsableHistory = useMemo(
-    () => history.filter((item) => item._id !== currentId),
-    [history, currentId],
-  );
+  // Every stored passage, including the live one — the counter reads "2 / 55" over the whole list.
+  const browsableHistory = history;
 
   /**
    * Where the open passage sits in the browsable list, counted from the newest.
@@ -1475,13 +1473,13 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
       {/* A 2px rule under the header, the way a section is marked in print — the header is not a
           panel with a shadow, it is the top of the page. */}
       <header className="w-full min-h-16 fv-rule-bottom bg-white flex items-center justify-between gap-2 px-4 sm:px-6 py-4 shrink-0">
-        {browsing && historyPosition ? (
+        {browsing ? (
           <>
             {/* In a stored passage the header says where you are, not who you are: the list and your
                 position in it. The avatar is on the live passage, where the account page belongs. */}
             <span className="text-xs uppercase tracking-wide text-zinc-400">{t.history}</span>
             <span className="text-xs tabular-nums text-zinc-500">
-              {historyPosition.index + 1} / {historyPosition.total}
+              {historyPosition ? `${historyPosition.index + 1} / ${historyPosition.total}` : "—"}
             </span>
           </>
         ) : (
@@ -1511,7 +1509,7 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
 
       {/* A stored passage gets its own chrome: the wordmark and the avatar belong to reading something
           new, and here the useful things are which list you are in and where in it you are. */}
-      {browsing && historyPosition && (
+      {browsing && (
         <div className="shrink-0 border-b border-zinc-200 bg-white">
           <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-2">
             <button
