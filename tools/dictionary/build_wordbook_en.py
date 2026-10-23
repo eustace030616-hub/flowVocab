@@ -26,6 +26,10 @@ BANDS = {1: "A1", 2: "A2", 3: "B1", 4: "B2", 5: "C1"}
 # sit there, so treating it as C2 would label three quarters of English as advanced. Anything above C1 is
 # dropped: a word without a level is better than a word with a wrong one.
 MAX_LEVEL = 5.0
+# A level for a word nobody says is not a level. The dataset scores by frequency as well as by level, so
+# rare words land in bands they do not belong to ("superintendency" at B1). A floor on the corpus count
+# removes them; the words the app actually packs are common by construction.
+MIN_FREQUENCY = 1_000_000
 POS_PREFIX = re.compile(r"^\s*(?:[a-z]+\.\s*)+", re.I)
 
 
@@ -48,8 +52,8 @@ def levels(path: str) -> dict[str, dict]:
         if current is None or (frequency or 0) > current[1]:
             best[key] = (float(level), int(frequency or 0))
     book: dict[str, dict] = {}
-    for key, (level, _frequency) in best.items():
-        if level > MAX_LEVEL:
+    for key, (level, frequency) in best.items():
+        if level > MAX_LEVEL or frequency < MIN_FREQUENCY:
             continue
         book[key] = {"word": key, "level": BANDS[max(1, round(level))], "levelRaw": level}
     return book

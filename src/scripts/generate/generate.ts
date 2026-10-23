@@ -24,6 +24,7 @@ import {
 import { upsertParagraphByBrief, paragraphsBySource } from "../../lib/store/content";
 import { packParagraph } from "../../lib/content/pack";
 import { TOKENIZER_VERSION } from "../../lib/tokenize";
+import { bookDifficulty, filterTopicWords, sampleBook } from "../../lib/content/book-source";
 import { levelMidpoint } from "../../lib/difficulty";
 import { glossLangFor, type CefrLevel, type TargetLang } from "../../lib/lang";
 import { tokenizeWithLexicon } from "../../lib/learner/lexicon";
@@ -97,24 +98,9 @@ export function splitParagraphs(content: string): string[] {
 }
 
 async function sampleVocabulary(targetLang: TargetLang, level: CefrLevel, size: number) {
-  const { low, high } = bandFor(level);
-  const floor = Math.max(0, low - 0.45);
-
-  const coreRows = sampleWordsBetween(targetLang, floor, low - 0.02, size);
-  const targetRows = sampleWordsBetween(targetLang, low, high + 0.0001, 8);
-
-  const glossLang = glossLangFor(targetLang);
-  const keys = [...coreRows, ...targetRows].map((r) => r.lemmaKey);
-  const glosses = glossesByKeys(targetLang, glossLang, keys);
-  const glossOf = new Map<string, string>();
-  for (const g of glosses) if (!glossOf.has(g.lemmaKey)) glossOf.set(g.lemmaKey, g.text);
-
-  const toItem = (row: { lemma: string; lemmaKey: string }): VocabularyItem => ({
-    word: row.lemma,
-    gloss: glossOf.get(row.lemmaKey) ?? null,
-  });
-
-  return { core: coreRows.map(toItem), target: targetRows.map(toItem) };
+  // The book carries a curated level and a translation per word — the same information the dictionary
+  // supplied, in the units the rest of the pipeline uses.
+  return sampleBook(targetLang, level, size);
 }
 
 /**
@@ -287,12 +273,7 @@ export async function generateOne(
     const paragraphs = splitParagraphs(parsed.content);
     const spans = await tokenizeWithLexicon(parsed.content, spec.targetLang);
     const keys = [...new Set(spans.filter((s) => s.kind === "word").map((s) => s.lemmaKey))];
-    const words = wordsByKeys(spec.targetLang, keys, { origin: "import" });
-    const difficultyOf = new Map<string, number>();
-    for (const w of words) {
-      const current = difficultyOf.get(w.lemmaKey);
-      if (current === undefined || w.difficulty < current) difficultyOf.set(w.lemmaKey, w.difficulty);
-    }
+      const difficultyOf = bookDifficulty(spec.targetLang, keys);
 
     const glossKeys = glossKeySet(spec.targetLang, glossLangFor(spec.targetLang), keys);
     const rubricOptions = {
@@ -524,12 +505,7 @@ async function verifyStored(): Promise<number> {
     const spans = await tokenizeWithLexicon(paragraph.content, paragraph.targetLang as TargetLang);
     const keys = [...new Set(spans.filter((s) => s.kind === "word").map((s) => s.lemmaKey))];
 
-    const words = wordsByKeys(paragraph.targetLang, keys, { origin: "import" });
-    const difficultyOf = new Map<string, number>();
-    for (const w of words) {
-      const current = difficultyOf.get(w.lemmaKey);
-      if (current === undefined || w.difficulty < current) difficultyOf.set(w.lemmaKey, w.difficulty);
-    }
+      const difficultyOf = bookDifficulty(paragraph.targetLang as TargetLang, keys);
     const glossKeys = glossKeySet(
       paragraph.targetLang,
       glossLangFor(paragraph.targetLang as TargetLang),
