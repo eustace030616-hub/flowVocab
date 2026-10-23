@@ -26,6 +26,11 @@ export const PACKAGE_VERSION = 1;
 export interface PackageVocabulary {
   lemma: string;
   pos: string | null;
+  /** From the word book: the article for nouns, the plural ending, and the curated CEFR level. */
+  article?: string | null;
+  plural?: string | null;
+  level?: string | null;
+  levelEstimated?: boolean;
   gloss: string | null;
   glossGenerated: boolean | null;
   glossSource: string | null;
@@ -107,6 +112,9 @@ export async function packParagraph(paragraphId: string): Promise<PackageVocabul
       glossSource: best?.source ?? null,
       glossTermPos: best?.termPos ?? null,
       glossPos: best?.pos ?? null,
+        article: book.get(word.lemmaKey)?.article ?? word.article ?? null,
+        plural: (book.get(word.lemmaKey)?.forms?.[0] ?? word.plural ?? null) || null,
+        level: book.get(word.lemmaKey)?.level ?? word.level ?? null,
       difficulty: difficultyFromLevel(book.get(word.lemmaKey)?.level) ?? word.difficulty,
       meanings: meanings.map((m) => ({
         pos: m.pos || null,
