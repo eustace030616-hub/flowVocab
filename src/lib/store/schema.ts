@@ -327,6 +327,30 @@ CREATE TABLE IF NOT EXISTS generation_requests (
   takenAt    INTEGER
 );
 
+-- ── The word book ─────────────────────────────────────────────────────────────
+--
+-- The replacement for the dictionary's three jobs in one table: what level a word is, what it means,
+-- and how it inflects. Built from curated sources (Goethe for level, other lists for translation) rather
+-- than derived from frequency, and small on purpose — a few thousand words, not 290,000.
+--
+-- It is a *new* dictionary, not a set of columns on the words table: its rows are its own, its provenance is
+-- recorded per field, and nothing here depends on the old tables being present.
+CREATE TABLE IF NOT EXISTS wordbook (
+  lemmaKey          TEXT PRIMARY KEY,
+  word              TEXT NOT NULL,
+  -- der/die/das for nouns, NULL otherwise.
+  article           TEXT,
+  level             TEXT,
+  levelSource       TEXT,
+  -- JSON array of the listed forms: plural endings, verb principal parts.
+  forms             TEXT,
+  translation       TEXT,
+  translationSource TEXT,
+  updatedAt         INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS wordbook_level ON wordbook (level);
+
 -- ── The pool ─────────────────────────────────────────────────────────────────
 
 -- Who has read what is in circulation.

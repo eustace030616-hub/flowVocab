@@ -10,6 +10,7 @@
     "pull": "tsx src/scripts/worker/pull.ts",
     "parity": "tsx src/scripts/parity.ts",
     "walk": "tsx src/scripts/walk.ts",
+    "dict:seed": "tsx src/scripts/dictionary/seed-wordbook.ts",
     "serve": "tsx src/server/node.ts",
     "typecheck": "tsc --noEmit"
   },

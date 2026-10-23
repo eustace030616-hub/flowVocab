@@ -10,7 +10,8 @@
  */
 import { wordsByKeys } from "../store/dictionary";
 import { glossLangFor } from "../lang";
-import { glossesByLemma } from "../learner/glosses";
+import { glossesByLemma, type GlossView } from "../learner/glosses";
+import { wordbookGlosses } from "../store/wordbook";
 import { tokenizeWithLexicon } from "../learner/lexicon";
 import { somajoTokens } from "../tokenize/somajo";
 import { wordSpans } from "../tokenize";
@@ -59,7 +60,34 @@ export async function packParagraph(paragraphId: string): Promise<PackageVocabul
   // The gloss language follows the passage's own language, not English: an English passage is glossed
   // in Chinese, a German one in English. Asking for "en" glosses on an English passage packaged it with
   // no translations at all, which is what the English track showed.
-  const glosses = await glossesByLemma(targetLang, glossLangFor(targetLang), keys);
+  // The word book first: curated for level and glossed from a vocabulary list, so it is both smaller and
+  // more trustworthy than the derived dictionary. The dictionary stays for Chinese, which the book does
+  // not carry, and for the words the book lacks. The union matters: a word the book knows and the
+  // dictionary does not would otherwise get no gloss at all.
+  const bookGlosses = wordbookGlosses(targetLang, glossLangFor(targetLang), keys);
+  const dictionary = await glossesByLemma(targetLang, glossLangFor(targetLang), keys);
+  const glosses = new Map<string, GlossView[]>();
+  for (const key of new Set([...keys, ...dictionary.keys()])) {
+    const fromBook = bookGlosses.get(key);
+    const fromDictionary = dictionary.get(key) ?? [];
+    if (!fromBook) {
+      if (fromDictionary.length) glosses.set(key, fromDictionary);
+      continue;
+    }
+    glosses.set(key, [
+      {
+        text: fromBook.text,
+        source: fromBook.source,
+        // The book records no per-gloss licence; its provenance is in the builder.
+        license: "wordbook",
+        generated: false,
+        rank: 0,
+        pos: "",
+        termPos: null,
+      },
+      ...fromDictionary.filter((meaning) => meaning.text !== fromBook.text),
+    ]);
+  }
 
   const vocabulary: Record<string, PackageVocabulary> = {};
   for (const word of words) {
