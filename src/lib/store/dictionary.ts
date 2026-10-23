@@ -337,11 +337,13 @@ export function difficultyBandCounts(
 
   // And the book's, from curated levels. The placement test reads this to decide which bands can supply
   // items at all, so an empty answer here means no test — which is what an empty dictionary produced.
-  for (const row of all<{ level: string | null; n: number }>(
-    "SELECT level, COUNT(*) AS n FROM wordbook WHERE targetLang = ? AND level IS NOT NULL GROUP BY level",
+  for (const row of all<{ difficulty: number | null; level: string | null; n: number }>(
+    `SELECT level, CAST(difficulty * ${bands} AS INTEGER) AS band, difficulty, COUNT(*) AS n FROM wordbook
+      WHERE targetLang = ? AND level IS NOT NULL AND difficulty IS NOT NULL
+      GROUP BY band`,
     targetLang,
   )) {
-    const difficulty = difficultyFromLevel(row.level);
+    const difficulty = row.difficulty ?? difficultyFromLevel(row.level);
     if (difficulty === null || difficulty < 0 || difficulty >= 1.0001) continue;
     add(Math.min(bands - 1, Math.floor(difficulty * bands)), row.n);
   }
@@ -373,8 +375,8 @@ export interface SampledWord {
  * at all rather than a worse test.
  */
 function bookWordsInRange(targetLang: string, min: number, max: number, limit: number): SampledWord[] {
-  const rows = all<{ lemmaKey: string; word: string; level: string | null }>(
-    "SELECT lemmaKey, word, level FROM wordbook WHERE targetLang = ? AND level IS NOT NULL ORDER BY RANDOM() LIMIT ?",
+  const rows = all<{ lemmaKey: string; word: string; level: string | null; difficulty: number | null }>(
+    "SELECT lemmaKey, word, level, difficulty FROM wordbook WHERE targetLang = ? AND level IS NOT NULL ORDER BY RANDOM() LIMIT ?",
     targetLang,
     // A narrow difficulty band needs a wide draw to find its few words: the book has five bands' worth of
     // levels, so sampling a small window per band returned four items where the test expects dozens.
@@ -382,7 +384,7 @@ function bookWordsInRange(targetLang: string, min: number, max: number, limit: n
   );
   const out: SampledWord[] = [];
   for (const row of rows) {
-    const difficulty = difficultyFromLevel(row.level);
+    const difficulty = row.difficulty ?? difficultyFromLevel(row.level);
     if (difficulty === null || difficulty < min || difficulty >= max) continue;
     out.push({ lemmaKey: row.lemmaKey, lemma: row.word, difficulty });
     if (out.length >= limit) break;

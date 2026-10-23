@@ -25,6 +25,7 @@ interface Entry {
   forms: string[];
   translation: string | null;
   translationSource: string | null;
+  difficulty?: number | null;
 }
 
 async function main(): Promise<void> {
@@ -43,14 +44,15 @@ async function main(): Promise<void> {
   for (const [key, entry] of Object.entries(book)) {
     run(
       `INSERT OR REPLACE INTO wordbook
-         (targetLang, lemmaKey, word, article, level, levelSource, forms, translation, translationSource, updatedAt)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+         (targetLang, lemmaKey, word, article, level, levelSource, difficulty, forms, translation, translationSource, updatedAt)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
       lang,
       key,
       entry.word,
       normaliseArticle(entry.article),
       entry.level,
       entry.levelSource,
+      entry.difficulty ?? null,
       JSON.stringify(entry.forms ?? []),
       entry.translation,
       entry.translationSource,

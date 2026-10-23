@@ -15,6 +15,7 @@ export interface WordbookEntry {
   article: string | null;
   level: string | null;
   levelSource: string | null;
+  difficulty: number | null;
   forms: string[];
   translation: string | null;
   translationSource: string | null;
@@ -38,11 +39,12 @@ export function wordbookEntries(targetLang: TargetLang, keys: string[]): Map<str
       article: string | null;
       level: string | null;
       levelSource: string | null;
+      difficulty: number | null;
       forms: string | null;
       translation: string | null;
       translationSource: string | null;
     }>(
-      `SELECT lemmaKey, word, article, level, levelSource, forms, translation, translationSource
+      `SELECT lemmaKey, word, article, level, levelSource, difficulty, forms, translation, translationSource
          FROM wordbook WHERE targetLang = ? AND lemmaKey IN (${batch.map(() => "?").join(",")})`,
       targetLang,
       ...batch,

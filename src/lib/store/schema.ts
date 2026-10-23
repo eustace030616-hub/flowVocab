@@ -345,6 +345,10 @@ CREATE TABLE IF NOT EXISTS wordbook (
   article           TEXT,
   level             TEXT,
   levelSource       TEXT,
+  -- A continuous difficulty derived at build time from the level plus the word's frequency rank within
+  -- it. The level alone gives five values, which is too coarse for a placement test that spreads items
+  -- across ten bands.
+  difficulty        REAL,
   -- JSON array of the listed forms: plural endings, verb principal parts.
   forms             TEXT,
   translation       TEXT,

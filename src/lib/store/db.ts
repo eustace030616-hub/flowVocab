@@ -85,7 +85,10 @@ function migrate(db: DatabaseSync): void {
 function dropPreLanguageWordbook(db: DatabaseSync): void {
   try {
     const columns = db.prepare("PRAGMA table_info(wordbook)").all() as Array<{ name: string }>;
-    if (columns.length > 0 && !columns.some((column) => column.name === "targetLang")) {
+    const stale =
+      columns.length > 0 &&
+      (!columns.some((column) => column.name === "targetLang") || !columns.some((column) => column.name === "difficulty"));
+    if (stale) {
       db.exec("DROP TABLE wordbook");
     }
   } catch {
