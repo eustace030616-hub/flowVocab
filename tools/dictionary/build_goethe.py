@@ -1,6 +1,16 @@
 """
 Build the Goethe dictionary: word, article, level, listed forms.
 
+Run it with a Python that has pypdf, from the app directory:
+
+    python3 tools/dictionary/build_goethe.py
+
+Output: /tmp/goethe-dict.json - {lemmaKey: {word, article, level, forms, inDictionary}}.
+
+The lists are (c) Goethe-Institut. This is a build-time tool: it reads PDFs the operator already
+has and writes a working file. Do not commit the extracted list, and do not ship it in the app
+without permission.
+
 Extraction uses `layout` mode, which keeps the columns, so the rule is positional rather than lexical:
 the leftmost cell of a line is the headword, and a cell that ends in sentence punctuation is an example.
 
