@@ -56,6 +56,23 @@ function applyColumnMigrations(handle: DatabaseSync): void {
 let database: DatabaseSync | null = null;
 
 /** Open the database, applying the schema. Idempotent, so every caller can just ask for it. */
+/**
+ * Columns added after a database was created.
+ *
+ * `CREATE TABLE IF NOT EXISTS` does not touch an existing table, so a column added later has to be
+ * added explicitly. SQLite has no `ADD COLUMN IF NOT EXISTS`, and the error for a duplicate is the
+ * cheapest possible probe.
+ */
+function migrate(db: DatabaseSync): void {
+  for (const statement of ["ALTER TABLE sessions ADD COLUMN lastSeenAt INTEGER"]) {
+    try {
+      db.exec(statement);
+    } catch {
+      /* already there */
+    }
+  }
+}
+
 export function openDatabase(file: string = DATABASE_PATH): DatabaseSync {
   if (database) return database;
 
@@ -65,6 +82,7 @@ export function openDatabase(file: string = DATABASE_PATH): DatabaseSync {
   database = new DatabaseSync(file);
   database.exec(SCHEMA_SQL);
   applyColumnMigrations(database);
+  migrate(database);
   return database;
 }
 

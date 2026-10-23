@@ -169,7 +169,9 @@ CREATE TABLE IF NOT EXISTS sessions (
   -- The token itself is never stored: a leak of this table must not be a set of usable sessions.
   tokenHash TEXT NOT NULL UNIQUE,
   createdAt INTEGER NOT NULL,
-  expiresAt INTEGER NOT NULL
+  expiresAt INTEGER NOT NULL,
+  -- When this session last did something; presence is derived from it.
+  lastSeenAt INTEGER
 );
 CREATE INDEX IF NOT EXISTS sessions_user ON sessions (userId);
 

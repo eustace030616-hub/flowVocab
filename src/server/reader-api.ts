@@ -356,6 +356,17 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
     return c.json({ ok: true }, 201);
   });
 
+  /** Who has done something in the last minute — the Pi's polling rate follows this. */
+  app.get("/service/presence", async (c) => {
+    const windowMs = Number(c.req.query("window") ?? 60_000);
+    const now = Date.now();
+    const row = await c.get("store").get<{ active: number; last: number | null }>(
+      "SELECT COUNT(*) AS active, MAX(lastSeenAt) AS last FROM sessions WHERE lastSeenAt IS NOT NULL AND lastSeenAt > ?",
+      now - windowMs,
+    );
+    return c.json({ active: row?.active ?? 0, lastSeenAt: row?.last ?? null, windowMs });
+  });
+
   app.get("/service/requests", async (c) => {
     const rows = await c.get("store").all<Record<string, unknown>>(
       "SELECT id, userId, targetLang, level, topic, createdAt FROM generation_requests WHERE takenAt IS NULL ORDER BY createdAt ASC LIMIT 3",
@@ -379,11 +390,26 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
     return c.json({ ok: true });
   });
 
+  /** Last touch per session, so a burst of requests is one write rather than twenty. */
+  const touched = new Map<string, number>();
+
   app.use("*", async (c, next) => {
-    const session = await sessionUser(getCookie(c, SESSION_COOKIE), c.get("store"));
+    const token = getCookie(c, SESSION_COOKIE);
+    const session = await sessionUser(token, c.get("store"));
     if (!session) return c.json({ error: "sign in required", signedIn: false }, 401);
     c.set("userId", session.userId);
     c.set("username", session.username);
+
+    // Presence is "did something in the last minute", derived rather than stored as a flag: a flag
+    // needs someone to clear it and that someone has left. Marking a word, generating and answering a
+    // placement item are all requests, so all of them count without a separate signal.
+    if (token) {
+      const previous = touched.get(session.userId) ?? 0;
+      if (Date.now() - previous > 30_000) {
+        touched.set(session.userId, Date.now());
+        await c.get("store").run("UPDATE sessions SET lastSeenAt = ? WHERE userId = ?", Date.now(), session.userId);
+      }
+    }
     await next();
   });
 

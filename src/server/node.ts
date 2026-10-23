@@ -16,6 +16,7 @@ import { nodeDriver } from "../lib/store/driver-node";
 import { loadEnv } from "../scripts/env";
 import { onePullPass } from "../scripts/worker/pull";
 import { syncD1Pool } from "../scripts/worker/pool";
+import { callService, serviceConfig } from "../scripts/worker/client";
 
 // `.env.local` is read into a record for the generator, but the rest of the server reads
 // `process.env` — including the identity service this host defers accounts to. Put the values where
@@ -40,42 +41,73 @@ outer.use("/*", async (c) => c.html(await readFile(path.join(dist, "index.html")
 // and a timer here needs no new systemd file (installing one needs root). It is off unless
 // FLOWWING_PULL is set, so a development server does not touch the shared database every minute.
 if (process.env.FLOWWING_PULL === "1") {
-  const intervalMs = Number(process.env.FLOWWING_PULL_INTERVAL_MS ?? 60_000);
-  const tick = async () => {
-    const started = Date.now();
-    try {
-      const result = await onePullPass();
-      // Always, not only when something happened: a loop that says nothing is indistinguishable from a
-      // loop that has stopped, which is exactly how two queued requests sat unserved for ten minutes.
-      console.log(
-        `pull: ${result.events}e ${result.estimates}a ${result.bands}b ${result.filled}p ${result.requested}r · ${Date.now() - started}ms`,
-      );
-    } catch (error) {
-      // A sleeping network is not a crash: the cursor keeps its place and the next tick retries.
-      const message = error instanceof Error ? `${error.message}` : String(error);
-      console.warn(`pull paused: ${message} · ${Date.now() - started}ms`);
-    }
-  };
-  setInterval(tick, intervalMs);
-  void tick();
-  console.log(`pull loop on, every ${Math.round(intervalMs / 1000)}s`);
+  const idlePullMs = Number(process.env.FLOWWING_PULL_INTERVAL_MS ?? 60_000);
+  const busyPullMs = Number(process.env.FLOWWING_PULL_BUSY_MS ?? 15_000);
+  const idlePoolMs = Number(process.env.FLOWWING_POOL_INTERVAL_MS ?? 30_000);
+  const busyPoolMs = Number(process.env.FLOWWING_POOL_BUSY_MS ?? 10_000);
 
-  // The pool orchestrator: keeps D1's stock as deep as the Pi's own, on its own clock so a slow
-  // generation never delays an estimate.
-  const poolMs = Number(process.env.FLOWWING_POOL_INTERVAL_MS ?? 30_000);
-  const syncPool = async () => {
+  // Presence is "a reader did something in the last minute". While somebody is on, both loops run at the
+  // fast rate so a burst of Generate presses cannot outrun the pool; sixty seconds after the last action
+  // they fall back, because an idle laptop should cost nothing.
+  let present = false;
+  let lastPull = 0;
+  let lastPool = 0;
+  let pulling = false;
+  let pooling = false;
+
+  const tick = async () => {
+    let config;
     try {
-      const result = await syncD1Pool();
-      if (result.pushed > 0) {
-        console.log(`pool: pushed ${result.pushed} · ${Object.entries(result.depth).map(([k, v]) => `${k}=${v}`).join(" ")}`);
-      }
+      config = serviceConfig();
+      const presence = await callService<{ active: number }>(config, "/presence");
+      present = presence.active > 0;
     } catch (error) {
-      console.warn(`pool paused: ${error instanceof Error ? error.message : error}`);
+      // Unreachable authority: treat as idle rather than fast, and say so once.
+      present = false;
+      console.warn(`presence unknown: ${error instanceof Error ? error.message : error}`);
+    }
+    const now = Date.now();
+
+    if (!pulling && now - lastPull >= (present ? busyPullMs : idlePullMs)) {
+      pulling = true;
+      lastPull = now;
+      try {
+        const result = await onePullPass();
+        if (result.events || result.estimates || result.requested) {
+          console.log(
+            `pull: ${result.events}e ${result.estimates}a ${result.requested}r · ${present ? "present" : "idle"}`,
+          );
+        }
+      } catch (error) {
+        console.warn(`pull paused: ${error instanceof Error ? error.message : error}`);
+      } finally {
+        pulling = false;
+      }
+    }
+
+    if (!pooling && now - lastPool >= (present ? busyPoolMs : idlePoolMs)) {
+      pooling = true;
+      lastPool = now;
+      try {
+        const result = await syncD1Pool();
+        if (result.pushed > 0) {
+          console.log(
+            `pool: pushed ${result.pushed} · ${Object.entries(result.depth).map(([k, v]) => `${k}=${v}`).join(" ")} · ${present ? "present" : "idle"}`,
+          );
+        }
+      } catch (error) {
+        console.warn(`pool paused: ${error instanceof Error ? error.message : error}`);
+      } finally {
+        pooling = false;
+      }
     }
   };
-  setInterval(syncPool, poolMs);
-  setTimeout(() => void syncPool(), 5_000);
-  console.log(`pool orchestrator on, every ${Math.round(poolMs / 1000)}s`);
+
+  setInterval(() => void tick(), 5_000);
+  console.log(
+    `scheduler on · pull ${Math.round(idlePullMs / 1000)}s idle / ${Math.round(busyPullMs / 1000)}s present` +
+      ` · pool ${Math.round(idlePoolMs / 1000)}s idle / ${Math.round(busyPoolMs / 1000)}s present`,
+  );
 }
 
 serve({ fetch: outer.fetch, port, hostname }, (info) => {
