@@ -18,34 +18,93 @@ import json
 import sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-from somajo import SoMaJo
+from HanTa import HanoverTagger as ht
 from simplemma import lemmatize
+from somajo import SoMaJo
 
 # SoMaJo 2.5 ships two models: the German CMC tokeniser and the English Penn-Treebank one.
 TOKENIZERS = {"de": "de_CMC", "en": "en_PTB"}
 
+# Loaded once: the German model is a few megabytes of HMM tables and takes a couple of seconds.
+TAGGERS = {}
+
+
+MODELS = {"de": "morphmodel_ger.pgz", "en": "morphmodel_en.pgz"}
+
+
+def tagger(lang: str):
+    """HanTa's model for this language, loaded once. English has one too — `morphmodel_en.pgz`."""
+    model = MODELS.get(lang)
+    if model is None:
+        return None
+    if lang not in TAGGERS:
+        TAGGERS[lang] = ht.HanoverTagger(model)
+    return TAGGERS[lang]
+
+
+def join_particles(tagged: list[tuple[str, str, str]]) -> list[int]:
+    """
+    Rewrite a separable verb into its full lemma, and record which token absorbed which.
+
+    HanTa tags the detached prefix as PTKVZ — the piece of information no lemmatiser gave us. The join
+    stops being a guess about clause position plus a lookup in a pair table: the tag says it is a
+    particle, and the nearest preceding verb is its host.
+
+        wache … auf   → aufwachen
+        findet … statt → stattfinden
+
+    Returns, per token index, the index of the token it was absorbed into, or -1.
+    """
+    absorbed = [-1] * len(tagged)
+    for index, (_word, lemma, tag) in enumerate(tagged):
+        if tag != "PTKVZ" or not lemma:
+            continue
+        for back in range(index - 1, -1, -1):
+            host_tag = tagged[back][2]
+            if host_tag.startswith(("VV", "VA", "VM")):
+                tagged[back] = (tagged[back][0], lemma + tagged[back][1], host_tag)
+                absorbed[index] = back
+                break
+    return absorbed
+
 
 def tokenize(text: str, lang: str) -> dict:
-    name = TOKENIZERS.get(lang, "de_web")
-    somajo = SoMaJo(name, split_camel_case=False)
+    somajo = SoMaJo(TOKENIZERS.get(lang, "de_CMC"), split_camel_case=False)
     sentences = list(somajo.tokenize_text([text]))
+    model = tagger(lang)
 
     tokens: list[dict] = []
     cursor = 0
     for sentence in sentences:
-        for token in sentence:
+        surfaces = [token.text for token in sentence]
+        if model is not None:
+            tagged = [(word, lemma, tag) for word, lemma, tag in model.tag_sent(surfaces)]
+        else:
+            tagged = [
+                (word, lemmatize(word, lang=lang) if any(ch.isalpha() for ch in word) else word, "")
+                for word in surfaces
+            ]
+        absorbed = join_particles(tagged)
+
+        for position, token in enumerate(sentence):
             surface = token.text
             start = find_from(text, surface, cursor)
             if start < 0:
-                # SoMaJo normalised something (a space, a quotation mark); skip it rather than
-                # invent an offset that would point at the wrong characters in the reader.
+                # SoMaJo normalised something (a space, a quotation mark); skip it rather than invent an
+                # offset that would point at the wrong characters in the reader.
                 continue
-            # Simplemma is the lemmatiser the dictionary's inflections table used to be: it reads a
-            # surface form and returns the citation form, from its own in-memory data, per token.
-            lemma = lemmatize(surface, lang=lang) if any(ch.isalpha() for ch in surface) else surface
-            tokens.append({"text": surface, "start": start, "end": start + len(surface), "lemma": lemma})
+            lemma = tagged[position][1] if position < len(tagged) else surface
+            tag = tagged[position][2] if position < len(tagged) else ""
+            entry = {"text": surface, "start": start, "end": start + len(surface), "lemma": lemma, "tag": tag}
+            host = absorbed[position] if position < len(absorbed) else -1
+            if 0 <= host < len(sentence):
+                host_start = find_from(text, sentence[host].text, cursor)
+                if host_start >= 0:
+                    entry["absorbedInto"] = host_start
+            tokens.append(entry)
             cursor = start + len(surface)
     return {"tokens": tokens, "sentences": len(sentences)}
+
 
 
 def find_from(haystack: str, needle: str, cursor: int) -> int:
