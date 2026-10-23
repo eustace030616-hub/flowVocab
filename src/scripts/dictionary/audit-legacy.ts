@@ -5,9 +5,12 @@
  * dependencies that no amount of reading finds — a gloss that only the old table had, a lemma that only
  * `inflections` resolved, a difficulty that only the `words` column supplied.
  *
- * Run it on a copy, never on the live database:
+ * Run it on a copy, never on the live database — and make the copy with SQLite, not `cp`: the database
+ * runs in WAL mode, so recent writes live in a side file that a plain copy of the main file does not
+ * include. That cost me a whole round of chasing a coverage number that was measured against a stale
+ * database.
  *
- *   cp data/flowwing.sqlite3 data/legacy-audit.sqlite3
+ *   sqlite3 data/flowwing.sqlite3 "VACUUM INTO 'data/legacy-audit.sqlite3'"
  *   FLOWWING_DB=data/legacy-audit.sqlite3 npm run audit:legacy
  */
 import { all, get, openDatabase, run } from "../../lib/store/db";
@@ -28,6 +31,7 @@ async function main() {
   let words = 0;
   let glossed = 0;
   let lemmas = new Set<string>();
+  const missing = new Map<string, number>();
   let withDifficulty = 0;
   let chinese = 0;
   let failed = 0;
@@ -43,6 +47,7 @@ async function main() {
     if (!pack) continue;
     for (const [key, entry] of Object.entries(pack.vocabulary)) {
       words += 1;
+      if (!entry.gloss) missing.set(key, (missing.get(key) ?? 0) + 1);
       if (entry.gloss) {
         glossed += 1;
         if (/[\u4e00-\u9fff]/.test(entry.gloss)) chinese += 1;
@@ -58,6 +63,20 @@ async function main() {
   console.log(`  with a gloss:      ${glossed} (${pct(glossed)})`);
   console.log(`  with Chinese:      ${chinese} (${pct(chinese)})`);
   console.log(`  distinct lemmas:   ${lemmas.size}`);
+
+  // Which words are actually being asked for, and where they exist at all. A word absent from the book
+  // needs adding; a word present without a translation needs a gloss.
+  const wanted = [...missing.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30);
+  const inBook = all<{ lemmaKey: string; translation: string | null }>(
+    `SELECT lemmaKey, translation FROM wordbook WHERE targetLang = 'de' AND lemmaKey IN (${wanted.map(() => "?").join(",")})`,
+    ...wanted.map(([key]) => key),
+  );
+  const book = new Map(inBook.map((row) => [row.lemmaKey, row.translation]));
+  console.log(`\n  top ${wanted.length} missing words (${missing.size} distinct):`);
+  for (const [key, count] of wanted) {
+    const state = book.has(key) ? (book.get(key) ? "in book, glossed" : "in book, NO gloss") : "not in book";
+    console.log(`   ${key.padEnd(18)} ${String(count).padStart(3)}×  ${state}`);
+  }
   console.log(`  with difficulty:   ${withDifficulty} (${pct(withDifficulty)})`);
 }
 
