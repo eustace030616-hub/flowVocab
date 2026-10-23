@@ -1447,48 +1447,51 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
       </header>
 
       {userOpen && (
-        <div className="fixed inset-0 z-50 bg-white flex flex-col">
-          <div className="flex-1 overflow-y-auto">
-            <div className="mx-auto w-full max-w-xl px-4 sm:px-6 py-8 flex flex-col gap-6">
-              {/* The avatar is the way in and the way out: tapping the box again closes the page, so
-                  the page needs no separate close control and no title bar above it. */}
-              <button
-                onClick={() => setUserOpen(false)}
-                aria-label={t.close}
-                title={t.close}
-                className="h-16 w-16 shrink-0 border border-zinc-900 flex items-center justify-center text-xl font-medium text-zinc-900 hover:bg-zinc-900 hover:text-white transition-colors rounded-none"
-              >
-                {(me?.username ?? "?").slice(0, 1).toUpperCase()}
-              </button>
+        <div className="fixed inset-0 z-50 bg-white flex flex-col overflow-y-auto">
+          {/* One system for the whole page: a 96px label column, content flush beside it, a hairline
+              between rows, and three text colours — label grey, content near-black, affordance grey.
+              Two sizes: 10px uppercase for labels and 14px for everything read as text, plus the single
+              figure (the level), which is the one thing on the page that is not a row. */}
+          <div className="mx-auto w-full max-w-xl px-4 sm:px-6 py-8 flex flex-col gap-6">
+            <button
+              onClick={() => setUserOpen(false)}
+              aria-label={t.close}
+              title={t.close}
+              className="h-16 w-16 shrink-0 border border-zinc-900 flex items-center justify-center text-base font-medium text-zinc-900 hover:bg-zinc-900 hover:text-white transition-colors rounded-none"
+            >
+              {(me?.username ?? "?").slice(0, 1).toUpperCase()}
+            </button>
 
-              {/* The same shape as the history above it: a row that names what is chosen, and a box
-                  that opens with the alternatives. One interaction model on one page. */}
+            <div className="border-t border-zinc-200">
+              <div className="flex items-baseline gap-4 py-3 border-b border-zinc-200">
+                <span className="w-24 shrink-0 text-[10px] uppercase tracking-wide text-zinc-400">{t.level}</span>
+                <span className="text-2xl font-medium tabular-nums text-zinc-900">
+                  {me?.ability?.find((a) => a.targetLang === me?.targetLang)?.level ?? t.levelUnknown}
+                </span>
+              </div>
+
               {me && me.tracks.length > 1 && (
-                <section>
+                <>
                   <button
                     onClick={() => setTrackBox((open) => !open)}
                     aria-expanded={trackBox}
-                    className="fv-touch w-full flex items-center justify-between gap-4 text-left"
+                    className="fv-touch w-full flex items-center gap-4 py-3 border-b border-zinc-200 text-left"
                   >
-                    <span className="text-[10px] uppercase tracking-wide text-zinc-400">
-                      {t.tracks}
+                    <span className="w-24 shrink-0 text-[10px] uppercase tracking-wide text-zinc-400">{t.tracks}</span>
+                    <span className="flex-1 min-w-0 text-sm text-zinc-900 truncate">
+                      {(() => {
+                        const current = me.tracks.find((track) => track.id === me.track);
+                        return current ? `${trackName(current.glossLang)} → ${trackName(current.targetLang)}` : "";
+                      })()}
                     </span>
-                    <span className="flex items-center gap-2 min-w-0">
-                      <span className="text-xs text-zinc-600 truncate">
-                        {(() => {
-                          const current = me.tracks.find((track) => track.id === me.track);
-                          return current ? `${trackName(current.glossLang)} → ${trackName(current.targetLang)}` : "";
-                        })()}
-                      </span>
-                      <span className="text-xs text-zinc-400">{trackBox ? "−" : "+"}</span>
-                    </span>
+                    <span className="shrink-0 text-sm text-zinc-400">{trackBox ? "−" : "+"}</span>
                   </button>
                   {trackBox && (
-                    <ul className="border-t border-zinc-200 mt-2">
+                    <ul className="border-b border-zinc-200">
                       {me.tracks.map((track) => {
                         const active = track.id === me.track;
                         return (
-                          <li key={track.id} className="border-b border-zinc-200">
+                          <li key={track.id}>
                             <button
                               onClick={() => {
                                 if (active) {
@@ -1499,7 +1502,7 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                                 void load(track.id);
                               }}
                               disabled={loading}
-                              className={`fv-touch w-full py-2 text-left text-sm truncate disabled:opacity-50 transition-colors ${
+                              className={`fv-touch w-full flex items-center gap-4 py-3 pl-28 pr-0 text-left text-sm truncate disabled:opacity-50 transition-colors ${
                                 active ? "text-zinc-400" : "text-zinc-900 hover:text-zinc-500"
                               }`}
                             >
@@ -1510,15 +1513,8 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                       })}
                     </ul>
                   )}
-                </section>
+                </>
               )}
-
-              <section>
-                <p className="text-[10px] uppercase tracking-wide text-zinc-400 mb-1">{t.level}</p>
-                <p className="text-2xl font-medium text-zinc-900">
-                  {me?.ability?.find((a) => a.targetLang === me?.targetLang)?.level ?? t.levelUnknown}
-                </p>
-              </section>
 
               <button
                 onClick={() => {
@@ -1526,52 +1522,54 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                   void startPlacement();
                 }}
                 disabled={placementBusy || generating || loading || !me}
-                className="fv-touch h-11 w-full text-sm font-medium border border-zinc-900 text-zinc-900 hover:bg-zinc-900 hover:text-white disabled:opacity-50 transition-colors rounded-none"
+                className="fv-touch w-full flex items-center gap-4 py-3 border-b border-zinc-200 text-left disabled:opacity-50"
               >
-                {t.placement}
+                <span className="w-24 shrink-0 text-[10px] uppercase tracking-wide text-zinc-400">{t.placement}</span>
+                <span className="flex-1 text-sm text-zinc-900">{t.testStart}</span>
               </button>
 
-              <section>
-                <button
-                  onClick={() => setHistoryBox((open) => !open)}
-                  aria-expanded={historyBox}
-                  className="fv-touch w-full flex items-center justify-between gap-4 text-left"
-                >
-                  <span className="text-[10px] uppercase tracking-wide text-zinc-400">
-                    {t.history}
-                    {history.length > 0 && <span className="ml-1 text-zinc-300">{history.length}</span>}
-                  </span>
-                  <span className="text-xs text-zinc-400">{historyBox ? "−" : "+"}</span>
-                </button>
-                {/* A fixed window on the list, not a fold: about three titles are visible and the rest
-                    are a scroll away. The box never grows, so the page keeps the same shape whatever
-                    the archive's size. */}
-                {!historyBox ? null : history.length === 0 ? (
-                  <p className="text-sm text-zinc-500 mt-2">{t.historyEmpty}</p>
-                ) : (
-                  <ul className="h-32 overflow-y-auto border-t border-zinc-200 mt-2">
-                    {history.map((item) => (
-                      <li key={item._id} className="border-b border-zinc-200">
-                        <button
-                          onClick={() => {
-                            void openHistoryPassage(item._id);
-                            setUserOpen(false);
-                          }}
-                          className="fv-touch w-full py-2 text-left text-sm text-zinc-900 truncate hover:text-zinc-500 transition-colors"
-                        >
-                          {item.title}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
+              <button
+                onClick={() => setHistoryBox((open) => !open)}
+                aria-expanded={historyBox}
+                className="fv-touch w-full flex items-center gap-4 py-3 border-b border-zinc-200 text-left"
+              >
+                <span className="w-24 shrink-0 text-[10px] uppercase tracking-wide text-zinc-400">{t.history}</span>
+                <span className="flex-1 text-sm text-zinc-900 tabular-nums">{history.length}</span>
+                <span className="shrink-0 text-sm text-zinc-400">{historyBox ? "−" : "+"}</span>
+              </button>
+
+              {/* A fixed window on the list, indented to the content column so the titles line up with
+                  every other value on the page. */}
+              {historyBox && (
+                <div className="border-b border-zinc-200">
+                  {history.length === 0 ? (
+                    <p className="pl-28 py-3 text-sm text-zinc-500">{t.historyEmpty}</p>
+                  ) : (
+                    <ul className="h-32 overflow-y-auto pl-28">
+                      {history.map((item) => (
+                        <li key={item._id} className="border-b border-zinc-200 last:border-b-0">
+                          <button
+                            onClick={() => {
+                              void openHistoryPassage(item._id);
+                              setUserOpen(false);
+                            }}
+                            className="fv-touch w-full py-2 text-left text-sm text-zinc-900 truncate hover:text-zinc-500 transition-colors"
+                          >
+                            {item.title}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
 
               <button
                 onClick={() => void signOut()}
-                className="fv-touch h-11 w-full text-sm font-medium text-zinc-500 hover:text-zinc-900 transition-colors rounded-none"
+                className="fv-touch w-full flex items-center gap-4 py-3 text-left"
               >
-                {t.authSignOut}
+                <span className="w-24 shrink-0 text-[10px] uppercase tracking-wide text-zinc-400">{t.authSignOut}</span>
+                <span className="flex-1 text-sm text-zinc-500">→</span>
               </button>
             </div>
           </div>
