@@ -9,6 +9,7 @@
  * and the writer rebuilds it; the read path never repairs anything.
  */
 import { wordsByKeys } from "../store/dictionary";
+import { glossLangFor } from "../lang";
 import { glossesByLemma } from "../learner/glosses";
 import { tokenizeWithLexicon } from "../learner/lexicon";
 import { wordSpans } from "../tokenize";
@@ -49,7 +50,10 @@ export async function packParagraph(paragraphId: string): Promise<PackageVocabul
   const keys = [...new Set(wordSpans(spans).map((span) => span.lemmaKey))];
 
   const words = keys.length ? await wordsByKeys(targetLang, keys, { origin: null }) : [];
-  const glosses = await glossesByLemma(targetLang, "en", keys);
+  // The gloss language follows the passage's own language, not English: an English passage is glossed
+  // in Chinese, a German one in English. Asking for "en" glosses on an English passage packaged it with
+  // no translations at all, which is what the English track showed.
+  const glosses = await glossesByLemma(targetLang, glossLangFor(targetLang), keys);
 
   const vocabulary: Record<string, PackageVocabulary> = {};
   for (const word of words) {

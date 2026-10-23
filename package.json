@@ -8,6 +8,7 @@
     "build:web": "vite build --config web/vite.config.ts && node -e \"require('fs').cpSync('web/public','web/dist',{recursive:true})\"",
     "start": "tsx src/server/node.ts",
     "pull": "tsx src/scripts/worker/pull.ts",
+    "parity": "tsx src/scripts/parity.ts",
     "serve": "tsx src/server/node.ts",
     "typecheck": "tsc --noEmit"
   },

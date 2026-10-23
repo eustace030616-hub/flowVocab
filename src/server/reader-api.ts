@@ -38,6 +38,82 @@ interface PackageRow {
   version: number;
 }
 
+async function writeMark(
+  store: StoreDriver,
+  userId: string,
+  targetLang: string,
+  paragraphId: string,
+  lemmaKey: string,
+  surface: string,
+  charStart: number,
+  charEnd: number,
+  status: "marked" | "ignored" | "unmarked",
+): Promise<void> {
+  await store.run(
+    `INSERT INTO marks (id, userId, targetLang, paragraphId, wordId, surface, lemmaKey, charStart, charEnd,
+                        tokenizerVersion, status, markedAt)
+     VALUES (?,?,?,?,?,?,?,?,?,1,?,?)
+     ON CONFLICT(userId, paragraphId, charStart, charEnd) DO UPDATE SET status = excluded.status, markedAt = excluded.markedAt`,
+    crypto.randomUUID(), userId, targetLang, paragraphId, lemmaKey, surface, lemmaKey, charStart, charEnd, status, Date.now(),
+  );
+}
+
+async function writeEvent(
+  store: StoreDriver,
+  userId: string,
+  targetLang: string,
+  type: string,
+  paragraphId: string,
+  lemmaKey: string,
+  surface: string,
+  charStart: number,
+  charEnd: number,
+): Promise<void> {
+  await store.run(
+    `INSERT INTO events (id, userId, targetLang, type, source, paragraphId, lemmaKey, surface, charStart, charEnd, ts)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+    crypto.randomUUID(), userId, targetLang, type, "web", paragraphId, lemmaKey, surface, charStart, charEnd, Date.now(),
+  );
+}
+
+
+/**
+ * The learner payload, built once so `/me` and the track switch answer with the same object.
+ *
+ * `id` and `label` are here because the Pi sends them; `username` because the avatar needs it. Where the
+ * two hosts used to answer with different keys, the interface had to know which host it was talking to.
+ */
+async function meFor(store: StoreDriver, userId: string, username: string | null) {
+  const user = await store.get<{ track: string; uiLocale: string }>(
+    "SELECT track, uiLocale FROM users WHERE userId = ?",
+    userId,
+  );
+  const ability = await store.all<Record<string, unknown>>(
+    "SELECT * FROM ability_states WHERE userId = ?",
+    userId,
+  );
+  const track = user?.track ?? "en-de";
+  const targetLang = track === "zh-en" ? "en" : "de";
+  return {
+    id: userId,
+    userId,
+    label: username ?? userId,
+    username,
+    track,
+    targetLang,
+    glossLang: track === "zh-en" ? "zh" : "en",
+    uiLocale: user?.uiLocale ?? "en",
+    tracks: [
+      { id: "zh-en", targetLang: "en", glossLang: "zh", uiLocale: "zh", label: "English" },
+      { id: "en-de", targetLang: "de", glossLang: "en", uiLocale: "en", label: "German" },
+    ],
+    ability: ability.map((row) => ({
+      ...row,
+      levelPoint: levelFromDifficulty(Number(row.theta ?? 0.5)),
+    })),
+  };
+}
+
 export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
   const app = new Hono<{ Variables: Variables }>().basePath("/api");
 
@@ -289,45 +365,15 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
   });
 
   // ── The learner ─────────────────────────────────────────────────────────────
-  app.get("/me", async (c) => {
-    const store = c.get("store");
-    const user = await store.get<{ userId: string; track: string; uiLocale: string }>(
-      "SELECT userId, track, uiLocale FROM users WHERE userId = ?",
-      c.get("userId"),
-    );
-    const ability = await store.all<Record<string, unknown>>(
-      "SELECT * FROM ability_states WHERE userId = ?",
-      c.get("userId"),
-    );
-    const track = user?.track ?? "en-de";
-    return c.json({
-      userId: c.get("userId"),
-      username: c.get("username"),
-      track,
-      targetLang: track === "zh-en" ? "en" : "de",
-      glossLang: track === "zh-en" ? "zh" : "en",
-      uiLocale: user?.uiLocale ?? "en",
-      // `label` matches what the Pi sends, so the switch names the other track on both hosts.
-      tracks: [
-        { id: "zh-en", targetLang: "en", glossLang: "zh", uiLocale: "zh", label: "English" },
-        { id: "en-de", targetLang: "de", glossLang: "en", uiLocale: "en", label: "German" },
-      ],
-      ability: ability.map((row) => ({
-        ...row,
-        levelPoint: levelFromDifficulty(Number(row.theta ?? 0.5)),
-      })),
-    });
-  });
+  app.get("/me", async (c) => c.json(await meFor(c.get("store"), c.get("userId"), c.get("username"))));
 
   app.patch("/me/track", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { track?: string };
-    await c.get("store").run(
-      "UPDATE users SET track = ?, updatedAt = ? WHERE userId = ?",
-      body.track ?? "en-de",
-      Date.now(),
-      c.get("userId"),
-    );
-    return c.json({ ok: true, track: body.track ?? "en-de" });
+    const track = body.track ?? "en-de";
+    await c.get("store").run("UPDATE users SET track = ?, updatedAt = ? WHERE userId = ?", track, Date.now(), c.get("userId"));
+    // The whole learner, not `{ok}`: the client merges this into what it already holds, and a response
+    // without `targetLang` left the interface on the old track.
+    return c.json(await meFor(c.get("store"), c.get("userId"), c.get("username")));
   });
 
   // ── The history list ────────────────────────────────────────────────────────
@@ -390,13 +436,13 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
     );
     const theta = ability?.theta ?? 0.25;
 
-    const markRows = await store.all<{ lemmaKey: string; status: string }>(
-      "SELECT lemmaKey, status FROM marks WHERE userId = ? AND paragraphId = ?",
+    const markRows = await store.all<{ charStart: number; status: string }>(
+      "SELECT charStart, status FROM marks WHERE userId = ? AND paragraphId = ?",
       userId,
       id,
     );
     const marked: Record<string, string> = {};
-    for (const row of markRows) marked[row.lemmaKey] = row.status;
+    for (const row of markRows) marked[`${row.charStart}`] = row.status;
 
     const keyOf = (lemmaKey: string) => packed.vocabulary[lemmaKey];
     const probabilities = new Map<string, number>();
@@ -428,9 +474,14 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
       id,
     );
 
+    // The Pi answers with `_id`, and that is what the client keys a passage by. This host's row has `id`
+    // (the column name), which must not leak into the payload beside it.
+    const { id: rowId, ...fields } = paragraph;
     return c.json({
-      ...paragraph,
-      _id: paragraph.id,
+      ...fields,
+      _id: rowId,
+      briefId: null, buffered: 1, createdAt: null, difficulty: null, difficultySource: null,
+      promptSnapshot: null, source: "pi", tokenizerVersion: 1,
       starred: Boolean(star),
       difficultyVote: vote?.userBand ?? null,
       spans: packed.spans,
@@ -452,7 +503,7 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
         verdict: coverage.verdict,
         unknownIn: coverage.unknownIn,
       },
-      known: { measured: (ability?.n ?? 0) > 0, basis: ability ?? null },
+
       keyOf: undefined,
     });
   });
@@ -487,7 +538,7 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
        VALUES (?,?,?,?,?,?,0,-1,0.5,1,0,'A1','A1','C2',?,?)`,
       crypto.randomUUID(), c.get("userId"), "de", c.req.param("id"), band, band, body.explicit ? 1 : 0, Date.now(),
     );
-    return c.json({ ok: true });
+    return c.json({ ok: true, summary: { band, computed: band, explicit: Boolean(body.explicit) } }, 201);
   });
 
   app.post("/events", async (c) => {
@@ -532,15 +583,53 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
     return c.json({ ok: true }, 201);
   });
 
+  /**
+   * The routes the interface uses for a word, as opposed to `/events`.
+   *
+   * On the Pi these resolve the word against the dictionary first; here the packed passage already
+   * carries the lemma, its part of speech and its difficulty, so marking is a row rather than a
+   * vocabulary write. The response is smaller than the Pi's (`word`/`state` come from its estimator),
+   * which the parity report records as a known difference.
+   */
+  app.post("/words/mark", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      targetLang?: string; lemma?: string; lemmaKey?: string; surface?: string;
+      paragraphId?: string; charStart?: number; charEnd?: number; pos?: string;
+    };
+    const lemmaKey = (body.lemmaKey || body.surface || "").toLowerCase().trim();
+    if (!lemmaKey || !body.paragraphId || typeof body.charStart !== "number" || typeof body.charEnd !== "number") {
+      return c.json({ error: "lemmaKey (or surface), paragraphId, charStart and charEnd are required" }, 400);
+    }
+    const targetLang = body.targetLang ?? "de";
+    await writeMark(c.get("store"), c.get("userId"), targetLang, body.paragraphId, lemmaKey, body.surface ?? lemmaKey, body.charStart, body.charEnd, "marked");
+    await writeEvent(c.get("store"), c.get("userId"), targetLang, "mark", body.paragraphId, lemmaKey, body.surface ?? lemmaKey, body.charStart, body.charEnd);
+    return c.json({ ok: true, lemmaKey, status: "marked" }, 201);
+  });
+
+  app.post("/words/ignore", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      targetLang?: string; lemmaKey?: string; surface?: string;
+      paragraphId?: string; charStart?: number; charEnd?: number;
+    };
+    const lemmaKey = (body.lemmaKey || body.surface || "").toLowerCase().trim();
+    if (!lemmaKey) return c.json({ error: "lemmaKey is required" }, 400);
+    const targetLang = body.targetLang ?? "de";
+    await writeMark(c.get("store"), c.get("userId"), targetLang, body.paragraphId ?? "", lemmaKey, body.surface ?? lemmaKey, body.charStart ?? 0, body.charEnd ?? 0, "ignored");
+    await writeEvent(c.get("store"), c.get("userId"), targetLang, "ignore", body.paragraphId ?? "", lemmaKey, body.surface ?? lemmaKey, body.charStart ?? 0, body.charEnd ?? 0);
+    return c.json({ ok: true, lemmaKey, status: "ignored" });
+  });
+
   app.post("/marks/batch", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { paragraphId?: string };
-    const rows = await c.get("store").all<{ lemmaKey: string; status: string }>(
-      "SELECT lemmaKey, status FROM marks WHERE userId = ? AND paragraphId = ?",
+    const rows = await c.get("store").all<{ charStart: number; status: string }>(
+      "SELECT charStart, status FROM marks WHERE userId = ? AND paragraphId = ?",
       c.get("userId"),
       body.paragraphId ?? "",
     );
+    // Keyed by character start, the way the reader looks a word up — not by lemma, which would make
+    // every mark invisible on this host while looking correct in the database.
     const out: Record<string, string> = {};
-    for (const row of rows) out[row.lemmaKey] = row.status;
+    for (const row of rows) out[`${row.charStart}`] = row.status;
     return c.json(out);
   });
 

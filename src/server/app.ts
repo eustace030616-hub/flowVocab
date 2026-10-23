@@ -235,7 +235,7 @@ app.get("/me", async (c) => {
   const track = trackOf(user);
   // Ability is derived from the event log, so it is read rather than stored on the user document.
   const ability = await abilitiesFor(user.userId);
-  return c.json({ ...user, ...track, tracks: Object.values(TRACKS), ability });
+  return c.json({ ...user, username: c.get("username"), ...track, tracks: Object.values(TRACKS), ability });
 });
 
 app.patch("/me/track", async (c) => {
@@ -247,7 +247,15 @@ app.patch("/me/track", async (c) => {
   const updated = await setTrack(user.userId, body.track);
   // Must include `tracks`, exactly like GET /me: the client uses this response to decide which
   // target language to load. Omitting it left the UI on the previous track's content.
-  return c.json({ ...updated, ...trackOf(updated), tracks: Object.values(TRACKS) });
+  // The same object GET /me answers with. The client merges this, so a missing key here is a key the
+  // interface keeps stale after a switch.
+  return c.json({
+    ...updated,
+    username: c.get("username"),
+    ...trackOf(updated),
+    tracks: Object.values(TRACKS),
+    ability: await abilitiesFor(updated.userId),
+  });
 });
 
 // ── Paragraphs ────────────────────────────────────────────────────────────────
