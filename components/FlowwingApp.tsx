@@ -141,6 +141,8 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     current: "Current",
     words: "words",
     partOfSpeech: "POS",
+    article: "Article",
+    plural: "Plural",
     form: "Form",
     placementNext: "Next",
     placementFinish: "Finish",
@@ -238,6 +240,8 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
     historyMarked: "已标记",
     words: "词",
     partOfSpeech: "词性",
+    article: "冠词",
+    plural: "复数",
     form: "形式",
     placementNext: "下一个",
     placementFinish: "结束",
@@ -340,6 +344,21 @@ const POS_SHORT: Record<string, string> = {
   noun: "n",
   adjective: "adj",
   adverb: "adv",
+  // The German dictionary and the Wordbook carry full German names, which overflowed a 32px column and
+  // painted over the gloss. Short forms first, and the column clips the rest.
+  substantiv: "n",
+  adjektiv: "adj",
+  artikel: "art",
+  konjunktion: "konj",
+  interjection: "interj",
+  indefinitpronomen: "pron",
+  personalpronomen: "pron",
+  possessivpronomen: "pron",
+  reflexivpronomen: "pron",
+  relativpronomen: "pron",
+  präposition: "präp",
+  numerale: "num",
+  partikel: "part",
 };
 
 function posLabel(pos: string | null | undefined): string | null {
@@ -1941,48 +1960,34 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                 </p>
 
                 <dl className="grid grid-cols-[64px_1fr] gap-x-4 gap-y-2 mt-4 pt-4 border-t fv-hairline text-left">
-                  {(() => {
-                    const label = posLabel(activeVocab?.glossPos);
-                    if (!label) return null;
-                    return (
-                      <>
-                        <dt className="text-[10px] uppercase tracking-wide text-zinc-400 pt-0.5">
-                          {t.partOfSpeech}
-                        </dt>
-                        <dd className="text-xs text-zinc-700 font-mono">{label}</dd>
-                      </>
-                    );
-                  })()}
-                  {(() => {
-                    const vocab = activeVocab;
-                    if (!vocab?.level) return null;
-                    return (
-                      <>
-                        <dt className="text-[10px] uppercase tracking-wide text-zinc-400 pt-0.5">
-                          {t.level}
-                        </dt>
-                        <dd className="text-xs text-zinc-700">
-                          {vocab.level}
-                          {vocab.levelEstimated ? ` (${t.estimated})` : ""}
-                        </dd>
-                      </>
-                    );
-                  })()}
-                  {(active.span.compoundParts || active.span.detached) && (
-                    <>
-                      <dt className="text-[10px] uppercase tracking-wide text-zinc-400 pt-0.5">
-                        {t.form}
-                      </dt>
-                      <dd className="text-xs text-zinc-700">
-                        {[
+                  {[
+                    { label: t.partOfSpeech, value: posLabel(activeVocab?.pos ?? null) },
+                    { label: t.level, value: activeVocab?.level ?? null },
+                    { label: t.article, value: activeVocab?.article ?? null },
+                    { label: t.plural, value: activeVocab?.plural ?? null },
+                    {
+                      label: t.form,
+                      value:
+                        [
                           active.span.compoundParts ? t.compound : null,
                           active.span.detached ? t.separable : null,
                         ]
                           .filter(Boolean)
-                          .join(" · ")}
+                          .join(" · ") || null,
+                    },
+                  ].map((row) => (
+                    <div key={row.label} className="contents">
+                      <dt className="text-[10px] uppercase tracking-wide text-zinc-400 pt-0.5">
+                        {row.label}
+                      </dt>
+                      <dd
+                        className={`text-xs truncate ${row.value ? "text-zinc-700" : "text-zinc-300"}`}
+                        title={row.value ?? undefined}
+                      >
+                        {row.value ?? "n/a"}
                       </dd>
-                    </>
-                  )}
+                    </div>
+                  ))}
                 </dl>
 
                 {(() => {
@@ -2005,16 +2010,19 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                     return (
                       <>
                         <div className="border-t border-zinc-100 my-2" />
-                        <ul className="space-y-1">
+                        <ul className="mt-2 space-y-1">
                           {rows.map((group, index) => (
                             <li
                               key={`${group.pos ?? "-"}-${index}`}
-                              className="flex items-baseline gap-2"
+                              className="grid grid-cols-[64px_1fr] gap-x-4 items-baseline"
                             >
-                              <span className="w-8 shrink-0 font-mono text-[10px] text-zinc-400">
+                              <span
+                                className="font-mono text-[10px] text-zinc-400 truncate"
+                                title={posLabel(meaningLabel(group)) ?? undefined}
+                              >
                                 {posLabel(meaningLabel(group)) ?? ""}
                               </span>
-                              <span className="text-sm text-zinc-600">
+                              <span className="text-sm text-zinc-600 break-words">
                                 {group.texts.join(", ")}
                               </span>
                             </li>
