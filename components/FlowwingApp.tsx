@@ -2057,16 +2057,24 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                   </>
                 )}
 
-                {(() => {
-                  const vocab = activeVocab;
-                  if (!vocab) return null;
-                  return (
-                    <p className="text-[10px] text-zinc-400 mt-2">
-                      {t.met} {vocab.timesMet} · {t.unfamiliar} {vocab.unfamiliarity} · {t.lookups}{" "}
-                      {vocab.lookupCount} · {t.exposures} {vocab.exposureCount}
-                    </p>
-                  );
-                })()}
+                  {(() => {
+                    const vocab = activeVocab;
+                    // These four are learner state, not language data: the package carries the lemma, the
+                    // level and the gloss, but how often you have met a word is computed from the event
+                    // log. The reader only has that for words marked in this session, so the line is
+                    // hidden rather than printed as four labels with nothing after them.
+                    const counts = [vocab?.timesMet, vocab?.lookupCount, vocab?.exposureCount].filter(
+                      (value) => typeof value === "number",
+                    );
+                    if (!vocab || counts.length === 0) return null;
+                    return (
+                      <p className="text-[10px] text-zinc-400 mt-2">
+                        {t.met} {vocab.timesMet ?? 0} · {t.unfamiliar}{" "}
+                        {(vocab.unfamiliarity ?? 0).toFixed(2)} · {t.lookups} {vocab.lookupCount ?? 0} ·{" "}
+                        {t.exposures} {vocab.exposureCount ?? 0}
+                      </p>
+                    );
+                  })()}
 
                 {/* The deliberate act, and the only way to mark on a phone — where a tap opens the
                     word and nothing else. On a pointer device the click still marks, so this is the
