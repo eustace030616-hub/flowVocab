@@ -125,7 +125,7 @@ const STEPS: Step[] = [
   {
     name: "placement start",
     byDesign: "needs the vocabulary to sample items",
-    run: async (h) => { const r = await call(h, "GET", "/api/placement"); return { status: r.status, note: keys(r.json) }; },
+    run: async (h) => { const r = await call(h, "POST", "/api/placement"); return { status: r.status, note: keys(r.json) }; },
   },
   {
     name: "events (mark)",

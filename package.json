@@ -9,6 +9,7 @@
     "start": "tsx src/server/node.ts",
     "pull": "tsx src/scripts/worker/pull.ts",
     "parity": "tsx src/scripts/parity.ts",
+    "walk": "tsx src/scripts/walk.ts",
     "serve": "tsx src/server/node.ts",
     "typecheck": "tsc --noEmit"
   },
