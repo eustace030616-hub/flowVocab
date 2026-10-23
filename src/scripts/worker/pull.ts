@@ -323,8 +323,9 @@ async function onePass(
 
   const bands = await pushBands(config, touched);
   const requested = await serveRequests(config);
-  const filled = await fillPool(config);
-  return { events: imported, estimates, bands, filled, requested };
+  // The pool is not this loop's business any more: `pool.ts` mirrors the Pi's pool into D1, and this one
+  // only drains what a reader explicitly asked for.
+  return { events: imported, estimates, bands, filled: 0, requested };
 }
 
 /** One pass over the queue, for callers that already have a process and a config. */

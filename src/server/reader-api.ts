@@ -664,13 +664,43 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
    * is the same relationship the rest of the data already has.
    */
   app.post("/paragraphs/generate", async (c) => {
+    const store = c.get("store");
+    const me = await meFor(store, c.get("userId"), c.get("username"));
+
+    // The pool first: the Pi keeps D1 stocked, so taking a passage is a claim rather than a write, and
+    // the reader gets it immediately. Only an empty pool falls through to the queue.
+    const candidate = await store.get<{ id: string; title: string }>(
+      `SELECT p.id, p.title FROM paragraphs p
+        WHERE p.targetLang = ?
+          AND p.buffered = 1
+          AND NOT EXISTS (SELECT 1 FROM pool_reads r WHERE r.paragraphId = p.id AND r.userId = ?)
+          AND (SELECT COUNT(*) FROM pool_reads r WHERE r.paragraphId = p.id) < 3
+        ORDER BY p.createdAt ASC
+        LIMIT 1`,
+      me.targetLang,
+      c.get("userId"),
+    );
+    if (candidate) {
+      await store.run(
+        "INSERT INTO pool_reads (paragraphId, userId, createdAt) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+        candidate.id,
+        c.get("userId"),
+        Date.now(),
+      );
+      const readers = await store.get<{ n: number }>(
+        "SELECT COUNT(*) AS n FROM pool_reads WHERE paragraphId = ?",
+        candidate.id,
+      );
+      if ((readers?.n ?? 0) >= 3) await store.run("UPDATE paragraphs SET buffered = 0 WHERE id = ?", candidate.id);
+      return c.json({ paragraphId: candidate.id, title: candidate.title, fromPool: true });
+    }
+
     const body = (await c.req.json().catch(() => ({}))) as { targetLang?: string; level?: string; topic?: string };
-    const me = await meFor(c.get("store"), c.get("userId"), c.get("username"));
     const ability = (me.ability as Array<{ targetLang?: string; level?: string | null }>).find(
       (row) => row.targetLang === me.targetLang,
     );
     const requestId = crypto.randomUUID();
-    await c.get("store").run(
+    await store.run(
       "INSERT INTO generation_requests (id, userId, targetLang, level, topic, createdAt) VALUES (?,?,?,?,?,?)",
       requestId,
       c.get("userId"),
@@ -681,6 +711,8 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
     );
     return c.json({ queued: true, requestId }, 202);
   });
+
+
   app.all("/placement", (c) => c.json({ error: "the placement test runs on the Pi" }, 501));
   app.all("*", (c) => c.json({ error: "not part of the reader API", route: c.req.path }, 501));
 

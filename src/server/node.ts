@@ -15,6 +15,7 @@ import { createApp } from "./app";
 import { nodeDriver } from "../lib/store/driver-node";
 import { loadEnv } from "../scripts/env";
 import { onePullPass } from "../scripts/worker/pull";
+import { syncD1Pool } from "../scripts/worker/pool";
 
 // `.env.local` is read into a record for the generator, but the rest of the server reads
 // `process.env` — including the identity service this host defers accounts to. Put the values where
@@ -58,6 +59,23 @@ if (process.env.FLOWWING_PULL === "1") {
   setInterval(tick, intervalMs);
   void tick();
   console.log(`pull loop on, every ${Math.round(intervalMs / 1000)}s`);
+
+  // The pool orchestrator: keeps D1's stock as deep as the Pi's own, on its own clock so a slow
+  // generation never delays an estimate.
+  const poolMs = Number(process.env.FLOWWING_POOL_INTERVAL_MS ?? 30_000);
+  const syncPool = async () => {
+    try {
+      const result = await syncD1Pool();
+      if (result.pushed > 0) {
+        console.log(`pool: pushed ${result.pushed} · ${Object.entries(result.depth).map(([k, v]) => `${k}=${v}`).join(" ")}`);
+      }
+    } catch (error) {
+      console.warn(`pool paused: ${error instanceof Error ? error.message : error}`);
+    }
+  };
+  setInterval(syncPool, poolMs);
+  setTimeout(() => void syncPool(), 5_000);
+  console.log(`pool orchestrator on, every ${Math.round(poolMs / 1000)}s`);
 }
 
 serve({ fetch: outer.fetch, port, hostname }, (info) => {
