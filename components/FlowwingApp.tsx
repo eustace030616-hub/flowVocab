@@ -121,6 +121,12 @@ interface ActiveItem {
 const UI: Record<"en" | "zh", Record<string, string>> = {
   en: {
     appName: "Flowwing",
+    account: "Account",
+    close: "Close",
+    returnToLive: "Return",
+    list: "List",
+    tracks: "Tracks",
+    testStart: "Start",
     loading: "Loading…",
     empty: "Nothing here yet — press Generate to write the first passage.",
     history: "History",
@@ -211,6 +217,12 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
   },
   zh: {
     appName: "Flowwing",
+    account: "账户",
+    close: "关闭",
+    returnToLive: "返回",
+    list: "列表",
+    tracks: "语种",
+    testStart: "开始",
     loading: "加载中…",
     empty: "该学习方向暂无段落，请先运行 seed 脚本。",
     met: "遇见",

@@ -32,3 +32,23 @@ test("every string exists in both locales", () => {
   );
   assert.deepEqual([...zh].filter((k) => !en.has(k)), [], "keys missing from English");
 });
+
+/**
+ * Every label the interface asks for exists.
+ *
+ * `UI` is typed `Record<string, string>`, so `t.returnToLive` compiles whether or not the key is there —
+ * and a missing key renders an empty button, which is indistinguishable from a layout bug. Two of them
+ * shipped that way: the Return and List controls in a stored passage, with no text at all.
+ */
+test("every t.* used in the component has a label", () => {
+  const source = readFileSync("components/FlowwingApp.tsx", "utf-8");
+  const en = new Set(localeKeys(source, "en"));
+  const zh = new Set(localeKeys(source, "zh"));
+
+  // Only the identifiers used as labels: `t.` followed by a word, not `t.tracks.map` or `set`.
+  const used = new Set([...source.matchAll(/\bt\.([a-zA-Z][a-zA-Z0-9]*)\b/g)].map((m) => m[1]));
+  assert.ok(used.size > 30, `expected the component to use many labels, found ${used.size}`);
+
+  const missing = [...used].filter((key) => !en.has(key) || !zh.has(key));
+  assert.deepEqual(missing, [], "these labels would render as empty text");
+});
