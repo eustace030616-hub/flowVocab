@@ -1068,7 +1068,35 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
         title?: string;
         error?: string;
         issues?: string[];
+        queued?: boolean;
       }>(res);
+
+      if (data?.queued) {
+        // No writer on this host: the request is queued and the Pi drains it on its next pull, which
+        // can be a minute away and can also fail. So poll rather than guess once — the list is re-read
+        // every ten seconds for two minutes, and the new newest-entry stops the polling by opening.
+        setError(t.generateQueued);
+        const before = history[0]?._id ?? currentId ?? null;
+        let tries = 0;
+        const poll = async () => {
+          tries += 1;
+          const summaries = await readJson<ParagraphSummary[]>(
+            await fetch(`/api/paragraphs?targetLang=${me.targetLang}&summary=1`),
+          );
+          const newest = summaries?.[0]?._id ?? null;
+          if (summaries && newest && newest !== before) {
+            setHistory(summaries);
+            setError(null);
+            setBrowsing(false);
+            await openParagraph(newest);
+            return;
+          }
+          if (tries < 12) setTimeout(() => void poll(), 10_000);
+          else setError(`${t.generateQueued} Nothing arrived after two minutes — the writer may be busy.`);
+        };
+        setTimeout(() => void poll(), 10_000);
+        return;
+      }
 
       if (!data?.paragraphId) {
         setError(
