@@ -60,7 +60,9 @@ function keys(value: unknown): string {
   return value && typeof value === "object" && !Array.isArray(value) ? Object.keys(value).sort().join(",") : Array.isArray(value) ? `[${value.length}]` : typeof value;
 }
 
-let paragraphId = "";
+/** Per host: one host's passage id is not valid on the other, and sharing one variable asked the Pi
+ *  about a Worker passage. */
+const paragraphOf = new Map<string, string>();
 
 const STEPS: Step[] = [
   {
@@ -79,7 +81,8 @@ const STEPS: Step[] = [
     run: async (h) => {
       const r = await call(h, "GET", "/api/paragraphs?targetLang=en&summary=1");
       const list = Array.isArray(r.json) ? r.json : [];
-      paragraphId = (list[0] as { _id?: string })?._id ?? "";
+      paragraphOf.set(h.name, (list[0] as { _id?: string })?._id ?? "");
+      const paragraphId = paragraphOf.get(h.name) ?? "";
       return { status: r.status, note: list.length > 0 ? "non-empty" : "empty" };
     },
   },
@@ -87,6 +90,7 @@ const STEPS: Step[] = [
     name: "read paragraph",
     byDesign: "the unknown band is the model prediction here until the Pi's next pull writes its own reading",
     run: async (h) => {
+      const paragraphId = paragraphOf.get(h.name) ?? "";
       if (!paragraphId) return { status: 0, note: "no passage to read" };
       const r = await call(h, "GET", `/api/paragraphs/${paragraphId}`);
       const data = r.json as Record<string, unknown> | null;
@@ -103,7 +107,7 @@ const STEPS: Step[] = [
   {
     name: "mark a word (words/mark)",
     run: async (h) => {
-      const r = await call(h, "POST", "/api/words/mark", { targetLang: "en", lemmaKey: "dog", surface: "dog", paragraphId, charStart: 0, charEnd: 3 });
+      const r = await call(h, "POST", "/api/words/mark", { targetLang: "en", lemmaKey: "dog", surface: "dog", paragraphId: paragraphOf.get(h.name) ?? "", charStart: 0, charEnd: 3 });
       return { status: r.status, note: keys(r.json) };
     },
     byDesign: "the Pi's response carries the estimator's state and ability; this host's carries the mark",
@@ -111,12 +115,12 @@ const STEPS: Step[] = [
   {
     name: "marks/batch",
     run: async (h) => {
-      const r = await call(h, "POST", "/api/marks/batch", { paragraphId });
+      const r = await call(h, "POST", "/api/marks/batch", { paragraphId: paragraphOf.get(h.name) ?? "" });
       return { status: r.status, note: JSON.stringify(r.json).slice(0, 40) };
     },
   },
-  { name: "star", run: async (h) => { const r = await call(h, "POST", `/api/paragraphs/${paragraphId}/star`, { starred: true }); return { status: r.status, note: keys(r.json) }; } },
-  { name: "difficulty vote", run: async (h) => { const r = await call(h, "POST", `/api/paragraphs/${paragraphId}/difficulty`, { band: "hard" }); return { status: r.status, note: keys(r.json) }; } },
+  { name: "star", run: async (h) => { const r = await call(h, "POST", `/api/paragraphs/${paragraphOf.get(h.name) ?? ""}/star`, { starred: true }); return { status: r.status, note: keys(r.json) }; } },
+  { name: "difficulty vote", run: async (h) => { const r = await call(h, "POST", `/api/paragraphs/${paragraphOf.get(h.name) ?? ""}/difficulty`, { band: "hard" }); return { status: r.status, note: keys(r.json) }; } },
   {
     name: "generate",
     byDesign: "needs the vocabulary: the writer lives on the Pi",
@@ -131,7 +135,7 @@ const STEPS: Step[] = [
     name: "events (mark)",
     byDesign: "the Pi records an event only; the Worker records the event and the mark, because it has no dictionary to resolve against",
     run: async (h) => {
-      const r = await call(h, "POST", "/api/events", { targetLang: "en", type: "mark", paragraphId, lemmaKey: "dog", surface: "dog" });
+      const r = await call(h, "POST", "/api/events", { targetLang: "en", type: "mark", paragraphId: paragraphOf.get(h.name) ?? "", lemmaKey: "dog", surface: "dog" });
       return { status: r.status, note: keys(r.json) };
     },
   },

@@ -95,7 +95,7 @@ async function sampleRealItems(targetLang: TargetLang, count: number): Promise<P
   };
 
   for (const bucket of populated) {
-    await take(bucket.band, bucket.band + 1 / BANDS, quota);
+    await take(bucket.band / BANDS, (bucket.band + 1) / BANDS, quota);
   }
 
   // Top up if a band held fewer words than its quota, so the test is always the full length. The

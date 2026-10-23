@@ -422,13 +422,22 @@ export function sampleWordsBetween(
 /** A random sample across the whole populated axis, for topping a short test up. */
 export function sampleWords(targetLang: string, size: number): SampledWord[] {
   if (size <= 0) return [];
-  return all<SampledWord>(
+  // The whole axis, from both sources: the book first, because it is what a dictionary-free deployment has.
+  const fromBook = bookWordsInRange(targetLang, 0, 1.0001, size);
+  if (fromBook.length >= size) return fromBook;
+  const fromDictionary = all<SampledWord>(
     `SELECT lemmaKey, lemma, difficulty FROM words
      WHERE targetLang = ? AND origin = 'import' AND difficulty >= 0 AND difficulty < 1.0001
      ORDER BY RANDOM() LIMIT ?`,
     targetLang,
     size,
   );
+
+  const merged = new Map<string, SampledWord>();
+  for (const word of [...fromBook, ...fromDictionary]) {
+    if (!merged.has(word.lemmaKey)) merged.set(word.lemmaKey, word);
+  }
+  return [...merged.values()].slice(0, size);
 }
 
 /**
