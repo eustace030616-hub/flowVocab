@@ -12,6 +12,7 @@ import { wordsByKeys } from "../store/dictionary";
 import { glossLangFor } from "../lang";
 import { glossesByLemma } from "../learner/glosses";
 import { tokenizeWithLexicon } from "../learner/lexicon";
+import { somajoTokens } from "../tokenize/somajo";
 import { wordSpans } from "../tokenize";
 import { all, get, nowMs, run } from "../store/db";
 import type { TargetLang } from "../lang";
@@ -46,7 +47,12 @@ export async function packParagraph(paragraphId: string): Promise<PackageVocabul
   if (!row) return null;
 
   const targetLang = row.targetLang as TargetLang;
-  const spans = await tokenizeWithLexicon(row.content, targetLang);
+  // SoMaJo segments when it is available and asked for; the built-in segmenter otherwise. Lemmas,
+  // glosses and difficulties are resolved identically either way.
+  const tokens = process.env.FLOWWING_TOKENIZER === "somajo"
+    ? await somajoTokens(row.content, targetLang)
+    : null;
+  const spans = await tokenizeWithLexicon(row.content, targetLang, tokens ?? undefined);
   const keys = [...new Set(wordSpans(spans).map((span) => span.lemmaKey))];
 
   const words = keys.length ? await wordsByKeys(targetLang, keys, { origin: null }) : [];

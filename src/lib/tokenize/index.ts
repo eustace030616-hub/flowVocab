@@ -60,6 +60,13 @@ export interface Span {
 }
 
 export interface TokenizeOptions {
+  /**
+   * Pre-segmented tokens, in order, as offsets into the text.
+   *
+   * Supplying these replaces the ICU segmenter and nothing else: lemmas, particles and compounds are
+   * resolved from the same spans afterwards.
+   */
+  tokens?: Array<{ surface: string; start: number; end: number }>;
   /** Lexicon probe. Supplying it turns best-effort lemmatisation into lookup-backed lemmatisation. */
   lookup?: LemmaLookup;
   /**
@@ -367,17 +374,63 @@ function mergedInfinitive(
  * Tokenise losslessly: concatenating `surface` over the returned spans reproduces the input
  * exactly, so the UI can render spans directly and never has to re-derive positions.
  */
+
+/**
+ * The tokens plus a span for every gap between them.
+ *
+ * The segmenter reports words and punctuation; the reading interface needs the spaces too, because it
+ * renders the spans it is given and nothing else.
+ */
+function fillGaps(
+  text: string,
+  tokens: Array<{ surface: string; start: number; end: number }>,
+): Array<{ segment: string; index: number; isWordLike: undefined }> {
+  const parts: Array<{ segment: string; index: number; isWordLike: undefined }> = [];
+  let cursor = 0;
+  for (const token of tokens) {
+    if (token.start > cursor) {
+      parts.push({ segment: text.slice(cursor, token.start), index: cursor, isWordLike: undefined });
+    }
+    if (token.start >= cursor) {
+      parts.push({ segment: text.slice(token.start, token.end), index: token.start, isWordLike: undefined });
+      cursor = token.end;
+    }
+  }
+  if (cursor < text.length) {
+    parts.push({ segment: text.slice(cursor), index: cursor, isWordLike: undefined });
+  }
+  return parts;
+}
+
 export function tokenize(
   text: string,
   lang: TargetLang,
   options: TokenizeOptions = {},
 ): Span[] {
-  const { lookup, resolveForm, posOf, separable = lang === "de", compounds = lang === "de" } = options;
+  const { lookup, resolveForm, posOf, separable = lang === "de", compounds = lang === "de", tokens } = options;
   const input = nfc(text);
   const segmenter = new Intl.Segmenter(LOCALE_OF[lang], { granularity: "word" });
 
+  // Segmentation is the only thing a caller may replace: SoMaJo knows German abbreviations, quotes and
+  // ordinals better than ICU, and everything downstream — lemmas, particles, compounds — stays identical
+  // because it sees the same spans either way.
+  // A foreign segmenter returns only words and punctuation, not the gaps between them. The reader renders
+  // from spans, so a missing gap would join two words: fill every gap with its own span, whitespace or
+  // not, exactly as the ICU segmenter reports them.
+  const parts = tokens
+    ? fillGaps(
+        input,
+        tokens
+          .filter((token) => token.start >= 0 && token.end <= input.length && token.start < token.end)
+          .sort((a, b) => a.start - b.start),
+      ).map((part) => ({
+        ...part,
+        isWordLike: /[\p{L}\p{N}]/u.test(part.segment) ? true : false,
+      }))
+    : [...segmenter.segment(input)];
+
   const spans: Span[] = [];
-  for (const part of segmenter.segment(input)) {
+  for (const part of parts) {
     const kind = classify(part.segment, part.isWordLike);
     const start = part.index;
     const end = start + part.segment.length;

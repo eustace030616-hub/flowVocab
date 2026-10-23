@@ -13,6 +13,8 @@ import { serveStatic } from "@hono/node-server/serve-static";
 
 import { createApp } from "./app";
 import { nodeDriver } from "../lib/store/driver-node";
+import { spawn, type ChildProcess } from "node:child_process";
+
 import { loadEnv } from "../scripts/env";
 import { onePullPass } from "../scripts/worker/pull";
 import { syncD1Pool } from "../scripts/worker/pool";
@@ -23,6 +25,41 @@ import { callService, serviceConfig } from "../scripts/worker/client";
 // everything can see them.
 for (const [key, value] of Object.entries(loadEnv())) {
   if (process.env[key] === undefined) process.env[key] = value;
+}
+
+/**
+ * The SoMaJo sidecar, when asked for.
+ *
+ * A child of this process rather than its own unit: it exists to answer one question for the writer, and
+ * a service that outlives its parent is how a stale tokeniser keeps answering after a deploy.
+ */
+let segmenter: ChildProcess | null = null;
+if (process.env.FLOWWING_TOKENIZER === "somajo") {
+  const python = process.env.FLOWWING_TOKENIZER_PYTHON ?? path.resolve(process.cwd(), "tools/venv/bin/python");
+  const script = path.resolve(process.cwd(), "tools/tokenize/server.py");
+  const port = process.env.FLOWWING_TOKENIZER_PORT ?? "3110";
+  try {
+    segmenter = spawn(python, [script, "--port", port], { stdio: ["ignore", "inherit", "inherit"] });
+    // A spawn failure is an async `error` event, not a throw: unhandled, it takes the whole server down —
+    // which is the opposite of "the segmenter is optional".
+    segmenter.on("error", (error) => {
+      console.warn(`tokeniser: sidecar unavailable (${error.message}); using the built-in segmenter`);
+      segmenter = null;
+    });
+    segmenter.on("exit", (code) => {
+      if (code !== 0 && code !== null) console.warn(`tokeniser: sidecar exited (${code}); built-in segmenter from now on`);
+      segmenter = null;
+    });
+    console.log(`tokeniser: SoMaJo sidecar on 127.0.0.1:${port}`);
+  } catch (error) {
+    console.warn(`tokeniser: sidecar failed to start (${error instanceof Error ? error.message : error})`);
+  }
+  for (const signal of ["SIGINT", "SIGTERM"] as const) {
+    process.on(signal, () => {
+      segmenter?.kill();
+      process.exit(0);
+    });
+  }
 }
 
 const app = createApp(() => nodeDriver);

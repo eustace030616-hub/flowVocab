@@ -78,13 +78,16 @@ export async function tokenizeAgainst(
   targetLang: TargetLang,
   query: LexiconQuery,
   maxPasses = 3,
+  tokens?: Array<{ surface: string; start: number; end: number }>,
 ): Promise<Span[]> {
   const known = new Set<string>();
   const forms = new Map<string, string>();
 
   // Ask about the surfaces up front: a stated inflection short-circuits the rules entirely, so it
   // is worth one query before lexing rather than discovering it after a wrong answer.
-  const surfaces = [...new Set(wordSpans(tokenize(text, targetLang)).map((s) => lemmaKeyOf(s.surface)))];
+  const surfaces = [
+    ...new Set(wordSpans(tokenize(text, targetLang, { tokens })).map((s) => lemmaKeyOf(s.surface))),
+  ];
   /** lemma key → parts of speech, accumulated across passes. */
   const pos = new Map<string, string[]>();
 
@@ -146,7 +149,7 @@ export async function tokenizeAgainst(
 
   for (let pass = 0; pass < maxPasses; pass += 1) {
     const missed = new Set<string>();
-    const spans = tokenize(text, targetLang, options(missed));
+    const spans = tokenize(text, targetLang, { ...options(missed), tokens });
 
     // Nothing new was requested, so another pass would produce identical spans.
     if (missed.size === 0) return spans;
@@ -155,7 +158,7 @@ export async function tokenizeAgainst(
   }
 
   // Final pass so the returned spans reflect everything learned.
-  return tokenize(text, targetLang, options());
+  return tokenize(text, targetLang, { ...options(), tokens });
 }
 
 /**
@@ -240,8 +243,9 @@ export function datastoreQuery(targetLang: TargetLang): LexiconQuery {
 export async function tokenizeWithLexicon(
   text: string,
   targetLang: TargetLang,
+  tokens?: Array<{ surface: string; start: number; end: number }>,
 ): Promise<Span[]> {
-  return tokenizeAgainst(text, targetLang, datastoreQuery(targetLang));
+  return tokenizeAgainst(text, targetLang, datastoreQuery(targetLang), 3, tokens);
 }
 
 export interface LexiconEntry {

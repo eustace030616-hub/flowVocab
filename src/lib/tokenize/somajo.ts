@@ -8,7 +8,11 @@
  * Every failure path returns `null`. A missing sidecar must degrade to the built-in tokeniser, never
  * break a generation run or a read.
  */
-import type { Token } from "./index";
+export interface SegmentToken {
+  surface: string;
+  start: number;
+  end: number;
+}
 
 const DEFAULT_PORT = 3110;
 
@@ -16,7 +20,7 @@ export async function somajoTokens(
   text: string,
   lang: "de" | "en",
   timeoutMs = 2000,
-): Promise<Token[] | null> {
+): Promise<SegmentToken[] | null> {
   const port = Number(process.env.FLOWWING_TOKENIZER_PORT ?? DEFAULT_PORT);
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -30,11 +34,7 @@ export async function somajoTokens(
     if (!response.ok) return null;
     const data = (await response.json()) as { tokens?: Array<{ text: string; start: number; end: number }> };
     if (!data.tokens) return null;
-    return data.tokens.map((token) => ({
-      surface: token.text,
-      start: token.start,
-      end: token.end,
-    })) as Token[];
+    return data.tokens.map((token) => ({ surface: token.text, start: token.start, end: token.end }));
   } catch {
     return null;
   } finally {
