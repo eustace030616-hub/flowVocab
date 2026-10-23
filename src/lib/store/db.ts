@@ -64,12 +64,32 @@ let database: DatabaseSync | null = null;
  * cheapest possible probe.
  */
 function migrate(db: DatabaseSync): void {
-  for (const statement of ["ALTER TABLE sessions ADD COLUMN lastSeenAt INTEGER"]) {
+  for (const statement of [
+    "ALTER TABLE sessions ADD COLUMN lastSeenAt INTEGER",
+  ]) {
     try {
       db.exec(statement);
     } catch {
       /* already there */
     }
+  }
+}
+
+/**
+ * The word book gained a language dimension, and a primary key cannot be widened in place.
+ *
+ * Its rows are derived data loaded by a seeder, so the honest migration is to remove the old table and let
+ * the schema build the new one. This runs *before* `SCHEMA_SQL`: dropping afterwards would delete the table
+ * the schema had just created.
+ */
+function dropPreLanguageWordbook(db: DatabaseSync): void {
+  try {
+    const columns = db.prepare("PRAGMA table_info(wordbook)").all() as Array<{ name: string }>;
+    if (columns.length > 0 && !columns.some((column) => column.name === "targetLang")) {
+      db.exec("DROP TABLE wordbook");
+    }
+  } catch {
+    /* no table, or no PRAGMA support: nothing to migrate */
   }
 }
 
@@ -80,6 +100,7 @@ export function openDatabase(file: string = DATABASE_PATH): DatabaseSync {
   if (!existsSync(directory)) mkdirSync(directory, { recursive: true });
 
   database = new DatabaseSync(file);
+  dropPreLanguageWordbook(database);
   database.exec(SCHEMA_SQL);
   applyColumnMigrations(database);
   migrate(database);

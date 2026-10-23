@@ -7,7 +7,7 @@
  * frequency table.
  */
 import { all } from "./db";
-import type { TargetLang } from "../lang";
+import { glossLangFor, type TargetLang } from "../lang";
 
 export interface WordbookEntry {
   lemmaKey: string;
@@ -27,7 +27,7 @@ function chunks<T>(items: T[], size = 400): T[][] {
   return out;
 }
 
-export function wordbookEntries(keys: string[]): Map<string, WordbookEntry> {
+export function wordbookEntries(targetLang: TargetLang, keys: string[]): Map<string, WordbookEntry> {
   const found = new Map<string, WordbookEntry>();
   const unique = [...new Set(keys)];
   for (const batch of chunks(unique)) {
@@ -43,7 +43,8 @@ export function wordbookEntries(keys: string[]): Map<string, WordbookEntry> {
       translationSource: string | null;
     }>(
       `SELECT lemmaKey, word, article, level, levelSource, forms, translation, translationSource
-         FROM wordbook WHERE lemmaKey IN (${batch.map(() => "?").join(",")})`,
+         FROM wordbook WHERE targetLang = ? AND lemmaKey IN (${batch.map(() => "?").join(",")})`,
+      targetLang,
       ...batch,
     );
     for (const row of rows) {
@@ -70,8 +71,10 @@ export function wordbookGlosses(
   glossLang: "en" | "zh",
   keys: string[],
 ): Map<string, { text: string; source: string }> {
-  if (glossLang !== "en") return new Map();
-  const entries = wordbookEntries(keys);
+  // The German book glosses in English and the English book in Chinese, so a book answers only for the
+  // gloss language its own track needs.
+  if (glossLang !== glossLangFor(targetLang)) return new Map();
+  const entries = wordbookEntries(targetLang, keys);
   const out = new Map<string, { text: string; source: string }>();
   for (const [key, entry] of entries) {
     if (entry.translation) out.set(key, { text: entry.translation, source: entry.translationSource ?? "wordbook" });
@@ -80,8 +83,9 @@ export function wordbookGlosses(
 }
 
 /** How many words of each level the book holds — the shape of the book, for reports. */
-export function wordbookShape(): Array<{ level: string | null; n: number }> {
+export function wordbookShape(targetLang: TargetLang): Array<{ level: string | null; n: number }> {
   return all<{ level: string | null; n: number }>(
-    "SELECT level, COUNT(*) AS n FROM wordbook GROUP BY level ORDER BY level",
+    "SELECT level, COUNT(*) AS n FROM wordbook WHERE targetLang = ? GROUP BY level ORDER BY level",
+    targetLang,
   );
 }

@@ -28,18 +28,24 @@ interface Entry {
 }
 
 async function main(): Promise<void> {
-  const path = process.argv[2] ?? "/tmp/wordbook.json";
+  const arg = (name: string, fallback: string) => {
+    const index = process.argv.indexOf(`--${name}`);
+    return index >= 0 && process.argv[index + 1] ? process.argv[index + 1] : fallback;
+  };
+  const path = arg("file", "/tmp/wordbook.json");
+  const lang = arg("lang", "de");
   openDatabase();
   const book = JSON.parse(await readFile(path, "utf8")) as Record<string, Entry>;
   const at = nowMs();
 
-  run("DELETE FROM wordbook");
+  run("DELETE FROM wordbook WHERE targetLang = ?", lang);
   let written = 0;
   for (const [key, entry] of Object.entries(book)) {
     run(
       `INSERT OR REPLACE INTO wordbook
-         (lemmaKey, word, article, level, levelSource, forms, translation, translationSource, updatedAt)
-       VALUES (?,?,?,?,?,?,?,?,?)`,
+         (targetLang, lemmaKey, word, article, level, levelSource, forms, translation, translationSource, updatedAt)
+       VALUES (?,?,?,?,?,?,?,?,?,?)`,
+      lang,
       key,
       entry.word,
       normaliseArticle(entry.article),
@@ -52,7 +58,7 @@ async function main(): Promise<void> {
     );
     written += 1;
   }
-  console.log(`  wordbook: ${written} entries from ${path}`);
+  console.log(`  wordbook[${lang}]: ${written} entries from ${path}`);
 }
 
 void main();

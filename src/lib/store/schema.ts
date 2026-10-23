@@ -336,7 +336,10 @@ CREATE TABLE IF NOT EXISTS generation_requests (
 -- It is a *new* dictionary, not a set of columns on the words table: its rows are its own, its provenance is
 -- recorded per field, and nothing here depends on the old tables being present.
 CREATE TABLE IF NOT EXISTS wordbook (
-  lemmaKey          TEXT PRIMARY KEY,
+  -- Two tracks, one table: the German book and the English book differ in source and in gloss
+  -- language, not in shape.
+  targetLang        TEXT NOT NULL,
+  lemmaKey          TEXT NOT NULL,
   word              TEXT NOT NULL,
   -- der/die/das for nouns, NULL otherwise.
   article           TEXT,
@@ -346,10 +349,11 @@ CREATE TABLE IF NOT EXISTS wordbook (
   forms             TEXT,
   translation       TEXT,
   translationSource TEXT,
-  updatedAt         INTEGER NOT NULL
+  updatedAt         INTEGER NOT NULL,
+  PRIMARY KEY (targetLang, lemmaKey)
 );
 
-CREATE INDEX IF NOT EXISTS wordbook_level ON wordbook (level);
+CREATE INDEX IF NOT EXISTS wordbook_level ON wordbook (targetLang, level);
 
 -- ── The pool ─────────────────────────────────────────────────────────────────
 
