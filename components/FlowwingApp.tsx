@@ -381,6 +381,42 @@ function trackName(code: string | undefined): string {
   return code ? (LANGUAGE_NAMES[code] ?? code.toUpperCase()) : "";
 }
 
+/**
+ * The history list: a fixed window of about three titles inside a scroll.
+ *
+ * The account page and the history page show the same list, from this one piece of code.
+ */
+function HistoryList({
+  history,
+  empty,
+  onPick,
+  indent = false,
+}: {
+  history: ParagraphSummary[];
+  empty: string;
+  onPick: (id: string) => void;
+  indent?: boolean;
+}) {
+  if (history.length === 0) {
+    return <p className={`py-3 text-sm text-zinc-500 ${indent ? "pl-28" : "px-4 sm:px-6"}`}>{empty}</p>;
+  }
+  return (
+    <ul className={`h-32 overflow-y-auto border-t border-zinc-200 ${indent ? "pl-28" : ""}`}>
+      {history.map((item) => (
+        <li key={item._id} className="border-b border-zinc-200 last:border-b-0">
+          <button
+            onClick={() => onPick(item._id)}
+            className={`fv-touch w-full py-2 text-sm text-zinc-900 truncate text-left hover:text-zinc-500 transition-colors ${indent ? "" : "px-4 sm:px-6"}`}
+          >
+            {item.title}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+
 export default function Home({ initialUsername }: { initialUsername?: string }) {
   const [me, setMe] = useState<Me | null>(null);
   /**
@@ -411,6 +447,8 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
   const [userOpen, setUserOpen] = useState(false);
   /** Both boxes are shut until their row is tapped: they are the longest things on the page. */
   const [historyBox, setHistoryBox] = useState(false);
+  /** The list, expanded under the history page's action banner. */
+  const [listOpen, setListOpen] = useState(false);
   const [trackBox, setTrackBox] = useState(false);
   /**
    * Something is being fetched for the reader.
@@ -1437,26 +1475,76 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
       {/* A 2px rule under the header, the way a section is marked in print — the header is not a
           panel with a shadow, it is the top of the page. */}
       <header className="w-full min-h-16 fv-rule-bottom bg-white flex items-center justify-between gap-2 px-4 sm:px-6 py-4 shrink-0">
-        <div className="flex items-center gap-4">
-          {/* The hero course name: the style's second deliberate exception, and the only text on the
-              page that carries the misregistration fringe. */}
-          <h1 className="fv-hero text-xl font-medium tracking-tight text-zinc-900">{t.appName}</h1>
-        </div>
-        <div className="flex items-center gap-2">
-          {/* One control. Everything that belongs to the account is behind it, on the account page:
-              a top banner with six actions in it is a menu, and a menu is not a masthead. */}
-          {signedIn && (
+        {browsing && historyPosition ? (
+          <>
+            {/* In a stored passage the header says where you are, not who you are: the list and your
+                position in it. The avatar is on the live passage, where the account page belongs. */}
+            <span className="text-xs uppercase tracking-wide text-zinc-400">{t.history}</span>
+            <span className="text-xs tabular-nums text-zinc-500">
+              {historyPosition.index + 1} / {historyPosition.total}
+            </span>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-4">
+              {/* The hero course name: the style's second deliberate exception, and the only text on the
+                  page that carries the misregistration fringe. */}
+              <h1 className="fv-hero text-xl font-medium tracking-tight text-zinc-900">{t.appName}</h1>
+            </div>
+            <div className="flex items-center gap-2">
+              {/* One control. Everything that belongs to the account is behind it, on the account page:
+                  a top banner with six actions in it is a menu, and a menu is not a masthead. */}
+              {signedIn && (
+                <button
+                  onClick={() => setUserOpen(true)}
+                  aria-label={t.account}
+                  title={me?.username ?? t.account}
+                  className="fv-touch h-8 w-8 border border-zinc-900 flex items-center justify-center text-xs font-medium text-zinc-900 hover:bg-zinc-900 hover:text-white transition-colors rounded-none"
+                >
+                  {(me?.username ?? "?").slice(0, 1).toUpperCase()}
+                </button>
+              )}
+            </div>
+          </>
+        )}
+      </header>
+
+      {/* A stored passage gets its own chrome: the wordmark and the avatar belong to reading something
+          new, and here the useful things are which list you are in and where in it you are. */}
+      {browsing && historyPosition && (
+        <div className="shrink-0 border-b border-zinc-200 bg-white">
+          <div className="flex items-center justify-between gap-2 px-4 sm:px-6 py-2">
             <button
-              onClick={() => setUserOpen(true)}
-              aria-label={t.account}
-              title={me?.username ?? t.account}
-              className="fv-touch h-8 w-8 border border-zinc-900 flex items-center justify-center text-xs font-medium text-zinc-900 hover:bg-zinc-900 hover:text-white transition-colors rounded-none"
+              onClick={() => {
+                setBrowsing(false);
+                setListOpen(false);
+                setUserOpen(true);
+              }}
+              className="fv-touch h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 hover:bg-zinc-100 transition-colors rounded-none"
             >
-              {(me?.username ?? "?").slice(0, 1).toUpperCase()}
+              {t.returnToLive}
             </button>
+            <button
+              onClick={() => setListOpen((open) => !open)}
+              aria-expanded={listOpen}
+              className="fv-touch h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 hover:bg-zinc-100 transition-colors rounded-none"
+            >
+              {t.list} {listOpen ? "−" : "+"}
+            </button>
+          </div>
+          {listOpen && (
+            <HistoryList
+              history={history}
+              empty={t.historyEmpty}
+              onPick={(id) => {
+                void openHistoryPassage(id);
+                setListOpen(false);
+              }}
+            />
           )}
         </div>
-      </header>
+      )}
+
 
       {userOpen && (
         <div className="fixed inset-0 z-50 bg-white flex flex-col overflow-y-auto">
@@ -1615,11 +1703,6 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
               {/* Where you are in the list. Navigating history by memory with no position is how you
                   lose your place, and the count is the one thing the list view cannot tell you once
                   it is closed. */}
-              {browsing && historyPosition && (
-                <span className="shrink-0 text-xs tabular-nums text-zinc-400">
-                  {historyPosition.index + 1} / {historyPosition.total}
-                </span>
-              )}
             </div>
 
             <div className="flex items-end justify-between gap-2">
@@ -1690,27 +1773,7 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                     still the only direction there — and in history it walks the stored ones instead,
                     because generating from inside history would strand you somewhere you did not
                     choose to be. */}
-                {browsing ? (
-                  <>
-                      <button
-                        onClick={() => {
-                          if (currentId) void openParagraph(currentId);
-                          setBrowsing(false);
-                        }}
-                        className="fv-touch h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 transition-colors"
-                      >
-                        {t.returnToLive}
-                      </button>
-                      <button
-                        onClick={() => {
-                          setUserOpen(true);
-                        }}
-                        className="fv-touch h-8 px-3 text-xs font-medium border border-zinc-200 text-zinc-600 rounded-none hover:bg-zinc-100 transition-colors"
-                      >
-                        {t.list}
-                      </button>
-                  </>
-                ) : (
+                  {!browsing && (
                   <button
                     onClick={() => void generateParagraph()}
                     disabled={generating || loading || !me}
