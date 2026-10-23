@@ -397,8 +397,9 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
   const [historyOpen, setHistoryOpen] = useState(false);
   /** The account page: level, history, the test and signing out live here now. */
   const [userOpen, setUserOpen] = useState(false);
-  /** The history box is hidden until the row is tapped: it is the longest thing on the page. */
+  /** Both boxes are shut until their row is tapped: they are the longest things on the page. */
   const [historyBox, setHistoryBox] = useState(false);
+  const [trackBox, setTrackBox] = useState(false);
   /**
    * Something is being fetched for the reader.
    *
@@ -1460,26 +1461,56 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                 {(me?.username ?? "?").slice(0, 1).toUpperCase()}
               </button>
 
-              {/* The tracks, as the pair of languages they are: which language you read, and which
-                  language the glosses come in. Naming a track "German" hides the half that matters to
-                  someone whose first language is not English. */}
+              {/* The same shape as the history above it: a row that names what is chosen, and a box
+                  that opens with the alternatives. One interaction model on one page. */}
               {me && me.tracks.length > 1 && (
-                <select
-                  value={me.track}
-                  disabled={loading}
-                  onChange={(e) => {
-                    setUserOpen(false);
-                    void load(e.target.value);
-                  }}
-                  aria-label={t.tracks}
-                  className="self-start h-8 px-2 text-xs font-medium border border-zinc-200 bg-white text-zinc-700 disabled:opacity-50 rounded-none"
-                >
-                  {me.tracks.map((track) => (
-                    <option key={track.id} value={track.id}>
-                      {trackName(track.glossLang)} → {trackName(track.targetLang)}
-                    </option>
-                  ))}
-                </select>
+                <section>
+                  <button
+                    onClick={() => setTrackBox((open) => !open)}
+                    aria-expanded={trackBox}
+                    className="fv-touch w-full flex items-center justify-between gap-4 text-left"
+                  >
+                    <span className="text-[10px] uppercase tracking-wide text-zinc-400">
+                      {t.tracks}
+                    </span>
+                    <span className="flex items-center gap-2 min-w-0">
+                      <span className="text-xs text-zinc-600 truncate">
+                        {(() => {
+                          const current = me.tracks.find((track) => track.id === me.track);
+                          return current ? `${trackName(current.glossLang)} → ${trackName(current.targetLang)}` : "";
+                        })()}
+                      </span>
+                      <span className="text-xs text-zinc-400">{trackBox ? "−" : "+"}</span>
+                    </span>
+                  </button>
+                  {trackBox && (
+                    <ul className="border-t border-zinc-200 mt-2">
+                      {me.tracks.map((track) => {
+                        const active = track.id === me.track;
+                        return (
+                          <li key={track.id} className="border-b border-zinc-200">
+                            <button
+                              onClick={() => {
+                                if (active) {
+                                  setTrackBox(false);
+                                  return;
+                                }
+                                setUserOpen(false);
+                                void load(track.id);
+                              }}
+                              disabled={loading}
+                              className={`fv-touch w-full py-2 text-left text-sm truncate disabled:opacity-50 transition-colors ${
+                                active ? "text-zinc-400" : "text-zinc-900 hover:text-zinc-500"
+                              }`}
+                            >
+                              {trackName(track.glossLang)} → {trackName(track.targetLang)}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </section>
               )}
 
               <section>
