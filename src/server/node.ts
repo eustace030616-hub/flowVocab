@@ -41,14 +41,18 @@ outer.use("/*", async (c) => c.html(await readFile(path.join(dist, "index.html")
 if (process.env.FLOWWING_PULL === "1") {
   const intervalMs = Number(process.env.FLOWWING_PULL_INTERVAL_MS ?? 60_000);
   const tick = async () => {
+    const started = Date.now();
     try {
       const result = await onePullPass();
-      if (result.events > 0 || result.estimates > 0) {
-        console.log(`pull: ${result.events} events · ${result.estimates} estimates`);
-      }
+      // Always, not only when something happened: a loop that says nothing is indistinguishable from a
+      // loop that has stopped, which is exactly how two queued requests sat unserved for ten minutes.
+      console.log(
+        `pull: ${result.events}e ${result.estimates}a ${result.bands}b ${result.filled}p ${result.requested}r · ${Date.now() - started}ms`,
+      );
     } catch (error) {
       // A sleeping network is not a crash: the cursor keeps its place and the next tick retries.
-      console.warn(`pull paused: ${error instanceof Error ? error.message : error}`);
+      const message = error instanceof Error ? `${error.message}` : String(error);
+      console.warn(`pull paused: ${message} · ${Date.now() - started}ms`);
     }
   };
   setInterval(tick, intervalMs);

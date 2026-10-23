@@ -21,7 +21,8 @@ import { unknownWords } from "../../lib/learner/band";
 import { coverageOf } from "../../lib/learner/coverage";
 import { packageFor } from "../../lib/content/pack";
 import { generateOne, importParagraph } from "../generate/generate";
-import { BRIEFS, briefIdOf } from "../generate/briefs";
+import { BRIEFS, briefIdOf, type BriefSpec } from "../generate/briefs";
+import { pickTopic } from "../generate/topics";
 import { deepseekProvider } from "../generate/provider";
 import type { CefrLevel, TargetLang } from "../../lib/lang";
 import { loadEnv } from "../env";
@@ -180,14 +181,14 @@ async function fillPool(config: ServiceConfig): Promise<number> {
     const depth = remote.depth.find((row) => row.targetLang === targetLang && row.level === level)?.depth ?? 0;
     if (depth >= target) continue;
 
-    const spec = BRIEFS.find((brief) => brief.targetLang === targetLang && brief.level === level);
+    const spec = specFor(targetLang, level);
     if (!spec) continue;
 
     const provider = deepseekProvider();
     const outcome = await generateOne(provider, {
       ...spec,
       // A fresh identity, so this adds to the stock instead of replacing the brief it came from.
-      briefId: `${briefIdOf(spec)}:pool:${Date.now()}`,
+      briefId: `${briefIdOf(spec)}:${Date.now()}`,
     });
     if (!outcome.passed || !outcome.content) {
       // Say why, rather than letting `importParagraph` report "nothing to import" and hide the reason.
@@ -217,6 +218,25 @@ async function fillPool(config: ServiceConfig): Promise<number> {
  * The button on Cloudflare writes a row; this writes the passage. One at a time, oldest first, so a
  * burst of requests does not become a burst of model calls.
  */
+
+/**
+ * The spec for a new passage: the brief for this language and level, with a topic nothing recent used.
+ *
+ * The brief alone is one scenario per language and level, and reusing it made eight consecutive German
+ * B1 passages the same story about a late train.
+ */
+function specFor(targetLang: TargetLang, level: CefrLevel): BriefSpec | null {
+  const brief = BRIEFS.find((entry) => entry.targetLang === targetLang && entry.level === level);
+  if (!brief) return null;
+  const used = all<{ topic: string }>(
+    "SELECT DISTINCT topic FROM paragraphs WHERE targetLang = ? AND level = ? AND topic IS NOT NULL",
+    targetLang,
+    level,
+  ).map((row) => row.topic);
+  const topic = pickTopic(targetLang, level, used);
+  return { ...brief, topic: topic || brief.topic };
+}
+
 async function serveRequests(config: ServiceConfig): Promise<number> {
   const pending = await call<{ requests: Array<{ id: string; targetLang: string; level: string | null }> }>(
     config,
@@ -226,7 +246,7 @@ async function serveRequests(config: ServiceConfig): Promise<number> {
   for (const request of pending.requests) {
     const targetLang = request.targetLang as TargetLang;
     const level = (request.level ?? "B1") as CefrLevel;
-    const spec = BRIEFS.find((brief) => brief.targetLang === targetLang && brief.level === level);
+    const spec = specFor(targetLang, level);
     if (!spec) continue;
     try {
       const outcome = await generateOne(deepseekProvider(), {
