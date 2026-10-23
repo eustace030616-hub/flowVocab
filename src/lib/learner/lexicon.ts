@@ -1,4 +1,11 @@
 /**
+ * LEGACY(learner/lexicon)
+ *
+ * Resolves inflected forms through the `inflections` table and composes compounds from `words`.
+ * Simplemma now supplies lemmas as stated forms, and the word book carries the listed forms; this
+ *  path stays for text the sidecar did not tag, such as imports.
+ */
+/**
  * Building a lemma lexicon for tokenization.
  *
  * Lemmatisation is only as good as the lexicon behind it — rules alone turn "gelesen" into a

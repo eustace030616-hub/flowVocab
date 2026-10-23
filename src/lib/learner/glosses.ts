@@ -1,4 +1,10 @@
 /**
+ * LEGACY(learner/glosses)
+ *
+ * Per-lemma translations from the derived gloss table. The word book is consulted first for
+ *  English; this remains for Chinese, which the book does not carry, and for words it lacks.
+ */
+/**
  * Reading glosses for a set of headwords.
  *
  * Glosses live in their own collection, one document per translation per source (see

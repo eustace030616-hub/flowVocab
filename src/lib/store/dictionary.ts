@@ -1,4 +1,13 @@
 /**
+ * LEGACY(store/dictionary)
+ *
+ * The 839k-row vocabulary and its indexes: 198 MB of a 249 MB database. It does four jobs at once
+ *  — tokenising, lemmatising, levelling and glossing — which is why nothing could be replaced
+ *  without replacing everything.
+ * Removal condition: both word books cover the vocabulary the app packs, and generation no longer
+ *  measures against it. See LEGACY.md.
+ */
+/**
  * The dictionary side of the store: words, their translations, and the compiled morphology.
  *
  * These are the read-mostly tables. The reader hits them on every paragraph — a word by its join key,

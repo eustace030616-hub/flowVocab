@@ -1,4 +1,11 @@
 /**
+ * LEGACY(tokenize/particles)
+ *
+ * `attachSeparableParticles`, `mergedInfinitive` and `separationOf` join a detached German prefix to
+ *  its verb using clause position and the `separations` pair table. The sidecar does the same job
+ *  from HanTa's PTKVZ tag and needs neither, so this is the fallback for untagged text.
+ */
+/**
  * Tokenisation and lemmatisation — the single seam every click depends on.
  *
  * The original app split paragraphs on " " and keyed every mark by the resulting array
