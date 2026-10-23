@@ -121,6 +121,7 @@ interface ActiveItem {
 const UI: Record<"en" | "zh", Record<string, string>> = {
   en: {
     appName: "Flowwing",
+    generateQueued: "正在生成 — 一分钟内出现在历史列表里。",
     account: "Account",
     close: "Close",
     returnToLive: "Return",
@@ -217,6 +218,7 @@ const UI: Record<"en" | "zh", Record<string, string>> = {
   },
   zh: {
     appName: "Flowwing",
+    generateQueued: "Being written — it arrives in the history list within a minute.",
     account: "账户",
     close: "关闭",
     returnToLive: "返回",
@@ -1597,7 +1599,7 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                                   return;
                                 }
                                 setUserOpen(false);
-                                void load(track.id);
+                                void load(track.id).then(() => window.location.reload());
                               }}
                               disabled={loading}
                               className={`fv-touch w-full flex items-center gap-4 py-3 pl-28 pr-0 text-left text-sm truncate disabled:opacity-50 transition-colors ${

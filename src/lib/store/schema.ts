@@ -310,6 +310,21 @@ CREATE TABLE IF NOT EXISTS reader_bands (
   PRIMARY KEY (userId, paragraphId)
 );
 
+-- What readers asked for.
+--
+-- Generation lives on the Pi, which has the vocabulary, and Cloudflare cannot call it. So a request to
+-- write a passage is queued here and the Pi's pull loop drains the queue: the button works on either
+-- host, and nothing waits on the other being awake.
+CREATE TABLE IF NOT EXISTS generation_requests (
+  id         TEXT PRIMARY KEY,
+  userId     TEXT NOT NULL,
+  targetLang TEXT NOT NULL,
+  level      TEXT,
+  topic      TEXT,
+  createdAt  INTEGER NOT NULL,
+  takenAt    INTEGER
+);
+
 -- ── The pool ─────────────────────────────────────────────────────────────────
 
 -- Who has read what is in circulation.

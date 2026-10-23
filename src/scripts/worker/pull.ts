@@ -211,10 +211,55 @@ async function fillPool(config: ServiceConfig): Promise<number> {
   return filled;
 }
 
+/**
+ * Drain the queue of passages readers asked for.
+ *
+ * The button on Cloudflare writes a row; this writes the passage. One at a time, oldest first, so a
+ * burst of requests does not become a burst of model calls.
+ */
+async function serveRequests(config: ServiceConfig): Promise<number> {
+  const pending = await call<{ requests: Array<{ id: string; targetLang: string; level: string | null }> }>(
+    config,
+    "/requests",
+  );
+  let served = 0;
+  for (const request of pending.requests) {
+    const targetLang = request.targetLang as TargetLang;
+    const level = (request.level ?? "B1") as CefrLevel;
+    const spec = BRIEFS.find((brief) => brief.targetLang === targetLang && brief.level === level);
+    if (!spec) continue;
+    try {
+      const outcome = await generateOne(deepseekProvider(), {
+        ...spec,
+        briefId: `${briefIdOf(spec)}:request:${request.id}`,
+      });
+      if (!outcome.passed || !outcome.content) {
+        console.warn(`  request ${request.id}: not accepted — ${outcome.issues.slice(0, 1).join("") || "no content"}`);
+        await call(config, "/requests/decline", { method: "POST", body: JSON.stringify({ id: request.id }) });
+        continue;
+      }
+      const paragraphId = await importParagraph(outcome);
+      const pack = packageFor(paragraphId);
+      const paragraph = get<Record<string, unknown>>("SELECT * FROM paragraphs WHERE id = ?", paragraphId);
+      if (!pack || !paragraph) continue;
+      await call(config, "/passages", {
+        method: "POST",
+        body: JSON.stringify({ paragraph: { ...paragraph, buffered: 0 }, package: pack }),
+      });
+      await call(config, "/requests/done", { method: "POST", body: JSON.stringify({ id: request.id }) });
+      served += 1;
+      console.log(`  request ${request.id}: wrote ${String(paragraph.title ?? "")} (${targetLang}/${level})`);
+    } catch (error) {
+      console.warn(`  request ${request.id} failed: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  return served;
+}
+
 async function onePass(
   config: ServiceConfig,
   drain: boolean,
-): Promise<{ events: number; estimates: number; bands: number; filled: number }> {
+): Promise<{ events: number; estimates: number; bands: number; filled: number; requested: number }> {
   let cursor = await readCursor();
   let imported = 0;
   const touched = new Set<string>();
@@ -257,12 +302,13 @@ async function onePass(
   }
 
   const bands = await pushBands(config, touched);
+  const requested = await serveRequests(config);
   const filled = await fillPool(config);
-  return { events: imported, estimates, bands, filled };
+  return { events: imported, estimates, bands, filled, requested };
 }
 
 /** One pass over the queue, for callers that already have a process and a config. */
-export async function onePullPass(): Promise<{ events: number; estimates: number; bands: number; filled: number }> {
+export async function onePullPass(): Promise<{ events: number; estimates: number; bands: number; filled: number; requested: number }> {
   const env = loadEnv();
   for (const [key, value] of Object.entries(env)) {
     if (process.env[key] === undefined) process.env[key] = value;
@@ -283,7 +329,7 @@ async function main(): Promise<void> {
   const result = await onePass(config, drain);
   console.log(
     `pull: ${result.events} events · ${result.estimates} estimates · ` +
-      `${result.bands} bands · ${result.filled} passages · ` +
+      `${result.bands} bands · ${result.filled} pooled · ${result.requested} requested · ` +
       `cursor ${await readCursor()} · ${Date.now() - started}ms`,
   );
 }

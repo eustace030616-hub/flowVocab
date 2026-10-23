@@ -356,6 +356,29 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
     return c.json({ ok: true }, 201);
   });
 
+  app.get("/service/requests", async (c) => {
+    const rows = await c.get("store").all<Record<string, unknown>>(
+      "SELECT id, userId, targetLang, level, topic, createdAt FROM generation_requests WHERE takenAt IS NULL ORDER BY createdAt ASC LIMIT 3",
+    );
+    // Taking one marks it, so two concurrent drains cannot write the same passage twice.
+    for (const row of rows) {
+      await c.get("store").run("UPDATE generation_requests SET takenAt = ? WHERE id = ?", Date.now(), String(row.id));
+    }
+    return c.json({ requests: rows });
+  });
+
+  app.post("/service/requests/done", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { id?: string };
+    if (body.id) await c.get("store").run("DELETE FROM generation_requests WHERE id = ?", body.id);
+    return c.json({ ok: true });
+  });
+
+  app.post("/service/requests/decline", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { id?: string };
+    if (body.id) await c.get("store").run("DELETE FROM generation_requests WHERE id = ?", body.id);
+    return c.json({ ok: true });
+  });
+
   app.use("*", async (c, next) => {
     const session = await sessionUser(getCookie(c, SESSION_COOKIE), c.get("store"));
     if (!session) return c.json({ error: "sign in required", signedIn: false }, 401);
@@ -633,10 +656,31 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
     return c.json(out);
   });
 
-  // Writer-side and measurement features stay where the dictionary is.
-  app.all("/paragraphs/generate", (c) =>
-    c.json({ error: "generation runs on the Pi", detail: "it needs the vocabulary to measure against; this host has no dictionary" }, 501),
-  );
+  /**
+   * Generation is queued, not refused.
+   *
+   * The Pi owns it — it has the vocabulary to sample from and the rubric to measure against — and the
+   * Worker cannot call the Pi. So the request is written here and drained by the Pi's pull loop, which
+   * is the same relationship the rest of the data already has.
+   */
+  app.post("/paragraphs/generate", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { targetLang?: string; level?: string; topic?: string };
+    const me = await meFor(c.get("store"), c.get("userId"), c.get("username"));
+    const ability = (me.ability as Array<{ targetLang?: string; level?: string | null }>).find(
+      (row) => row.targetLang === me.targetLang,
+    );
+    const requestId = crypto.randomUUID();
+    await c.get("store").run(
+      "INSERT INTO generation_requests (id, userId, targetLang, level, topic, createdAt) VALUES (?,?,?,?,?,?)",
+      requestId,
+      c.get("userId"),
+      body.targetLang ?? me.targetLang,
+      body.level ?? ability?.level ?? null,
+      body.topic ?? null,
+      Date.now(),
+    );
+    return c.json({ queued: true, requestId }, 202);
+  });
   app.all("/placement", (c) => c.json({ error: "the placement test runs on the Pi" }, 501));
   app.all("*", (c) => c.json({ error: "not part of the reader API", route: c.req.path }, 501));
 
