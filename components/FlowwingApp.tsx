@@ -1943,52 +1943,25 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                 }}
               >
                 <p className="text-lg font-semibold text-zinc-800">
-                  {(() => {
-                    const vocab = activeVocab;
-                    return vocab?.article ? `${vocab.article} ` : "";
-                  })()}
+                  {activeVocab?.article ? `${activeVocab.article} ` : ""}
                   {active.span.lemma}
-                  {(() => {
-                    const vocab = activeVocab;
-                    return vocab?.plural ? (
-                      <span className="text-xs font-normal text-zinc-400">
-                        {" "}
-                        · pl. {vocab.plural}
+                  {[
+                    activeVocab?.level
+                      ? `${activeVocab.level}${activeVocab.levelEstimated ? " est." : ""}`
+                      : null,
+                    activeVocab?.plural ? `pl. ${activeVocab.plural}` : null,
+                    active.span.compoundParts ? t.compound : null,
+                    active.span.detached ? t.separable : null,
+                  ]
+                    .filter(Boolean)
+                    .map((part) => (
+                      <span key={String(part)} className="text-xs font-normal text-zinc-400">
+                        {" · "}
+                        {part}
                       </span>
-                    ) : null;
-                  })()}
+                    ))}
                 </p>
 
-                <dl className="grid grid-cols-[64px_1fr] gap-x-4 gap-y-2 mt-4 pt-4 border-t fv-hairline text-left">
-                  {[
-                    { label: t.partOfSpeech, value: posLabel(activeVocab?.pos ?? null) },
-                    { label: t.level, value: activeVocab?.level ?? null },
-                    { label: t.article, value: activeVocab?.article ?? null },
-                    { label: t.plural, value: activeVocab?.plural ?? null },
-                    {
-                      label: t.form,
-                      value:
-                        [
-                          active.span.compoundParts ? t.compound : null,
-                          active.span.detached ? t.separable : null,
-                        ]
-                          .filter(Boolean)
-                          .join(" · ") || null,
-                    },
-                  ].map((row) => (
-                    <div key={row.label} className="contents">
-                      <dt className="text-[10px] uppercase tracking-wide text-zinc-400 pt-0.5">
-                        {row.label}
-                      </dt>
-                      <dd
-                        className={`text-xs truncate ${row.value ? "text-zinc-700" : "text-zinc-300"}`}
-                        title={row.value ?? undefined}
-                      >
-                        {row.value ?? "n/a"}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
 
                 {(() => {
                   const vocab = activeVocab;
@@ -2028,10 +2001,6 @@ export default function Home({ initialUsername }: { initialUsername?: string }) 
                             </li>
                           ))}
                         </ul>
-                        <p className="text-[10px] text-zinc-400 mt-1">
-                          {vocab.glossSource}
-                          {vocab.glossGenerated ? " · machine-generated" : ""}
-                        </p>
                       </>
                     );
                   }
