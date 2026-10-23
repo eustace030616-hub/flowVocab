@@ -142,6 +142,20 @@ export function difficultyFromZipf(zipf: number, calibration: Calibration): numb
  * written with `levelEstimated: true` so the interface can say "estimated" rather than imply a
  * measurement.
  */
+/**
+ * The difficulty a CEFR band maps to — the inverse of `levelFromDifficulty`.
+ *
+ * This is what lets a curated level stand in for a derived difficulty: the IRT model needs one number per
+ * word, and a book that says "B1" is supplying that number, in the same units.
+ */
+export function difficultyFromLevel(level: string | null | undefined): number | null {
+  if (!level) return null;
+  const index = CEFR_LEVELS.indexOf(level as CefrLevel);
+  if (index < 0) return null;
+  return (index + 0.5) / CEFR_LEVELS.length;
+}
+
+
 export function levelFromDifficulty(difficulty: number): CefrLevel | null {
   if (!(difficulty >= 0)) return null;
   const index = Math.min(CEFR_LEVELS.length - 1, Math.max(0, Math.floor(difficulty * CEFR_LEVELS.length)));

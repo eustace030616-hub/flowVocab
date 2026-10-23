@@ -10,6 +10,8 @@
  */
 import { wordsByKeys } from "../store/dictionary";
 import { glossLangFor } from "../lang";
+import { difficultyFromLevel } from "../difficulty";
+import { wordbookEntries } from "../store/wordbook";
 import { glossesByLemma, type GlossView } from "../learner/glosses";
 import { wordbookGlosses } from "../store/wordbook";
 import { tokenizeWithLexicon } from "../learner/lexicon";
@@ -57,6 +59,9 @@ export async function packParagraph(paragraphId: string): Promise<PackageVocabul
   const keys = [...new Set(wordSpans(spans).map((span) => span.lemmaKey))];
 
   const words = keys.length ? await wordsByKeys(targetLang, keys, { origin: null }) : [];
+  // The curated level is a better difficulty than the derived one: it comes from a curriculum rather than
+  // from frequency. The dictionary's column stays as the fallback for words the book does not carry.
+  const book = wordbookEntries(targetLang, keys);
   // The gloss language follows the passage's own language, not English: an English passage is glossed
   // in Chinese, a German one in English. Asking for "en" glosses on an English passage packaged it with
   // no translations at all, which is what the English track showed.
@@ -102,7 +107,7 @@ export async function packParagraph(paragraphId: string): Promise<PackageVocabul
       glossSource: best?.source ?? null,
       glossTermPos: best?.termPos ?? null,
       glossPos: best?.pos ?? null,
-      difficulty: word.difficulty,
+      difficulty: difficultyFromLevel(book.get(word.lemmaKey)?.level) ?? word.difficulty,
       meanings: meanings.map((m) => ({
         pos: m.pos || null,
         termPos: m.termPos ?? null,
