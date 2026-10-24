@@ -287,6 +287,46 @@ npm run recompute:difficulty  # fit the curve and write difficulty  (-- --with-g
 npm run seed                # reset and seed demo data
 ```
 
+## The Pi is the host; D1 is decommissioned
+
+Flowwing runs entirely on the Pi now. The Worker and its D1 database are no longer used by the product.
+
+```
+  app          http://berry:3100        (tailnet only — UI and /api/* from one origin)
+  database     the Pi's SQLite         data/flowwing.sqlite3
+  scheduler    off                     FLOWWING_PULL=0
+  writer       the Pi                  generation, packing, marks
+```
+
+Verified end to end against the Pi alone — `npm run walk -- --host http://berry:3100`:
+
+```
+  16 steps · 0 broken
+  register · me · history (72) · open passage (410 spans) · vote · exposure · mark · unmark
+  star · lookup · generate (187 words) · placement (32 items) · switch track · sign out
+```
+
+The Worker still exists as a deployment. Its data was exported before anything was deleted:
+`backups/d1-events-<date>.json` (163 events, 24 users — mostly `walk`/`parity` test accounts).
+
+### Deleting the Worker and its database
+
+Nothing in the client points at it; the only reference left is `parity.ts`'s default `--b` host, and
+parity is dormant while D1 is off. When you are ready, delete in this order:
+
+```
+  Workers & Pages → flowwing-api      → Delete      (redeployable later; `worker/` is untouched)
+  D1 → flowwing-api                   → Delete      (irreversible — the backup above is what is left)
+```
+
+Then reinstall the PWA, or re-add the bookmark, from `http://berry:3100`. A PWA installed from the
+Workers URL keeps that origin for its own storage.
+
+### What stays in the repo
+
+`worker/` and `src/server/reader-api.ts` are kept: they are the shape the service takes if it ever has to
+leave the Pi again. `npm run parity` compares the two hosts, and is only meaningful when both exist.
+
 ## The Pi's scheduler is off
 
 The Pi used to poll the Worker continuously (pull every 60s idle / 15s present, pool mirror every
