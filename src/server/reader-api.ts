@@ -360,8 +360,11 @@ export function createReaderApp(getStore: (env: unknown) => StoreDriver) {
   app.get("/service/presence", async (c) => {
     const windowMs = Number(c.req.query("window") ?? 60_000);
     const now = Date.now();
+    // EXISTS … LIMIT 1 instead of COUNT(*): the same answer to "is anyone reading", but it stops at
+    // the first match instead of scanning the table. With the sessions_last_seen index it is a seek.
     const row = await c.get("store").get<{ active: number; last: number | null }>(
-      "SELECT COUNT(*) AS active, MAX(lastSeenAt) AS last FROM sessions WHERE lastSeenAt IS NOT NULL AND lastSeenAt > ?",
+      "SELECT EXISTS(SELECT 1 FROM sessions WHERE lastSeenAt IS NOT NULL AND lastSeenAt > ? LIMIT 1) AS active, (SELECT MAX(lastSeenAt) FROM sessions WHERE lastSeenAt > ?) AS last",
+      now - windowMs,
       now - windowMs,
     );
     return c.json({ active: row?.active ?? 0, lastSeenAt: row?.last ?? null, windowMs });

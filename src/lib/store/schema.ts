@@ -357,6 +357,10 @@ CREATE TABLE IF NOT EXISTS wordbook (
   PRIMARY KEY (targetLang, lemmaKey)
 );
 
+-- Presence is "did any session act in the last minute". Without this index that question is a full
+-- scan of the sessions table, which is what made one COUNT(*) 57% of the database's runtime.
+CREATE INDEX IF NOT EXISTS sessions_last_seen ON sessions (lastSeenAt);
+
 CREATE INDEX IF NOT EXISTS wordbook_level ON wordbook (targetLang, level);
 
 -- ── The pool ─────────────────────────────────────────────────────────────────

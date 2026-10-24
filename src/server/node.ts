@@ -87,23 +87,29 @@ if (process.env.FLOWWING_PULL === "1") {
   // fast rate so a burst of Generate presses cannot outrun the pool; sixty seconds after the last action
   // they fall back, because an idle laptop should cost nothing.
   let present = false;
+  let lastActivity = 0;
   let lastPull = 0;
   let lastPool = 0;
   let pulling = false;
   let pooling = false;
 
+  /**
+   * Presence is inferred from work, never asked for.
+   *
+   * It used to be a `SELECT COUNT(*) … FROM sessions WHERE lastSeenAt > ?` on **every tick** — 17,280
+   * scans a day, 57% of the database's runtime, to answer a question that only matters when there is
+   * something to do. Any pass that finds events or a queued request keeps the fast cadence for two
+   * minutes afterwards; otherwise the loops stay slow. Reading without marking produces no events, and
+   * needs no fast cadence, because there is nothing for the Pi to do.
+   */
+  const ACTIVITY_DECAY_MS = 120_000;
+  const noteActivity = () => {
+    lastActivity = Date.now();
+  };
+
   const tick = async () => {
-    let config;
-    try {
-      config = serviceConfig();
-      const presence = await callService<{ active: number }>(config, "/presence");
-      present = presence.active > 0;
-    } catch (error) {
-      // Unreachable authority: treat as idle rather than fast, and say so once.
-      present = false;
-      console.warn(`presence unknown: ${error instanceof Error ? error.message : error}`);
-    }
     const now = Date.now();
+    present = now - lastActivity < ACTIVITY_DECAY_MS;
 
     if (!pulling && now - lastPull >= (present ? busyPullMs : idlePullMs)) {
       pulling = true;
@@ -111,6 +117,7 @@ if (process.env.FLOWWING_PULL === "1") {
       try {
         const result = await onePullPass();
         if (result.events || result.estimates || result.requested) {
+          noteActivity();
           console.log(
             `pull: ${result.events}e ${result.estimates}a ${result.requested}r · ${present ? "present" : "idle"}`,
           );
@@ -128,6 +135,7 @@ if (process.env.FLOWWING_PULL === "1") {
       try {
         const result = await syncD1Pool();
         if (result.pushed > 0) {
+          noteActivity();
           console.log(
             `pool: pushed ${result.pushed} · ${Object.entries(result.depth).map(([k, v]) => `${k}=${v}`).join(" ")} · ${present ? "present" : "idle"}`,
           );
