@@ -287,6 +287,53 @@ npm run recompute:difficulty  # fit the curve and write difficulty  (-- --with-g
 npm run seed                # reset and seed demo data
 ```
 
+## The Pi's scheduler is off
+
+The Pi used to poll the Worker continuously (pull every 60s idle / 15s present, pool mirror every
+30s / 10s). It is **disabled by default** and off in production:
+
+```
+  FLOWWING_PULL=1     the scheduler runs (as above)
+  unset or 0          no polling at all — the default, and what the Pi runs today
+```
+
+Why: the loops cost D1 statements around the clock for an app nobody is reading. Measured over one
+24-hour idle period before it was switched off: **57 pull passes and 4 pool passes** — about 650 D1
+statements in a day, which is ~1% of the free tier's daily allowance, not the 75% that was suspected.
+But it is still 650 statements for zero readers, and the pull was failing most of the time anyway
+(`presence unknown: fetch failed`).
+
+What stops working while it is off:
+
+```
+  generation requests      a reader who asks for a passage gets 202 and never gets it
+  pool mirroring           new passages are not pushed to D1
+  model sync               marks and lookups taken on the Worker do not reach the Pi
+```
+
+What still works: reading. The Worker serves the passages already in D1 (101 of them) with no Pi
+involvement at all.
+
+### Running a pass by hand
+
+```bash
+cd ~/flowwing/app && set -a && . ./.env.local && set +a && npm run pull
+```
+
+One pass, then exit: drains events, recomputes abilities, pushes bands, serves queued requests.
+Run it when you are about to use the reader, or before a deploy that needs the pool filled.
+
+### If polling comes back
+
+Do not restore the old cadence. Either:
+
+```
+  on demand     run `npm run pull` when the app is opened (a button on the Pi, or a cron at 08:00)
+  activity flag Worker writes "someone is reading" to KV on reader activity (KV reads are 100k/day
+                free); the Pi polls *that* and only touches D1 when it is set
+  push          Worker → Pi over a Cloudflare Tunnel, so the Pi never polls at all
+```
+
 ## Licensing
 
 Every external source is declared in `src/lib/licence/datasets.ts` with its licence, whether it is
