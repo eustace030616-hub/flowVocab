@@ -13,6 +13,7 @@
     "dict:seed": "tsx src/scripts/dictionary/seed-wordbook.ts",
     "audit:legacy": "tsx src/scripts/dictionary/audit-legacy.ts",
     "repack:all": "tsx src/scripts/dictionary/repack-all.ts",
+    "users:import": "tsx src/scripts/auth/import-users.ts",
     "serve": "tsx src/server/node.ts",
     "typecheck": "tsc --noEmit"
   },

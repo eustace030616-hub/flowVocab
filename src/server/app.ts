@@ -12,7 +12,7 @@ import {
   type GlossLang,
   type TrackId,
 } from "@/src/lib/lang";
-import { verifyPassword } from "@/src/lib/learner/password";
+import { verifyPassword } from "@/src/lib/auth/password";
 
 import {
   SESSION_COOKIE,
@@ -20,7 +20,8 @@ import {
   login,
   register,
   sessionUser,
-} from "@/src/lib/learner/auth";
+} from "@/src/lib/auth/service";
+import { serviceAuthRoutes } from "@/src/lib/auth/routes";
 import {
   resolveUser,
   setTrack,
@@ -163,7 +164,12 @@ app.use("*", async (c, next) => {
 
   // `c.req.path` carries the `/api` base path, so the comparison is made without it.
   const path = c.req.path.replace(/^\/api(?=\/|$)/, "");
-  const open = path === "/auth" || path.startsWith("/auth/") || c.req.method === "OPTIONS";
+  const open =
+    path === "/auth" ||
+    path.startsWith("/auth/") ||
+    path === "/service" ||
+    path.startsWith("/service/") ||
+    c.req.method === "OPTIONS";
   // The legacy cookie no longer admits anyone: it identifies the history a registration can claim,
   // not a way past the gate. Otherwise the first user never sees the form and can never register.
   if (!session && !open) {
@@ -171,6 +177,14 @@ app.use("*", async (c, next) => {
   }
   await next();
 });
+
+/**
+ * Identity for other apps.
+ *
+ * bookreader signs people in through these three endpoints. They lived only on the Worker, which made
+ * that Worker a permanent dependency; the Pi serves the same contract now, so the Worker can go.
+ */
+serviceAuthRoutes(app, { secret: process.env.SERVICE_SECRET ?? process.env.FLOWWING_IDENTITY_SECRET });
 
 app.post("/auth/register", async (c) => {
   const body = (await c.req.json().catch(() => ({}))) as { username?: unknown; password?: unknown };

@@ -9,7 +9,7 @@
  * That is fine here because the Pi and D1 hold different databases, and it is called out so nobody
  * is surprised when a session from the Pi fails on Workers.
  */
-export { hashPassword, hashToken, verifyPasswordCore as verifyStored } from "../../src/lib/learner/password-core";
+export { hashPassword, hashToken, verifyPasswordCore as verifyStored } from "../../src/lib/auth/password-core";
 
 /** The same salt/format helper as the Pi, re-exported so both sides call one implementation. */
-export { newSaltHex as newSalt } from "../../src/lib/learner/password-core";
+export { newSaltHex as newSalt } from "../../src/lib/auth/password-core";
