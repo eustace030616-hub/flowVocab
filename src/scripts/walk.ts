@@ -67,8 +67,9 @@ async function main(): Promise<void> {
       ok: status > 0 && status <= limit ? true : status === 501 && BY_DESIGN.has(step),
     });
 
-  const today = Date.now();
-  const name = `walk-${today}`;
+  // One fixture account, reused. Registering a fresh user per run left 141 dead accounts in the
+  // database — the walk was writing test data into the product's tables and never clearing it up.
+  const name = "walk-fixture";
 
   {
     const r = await call(host, "GET", "/api/auth/me");
@@ -76,7 +77,12 @@ async function main(): Promise<void> {
   }
   {
     const r = await call(host, "POST", "/api/auth/register", { username: name, password: "pw" });
-    expect("register", r.status, String((r.json as { username?: string })?.username ?? ""));
+    if (r.status === 409) {
+      const login = await call(host, "POST", "/api/auth/login", { username: name, password: "pw" });
+      expect("register", login.status, String((login.json as { username?: string })?.username ?? ""));
+    } else {
+      expect("register", r.status, String((r.json as { username?: string })?.username ?? ""));
+    }
   }
   {
     const r = await call(host, "GET", "/api/me");
@@ -113,7 +119,7 @@ async function main(): Promise<void> {
       type: "exposure",
       targetLang,
       paragraphId,
-      sessionId: `walk-${today}`,
+      sessionId: `walk-${Date.now()}`,
       items: words.map((span) => ({ lemmaKey: span.lemmaKey, surface: span.surface, charStart: span.start, charEnd: span.end })),
     });
     expect("exposure batch", r.status, `${words.length} words`);

@@ -359,6 +359,9 @@ CREATE TABLE IF NOT EXISTS wordbook (
 
 -- Presence is "did any session act in the last minute". Without this index that question is a full
 -- scan of the sessions table, which is what made one COUNT(*) 57% of the database's runtime.
+-- One account per name. Case-insensitive, partial so the legacy rows without a username are exempt.
+CREATE UNIQUE INDEX IF NOT EXISTS users_username ON users (lower(username)) WHERE username IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS sessions_last_seen ON sessions (lastSeenAt);
 
 CREATE INDEX IF NOT EXISTS wordbook_level ON wordbook (targetLang, level);
